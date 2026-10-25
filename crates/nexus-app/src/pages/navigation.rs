@@ -189,9 +189,11 @@ pub(crate) fn from_spansh(w: &nexus_spansh::Waypoint) -> Waypoint {
     }
 }
 
-/// Remaining waypoints of the active route (planner route if set, else the in-game route).
+/// Remaining waypoints of the active route (planner route if set and not finished, else the in-game route).
 pub fn active_route(gs: &GameState, planned: Option<&PlannedRoute>) -> Vec<Waypoint> {
-    if let Some(p) = planned {
+    if let Some(p) = planned
+        && !planned_complete(p)
+    {
         return p.remaining().to_vec();
     }
     gs.route_remaining()
@@ -208,6 +210,11 @@ pub fn active_route(gs: &GameState, planned: Option<&PlannedRoute>) -> Vec<Waypo
             note: String::new(),
         })
         .collect()
+}
+
+/// A planned route whose every stop has been reached: the in-game route takes over.
+fn planned_complete(p: &PlannedRoute) -> bool {
+    p.remaining().is_empty() && !p.waypoints.is_empty()
 }
 
 /// Returns true if a setting changed. `carrier` is the carrier the fleet carrier planner uses, for
@@ -507,9 +514,13 @@ fn route_view(ui: &mut Ui, gs: &GameState, st: &NavUi) {
             }
         });
         ui.add_space(8.0);
-        if route.is_empty() && !p.waypoints.is_empty() {
-            empty(ui, icon::FLAG_CHECKERED, "Route complete", "You've reached every stop. Go back to the in-game route, or plan another one.");
-            return;
+        if planned_complete(p) {
+            if route.is_empty() {
+                empty(ui, icon::FLAG_CHECKERED, "Route complete", "You've reached every stop. Go back to the in-game route, or plan another one.");
+                return;
+            }
+            ui.add(egui::Label::new(RichText::new(format!("{} Tour complete, showing the route plotted in the game.", icon::FLAG_CHECKERED)).size(size::FOOTNOTE).color(pal::DIM)).wrap());
+            ui.add_space(8.0);
         }
     }
     if route.is_empty() {
