@@ -205,6 +205,14 @@ pub struct Continued {
     pub part: u32,
 }
 
+/// `Music`: the soundtrack changed. `MainMenu` plays at the main menu.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Music {
+    #[serde(rename = "MusicTrack")]
+    pub music_track: String,
+}
+
 // ---------------------------------------------------------------------------------------------
 // Ranks, reputation, engineers, powerplay, squadron
 // ---------------------------------------------------------------------------------------------
@@ -2860,6 +2868,7 @@ journal_events! {
     NewCommander => Commander,
     Continued => Continued,
     Shutdown => Empty,
+    Music => Music,
     // ranks
     Rank => RankSet,
     Progress => RankSet,
@@ -3068,9 +3077,16 @@ mod tests {
 
     #[test]
     fn unknown_is_other_without_parsing() {
-        assert!(matches!(Event::parse("Music", "not even json").unwrap(), Event::Other));
+        assert!(matches!(Event::parse("Screenshot", "not even json").unwrap(), Event::Other));
         assert!(Event::is_modelled("Scan"));
-        assert!(!Event::is_modelled("Music"));
+        assert!(!Event::is_modelled("Screenshot"));
+    }
+
+    #[test]
+    fn music_track() {
+        let l = r#"{ "timestamp":"2026-10-25T09:00:00Z", "event":"Music", "MusicTrack":"MainMenu" }"#;
+        let Event::Music(m) = Event::parse("Music", l).unwrap() else { panic!() };
+        assert_eq!(m.music_track, "MainMenu");
     }
 
     #[test]

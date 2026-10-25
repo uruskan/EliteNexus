@@ -140,7 +140,7 @@ mod tests {
         assert_eq!(fe.name(&fe.events[0]), "Commander");
         assert_eq!(fe.name(&fe.events[1]), "Music");
         assert!(fe.line(&fe.events[1]).ends_with('}'));
-        assert!(matches!(fe.events[1].event, Event::Other));
+        assert!(matches!(&fe.events[1].event, Event::Music(m) if m.music_track == "NoTrack"));
         let Event::Commander(c) = &fe.events[0].event else { panic!() };
         assert_eq!(c.name, "Jameson");
         assert!(fe.consumed < fe.text.len() as u64);

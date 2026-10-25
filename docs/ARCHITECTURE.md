@@ -32,7 +32,7 @@ a real install.
 |---|---|---|
 | `nexus-journal` | journal + companion-file I/O: typed events (`Event::parse`), `load_history` (parallel bulk load), `Watcher` (100 ms live tail), NaN-sanitising parser | — |
 | `nexus-data` | static game knowledge compiled in: ranks, ships, exploration values, exobiology, commodities/modules/materials names (FDevIDs), engineering blueprints & engineers, material-trader maths | — |
-| `nexus-model` | pure state machine: `Model` (all CMDRs) → `GameState` (location, fleet, inventory, missions + massacre stacks, exploration, exobio, mining, carrier, colonisation, history ledger, session, feed) + `Alerts` | journal, data |
+| `nexus-model` | pure state machine: `Model` (all CMDRs) → `GameState` (location, fleet, inventory, missions + massacre stacks, exploration, exobio, mining, carrier, colonisation, history ledger, session, feed) + `Alerts`; `context`: what the commander is doing right now (docked, supercruise, charging a jump, near a body, landed, SRV, on foot, …, the GuiFocus screen, danger), from Status.json and the journal, for anything that follows the game | journal, data |
 | `nexus-galaxy` | local SQLite (WAL) galaxy/market DB: one writer thread, pooled read connections, in-memory station index; commodity search, trade routes, nearest services, hotspots, streaming Spansh dump import | journal |
 | `nexus-eddn` | EDDN **subscriber** (ZeroMQ relay → decoder thread → galaxy DB), dedupe, watchdog + reconnect, stats & headlines | galaxy |
 | `nexus-uplink` | **uploads**: EDDN (schema-validated, strictly compliant), EDSM journal sync, Inara, EDAstro; persistent retry queues (`nexus-data\uplink\*.jsonl`), per-service rate limits | journal |

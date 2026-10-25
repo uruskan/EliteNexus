@@ -64,6 +64,8 @@ pub struct GameState {
     pub events_applied: u64,
     /// The game wrote `Shutdown` after the last session start.
     pub game_closed: bool,
+    /// The main menu's music is playing (the `Music` event), until the next `LoadGame`.
+    pub at_main_menu: bool,
     pub legal_state: Option<String>,
     prev_flags: u32,
     pending_star_class: Option<(String, String)>,
@@ -157,6 +159,7 @@ impl GameState {
                 self.session = Session::start(ts, l.credits);
                 self.history.credit_sample(ts, l.credits);
                 self.game_closed = false;
+                self.at_main_menu = false;
                 let mode = l.game_mode.as_deref().map(|m| format!(" ({m})")).unwrap_or_default();
                 self.feed(ts, "LoadGame", format!("Logged in{mode}, {} Cr", group_digits(l.credits)));
             }
@@ -165,6 +168,7 @@ impl GameState {
                 self.game_closed = true;
                 self.feed(ts, "Shutdown", "Game closed".into());
             }
+            Event::Music(m) => self.at_main_menu = m.music_track == "MainMenu",
             Event::Rank(r) => self.cmdr.ranks.apply(r),
             Event::Progress(p) => self.cmdr.progress.apply(p),
             Event::Promotion(p) => {
@@ -413,8 +417,14 @@ impl GameState {
                         self.exploration.on_footfall(d.system_address, body_id);
                     }
             }
-            Event::LaunchSRV(_) => self.location.in_srv = true,
-            Event::DockSRV(_) | Event::SRVDestroyed(_) => self.location.in_srv = false,
+            Event::LaunchSRV(v) => {
+                self.location.in_srv = true;
+                self.location.srv_type = v.srv_type.clone();
+            }
+            Event::DockSRV(_) | Event::SRVDestroyed(_) => {
+                self.location.in_srv = false;
+                self.location.srv_type = None;
+            }
             Event::LaunchFighter(f) if f.player_controlled.unwrap_or(false) => self.location.in_fighter = true,
             Event::DockFighter(_) | Event::FighterDestroyed(_) => self.location.in_fighter = false,
             Event::NavRouteClear(_) => self.nav_route.clear(),

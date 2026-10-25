@@ -129,6 +129,8 @@ pub struct Location {
     pub landed: bool,
     pub on_foot: bool,
     pub in_srv: bool,
+    /// The SRV launched last (`LaunchSRV`'s `SRVType`: `testbuggy`, `mev_rhino`, `lander01`, …), until it docks.
+    pub srv_type: Option<String>,
     pub in_fighter: bool,
     pub in_taxi: bool,
     pub multicrew: bool,

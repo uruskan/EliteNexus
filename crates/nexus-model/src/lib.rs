@@ -7,6 +7,7 @@ pub mod bgs;
 pub mod carrier;
 pub mod colonisation;
 pub mod commander;
+pub mod context;
 pub mod exobio;
 pub mod exploration;
 pub mod fleet;
