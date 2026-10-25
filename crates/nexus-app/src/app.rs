@@ -105,6 +105,8 @@ pub struct NexusApp {
     clipboard: Option<arboard::Clipboard>,
     /// The overlay: the island at the top of the game's screen, in a window of its own.
     overlay: crate::overlay::window::Overlay,
+    /// Alerts to XSOverlay (Settings › Overlay; off by default).
+    xsoverlay: crate::overlay::xsoverlay::XsOverlay,
     /// Looking for a cockpit-light dimmer from 0.3.0 in the game folders (a notice if there is one).
     dimmer_check: Option<crate::jobs::Job<bool>>,
     /// When this frame's work began, and when a slow frame was last logged.
@@ -199,6 +201,7 @@ impl NexusApp {
             last_jump_count: None,
             clipboard: None,
             overlay,
+            xsoverlay: Default::default(),
             dimmer_check: Some(crate::jobs::Job::spawn(&cc.egui_ctx, crate::notices::old_dimmer_installed)),
             frame_started: None,
             // The first frames load fonts and textures: nothing is logged in the first 10 seconds.
@@ -292,6 +295,9 @@ impl NexusApp {
                     self.speaker.say(s.clone());
                 }
             self.overlay.alert(&a);
+            if self.settings.overlay.xsoverlay && self.shot.is_none() {
+                self.xsoverlay.send(&a);
+            }
             let dup = self.toasts.iter().rev().take(4).any(|t| t.alert.title == a.title && t.alert.detail == a.detail && t.born.elapsed() < Duration::from_secs(20));
             if !dup {
                 self.toasts.push(Toast { alert: a, born: Instant::now() });

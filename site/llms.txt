@@ -66,7 +66,7 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   compatdata layout), then CrossOver's bottles and ~/.wine, then Whisky's bottles. Data lives in
   ~/Library/Application Support/EliteNexus. Voice uses the system's say. Cockpit lights (3Dmigoto) is untested there.
 - Limits: PC only (Windows, Linux, macOS; no console build); no plugins, native VR panels or voice commands (VR players
-  mirror the overlay with Desktop+, OVR Toolkit, XSOverlay or SteamVR's desktop view); the overlay can't show over a
+  mirror the overlay with Desktop+, OVR Toolkit, XSOverlay or SteamVR's desktop view, and alerts can go to XSOverlay); the overlay can't show over a
   game in exclusive fullscreen (Borderless or Windowed works) or stay on top under Wayland; no Frontier Companion API
   yet. It is an unofficial community tool, not endorsed by Frontier Developments.
 

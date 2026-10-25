@@ -200,6 +200,7 @@ fn overlay(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
             });
         }
         changed |= g.switch(&mut o.vr, "VR mode", "An opaque panel of fixed size that never hides, with larger text, to mirror into a headset (the user guide says how).");
+        changed |= g.switch(&mut o.xsoverlay, "Alerts in XSOverlay", "Important alerts also appear as XSOverlay notifications in your headset. They're sent only to XSOverlay on this computer (port 42069).");
     });
     cx.changed |= changed;
     footnote(ui, "The game hides every overlay in exclusive fullscreen: set Options › Graphics › Display to Borderless or Windowed.");

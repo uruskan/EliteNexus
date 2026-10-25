@@ -128,6 +128,10 @@ nothing inside VR itself. Tools that mirror a window ("Elite Nexus overlay"):
   the game.
 * On Linux, **WayVR**.
 
+**Alerts in XSOverlay** (Settings › Overlay, off by default): the alerts that open the island also appear as XSOverlay
+notifications in your headset, silently (Elite Nexus speaks them itself if voice is on). They go only to XSOverlay
+on this computer, through its notification API (UDP port 42069); with XSOverlay closed they're simply dropped.
+
 ## Voice
 
 Alerts are spoken through Windows speech (on Linux through speech-dispatcher's `spd-say`, which most desktop

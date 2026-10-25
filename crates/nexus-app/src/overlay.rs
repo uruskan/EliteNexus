@@ -8,6 +8,7 @@
 pub mod draw;
 pub mod platform;
 pub mod window;
+pub mod xsoverlay;
 
 use crate::finder::{carriers_here, presence, Presence};
 use crate::pages::market::Pin;
@@ -761,8 +762,9 @@ struct Seen {
     docked: Option<u64>,
 }
 
-/// Alerts the island opens for: the important ones, except sampling progress (the Sampling moment says it).
-fn worth_showing(a: &Alert) -> bool {
+/// Alerts the island opens for (and XSOverlay shows): the important ones, except sampling progress (the Sampling
+/// moment says it).
+pub fn worth_showing(a: &Alert) -> bool {
     match a.priority {
         Priority::Critical | Priority::High => true,
         Priority::Normal => a.kind != AlertKind::Exobiology,

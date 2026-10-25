@@ -43,11 +43,13 @@ pub struct OverlayPrefs {
     pub see_through: bool,
     /// VR: an opaque panel of fixed size that never hides, with nothing under 14 pt, for mirroring into a headset.
     pub vr: bool,
+    /// Important alerts also go to XSOverlay on this computer (VR).
+    pub xsoverlay: bool,
 }
 
 impl Default for OverlayPrefs {
     fn default() -> Self {
-        OverlayPrefs { enabled: false, locked: true, anchor: Anchor::Centre, position: None, scale: 1.0, keep_minimal: false, always_visible: false, see_through: false, vr: false }
+        OverlayPrefs { enabled: false, locked: true, anchor: Anchor::Centre, position: None, scale: 1.0, keep_minimal: false, always_visible: false, see_through: false, vr: false, xsoverlay: false }
     }
 }
 

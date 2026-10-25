@@ -20,6 +20,12 @@ release time that section becomes the new version and the release workflow publi
   size (100 to 250 %), whether it stays when idle, a **see-through** window (after a restart; off, an opaque black
   panel) and a **VR mode** for mirroring it into a headset. The user guide says what each system can do.
 
+### Added
+- **Alerts in XSOverlay** (Settings › Overlay, off by default): the important alerts also appear as XSOverlay
+  notifications in your VR headset, sent only to XSOverlay on this computer. The user guide lists the tools that
+  mirror the overlay into VR (Desktop+, OVR Toolkit, XSOverlay, SteamVR's desktop view, OpenKneeboard, Meta Quest
+  Link's Pin to Experience, WayVR).
+
 ## [0.7.3-beta.1] - 2026-10-25
 
 A beta of 0.7.3: Rhino surface mining remembers the mining locations you worked, with the number to pick in the
