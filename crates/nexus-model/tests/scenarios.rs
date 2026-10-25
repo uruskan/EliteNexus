@@ -610,3 +610,81 @@ fn surface_mining_from_history_has_no_positions() {
     assert!(site.spots.is_empty());
     assert_eq!(gs.mining.spots_rev, 0);
 }
+
+/// `near_body` follows orbital cruise: set on ApproachBody, cleared on LeaveBody and when a hyperspace jump starts.
+#[test]
+fn near_body_follows_approach_and_leave() {
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    assert_eq!(m.active().unwrap().location.near_body, None, "logged in next to a star");
+    let near = |m: &Model| m.active().unwrap().location.near_body;
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"ApproachBody", "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 2", "BodyID":2 }"#]);
+    assert_eq!(near(&m), Some(2));
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"LeaveBody", "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 2", "BodyID":2 }"#]);
+    assert_eq!(near(&m), None);
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"ApproachBody", "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 3", "BodyID":3 }"#]);
+    assert_eq!(near(&m), Some(3));
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:04:00Z", "event":"StartJump", "JumpType":"Hyperspace", "StarSystem":"Beta", "SystemAddress":200, "StarClass":"M" }"#]);
+    assert_eq!(near(&m), None, "a hyperspace jump leaves the planet behind");
+    feed(&mut m, &[jump("2026-10-01T10:04:20Z", "Beta", 200, 10.0).as_str()]);
+    assert_eq!(near(&m), None);
+
+    // Logging in landed on a planet counts as near it.
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T11:00:00Z", "event":"Location", "Docked":false, "StarSystem":"Beta", "SystemAddress":200, "StarPos":[10.0,0.0,0.0], "Population":0, "Body":"Beta 1", "BodyID":4, "BodyType":"Planet", "Latitude":12.5, "Longitude":-40.0 }"#]);
+    assert_eq!(near(&m), Some(4));
+}
+
+/// A system is done once every body is found, the planets worth mapping are mapped and every biological signal is analysed.
+#[test]
+fn fully_explored_needs_scan_map_and_bio() {
+    const HIGH_VALUE: i64 = 1_000_000;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let done = |m: &Model| m.active().unwrap().exploration.systems[&100].fully_explored(HIGH_VALUE);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"AutoScan", "BodyName":"Alpha", "BodyID":0, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":0.0, "StarType":"K", "StellarMass":0.7, "WasDiscovered":true, "WasMapped":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 1", "BodyID":1, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":400.0, "PlanetClass":"Earthlike body", "MassEM":1.0, "TerraformState":"", "Landable":false, "WasDiscovered":false, "WasMapped":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 2", "BodyID":2, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":10.0, "PlanetClass":"Rocky body", "MassEM":0.1, "Landable":true, "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:03:10Z", "event":"FSSBodySignals", "BodyName":"Alpha 2", "BodyID":2, "SystemAddress":100, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":1 } ] }"#,
+        ],
+    );
+    {
+        let sys = &m.active().unwrap().exploration.systems[&100];
+        assert!(sys.bodies[&1].value.mapped >= HIGH_VALUE, "the ELW is worth mapping");
+        assert!(sys.bodies[&2].value.mapped < HIGH_VALUE, "the rocky bio body isn't");
+        assert!(!sys.bodies[&2].bio_done());
+    }
+    assert!(!done(&m), "the FSS hasn't found every body yet");
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:04:00Z", "event":"FSSAllBodiesFound", "SystemName":"Alpha", "SystemAddress":100, "Count":3 }"#]);
+    assert!(!done(&m), "the ELW isn't mapped");
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:10:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 1", "SystemAddress":100, "BodyID":1, "ProbesUsed":5, "EfficiencyTarget":7 }"#]);
+    assert!(!done(&m), "biology left on Alpha 2");
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"SAASignalsFound", "BodyName":"Alpha 2", "SystemAddress":100, "BodyID":2, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":1 } ], "Genuses":[ { "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum" } ] }"#]);
+    let organic = |kind: &str, ts: &str| {
+        format!(
+            r#"{{ "timestamp":"{ts}", "event":"ScanOrganic", "ScanType":"{kind}", "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum", "Species":"$Codex_Ent_Stratum_07_Name;", "Species_Localised":"Stratum Tectonicas", "Variant":"$Codex_Ent_Stratum_07_K_Name;", "Variant_Localised":"Stratum Tectonicas - Lime", "WasLogged":false, "SystemAddress":100, "Body":2 }}"#
+        )
+    };
+    feed(&mut m, &[&organic("Log", "2026-10-01T10:30:00Z"), &organic("Sample", "2026-10-01T10:32:00Z")]);
+    assert!(!done(&m), "two samples out of three");
+    feed(&mut m, &[&organic("Analyse", "2026-10-01T10:34:00Z")]);
+    assert!(m.active().unwrap().exploration.systems[&100].bodies[&2].bio_done());
+    assert!(done(&m), "found, mapped and analysed");
+
+    // A star and a worthless icy body: nothing to map, nothing alive, so done as soon as every body is found.
+    feed(
+        &mut m,
+        &[
+            jump("2026-10-01T11:00:00Z", "Beta", 200, 10.0).as_str(),
+            r#"{ "timestamp":"2026-10-01T11:01:00Z", "event":"Scan", "ScanType":"AutoScan", "BodyName":"Beta", "BodyID":0, "StarSystem":"Beta", "SystemAddress":200, "DistanceFromArrivalLS":0.0, "StarType":"M", "StellarMass":0.3, "WasDiscovered":true, "WasMapped":false }"#,
+            r#"{ "timestamp":"2026-10-01T11:02:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Beta 1", "BodyID":1, "StarSystem":"Beta", "SystemAddress":200, "DistanceFromArrivalLS":900.0, "PlanetClass":"Icy body", "MassEM":0.01, "Landable":true, "WasDiscovered":true, "WasMapped":false }"#,
+        ],
+    );
+    let beta = |m: &Model| m.active().unwrap().exploration.systems[&200].fully_explored(HIGH_VALUE);
+    assert!(m.active().unwrap().exploration.systems[&200].bodies[&1].value.mapped < HIGH_VALUE);
+    assert!(!beta(&m));
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T11:03:00Z", "event":"FSSAllBodiesFound", "SystemName":"Beta", "SystemAddress":200, "Count":2 }"#]);
+    assert!(beta(&m), "the icy body isn't worth mapping");
+}

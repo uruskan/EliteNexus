@@ -56,6 +56,18 @@ fn save_png(path: &std::path::Path, img: &egui::ColorImage) {
     }
 }
 
+/// What "Follow my flight" compares from one journal event to the next.
+#[derive(Default, Clone, Copy)]
+struct FlightSnapshot {
+    /// `GameState::events_applied` when this was taken.
+    events: u64,
+    system: u64,
+    near_body: Option<u32>,
+    hyperspace: bool,
+    /// The current system is fully explored (Settings "High-value body" threshold).
+    done: bool,
+}
+
 pub struct NexusApp {
     core: Core,
     settings: Settings,
@@ -99,6 +111,9 @@ pub struct NexusApp {
     overrides: Overrides,
     shot: Option<ScreenshotJob>,
     last_jump_count: Option<usize>,
+    /// Where the commander was at the last journal event (Settings › Follow my flight); `None` until the first frame
+    /// with a commander.
+    flight: Option<FlightSnapshot>,
     clipboard: Option<arboard::Clipboard>,
     compact: bool,
     compact_request: bool,
@@ -188,6 +203,7 @@ impl NexusApp {
             overrides: ov,
             shot,
             last_jump_count: None,
+            flight: None,
             clipboard: None,
             compact: false,
             compact_request: false,
@@ -243,6 +259,50 @@ impl NexusApp {
                 }),
                 Err(e) => tracing::warn!("clipboard: {e}"),
             }
+        }
+    }
+
+    /// Follow my flight: watch the jump state, the system, the planet we're near and whether the system is done,
+    /// and open the page that fits (Navigation when a jump starts or the system is finished, Exploration on arrival
+    /// or leaving a planet, Exobiology near a planet with life still to analyse). Runs only when journal events
+    /// arrived: on every other frame it costs one counter comparison. The snapshot is kept even with the setting off,
+    /// so switching it on never acts on old transitions, and the history read at start never switches.
+    fn follow_flight(&mut self) {
+        let target = {
+            let model = self.core.model.read();
+            let Some(gs) = model.active() else { return };
+            let prev = self.flight;
+            if prev.is_some_and(|p| p.events == gs.events_applied) {
+                return;
+            }
+            let system = gs.exploration.current_system();
+            let new = FlightSnapshot {
+                events: gs.events_applied,
+                system: gs.location.system_address,
+                near_body: gs.location.near_body,
+                hyperspace: gs.location.hyperspace,
+                done: system.is_some_and(|s| s.fully_explored(self.settings.high_value_threshold)),
+            };
+            self.flight = Some(new);
+            let Some(prev) = prev else { return };
+            if new.hyperspace && !prev.hyperspace {
+                Some(Page::Navigation)
+            } else if new.system != prev.system {
+                Some(Page::Exploration)
+            } else if new.near_body != prev.near_body {
+                match new.near_body {
+                    Some(id) => system.and_then(|s| s.bodies.get(&id)).filter(|b| b.bio_signals > 0 && !b.bio_done()).map(|_| Page::Exobiology),
+                    None => Some(Page::Exploration),
+                }
+            } else if new.done && !prev.done {
+                Some(Page::Navigation)
+            } else {
+                None
+            }
+        };
+        let Some(target) = target else { return };
+        if self.settings.auto_page && self.shot.is_none() && !self.compact && self.page != Page::Settings && matches!(self.core.status.read().phase, Phase::Live) {
+            self.page = target;
         }
     }
 
@@ -994,6 +1054,7 @@ impl eframe::App for NexusApp {
         }
         self.auto_copy_next();
         self.remember_deposits();
+        self.follow_flight();
         let here = self.core.model.read().active().and_then(|g| g.location.star_pos);
         self.market.set_origin(here);
         // egui's Ctrl +/−/0 zoom changes the factor directly; keep the setting in step with it.

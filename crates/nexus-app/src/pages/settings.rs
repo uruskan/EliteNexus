@@ -88,6 +88,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                         cx.changed = true;
                     }
                 });
+                cx.changed |= g.switch(&mut s.auto_page, "Follow my flight", "Exploration when you arrive in a system, Exobiology when you approach a planet with life, Navigation when the system is done or a jump starts.");
             });
             section(ui, "Display");
             group(ui, |g| {

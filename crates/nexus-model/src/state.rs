@@ -321,6 +321,7 @@ impl GameState {
             Event::StartJump(s) => {
                 if s.jump_type == "Hyperspace" {
                     self.location.hyperspace = true;
+                    self.location.near_body = None;
                     if let (Some(sys), Some(class)) = (&s.star_system, &s.star_class) {
                         self.pending_star_class = Some((sys.clone(), class.clone()));
                         self.star_class_alert(ts, sys, class, alerts);
@@ -368,13 +369,16 @@ impl GameState {
                 self.location.body_id = Some(b.body_id);
                 self.location.body_type = Some("Planet".into());
                 self.mining.at_body(b.system_address, Some(b.body_id));
+                self.location.near_body = Some(b.body_id);
             }
             Event::LeaveBody(_) => {
                 self.location.lat_lon = None;
                 self.mining.leave_body();
+                self.location.near_body = None;
             }
             Event::Touchdown(t) => {
                 self.location.landed = true;
+                self.location.near_body = Some(t.body_id);
                 self.location.body = Some(t.body.clone());
                 self.location.body_id = Some(t.body_id);
                 if let (Some(lat), Some(lon)) = (t.latitude, t.longitude) {

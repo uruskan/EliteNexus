@@ -5,6 +5,12 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+### Added
+- **Settings › Follow my flight** (off by default) changes the page as you fly. Arriving in a system opens
+  Exploration; approaching a planet with biological signals you haven't finished analysing opens Exobiology, and
+  leaving it returns to Exploration. A finished system, or the start of a hyperspace jump, opens Navigation. It
+  reacts only to what happens while the game runs, never to the journals read at start.
+
 ## [0.7.3-beta.1] - 2026-10-25
 
 A beta of 0.7.3: Rhino surface mining remembers the mining locations you worked, with the number to pick in the

@@ -22,6 +22,9 @@ pub struct Settings {
     pub high_value_threshold: i64,
     /// Copy the next route system to the clipboard after each jump.
     pub auto_copy_next_system: bool,
+    /// Switch pages by itself as the commander flies: Exploration on arrival in a system, Exobiology near a
+    /// planet with life still to analyse, Navigation when the system is done or a jump starts.
+    pub auto_page: bool,
     pub accounts: Accounts,
     /// The first-run welcome has been completed.
     pub welcomed: bool,
@@ -148,6 +151,7 @@ impl Default for Settings {
             ui_scale: 1.0,
             high_value_threshold: 1_000_000,
             auto_copy_next_system: true,
+            auto_page: false,
             accounts: Accounts { eddn_listen: true, inara_dev_mode: true, ..Default::default() },
             welcomed: false,
             wishlist: Vec::new(),
