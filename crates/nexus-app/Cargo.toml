@@ -48,7 +48,13 @@ rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 [target.'cfg(windows)'.dependencies]
 # Linux speaks through speech-dispatcher's spd-say instead (src/tts.rs): no system library to link.
 tts.workspace = true
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_WindowsAndMessaging"] }
+# Gdi and Threading: the overlay finds the game's monitor and its own window.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security_Cryptography", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The overlay asks X11 which window is in front. libX11 is loaded at run time (as winit does), so the binary links
+# no system library for it.
+x11-dl = "2.21"
 
 [build-dependencies]
 embed-resource = "3"

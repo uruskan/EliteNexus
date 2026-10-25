@@ -15,9 +15,9 @@ Each page has a large title, and the **toolbar** at the top right shows, left to
 market feed (**EDDN n/min**: click it for the market database), uploads sent this session (once you enable a service;
 amber = a service is paused or rejecting, click for details), **Pause EDDN / Resume EDDN** when you share with EDDN
 (market prices are only sent when you undock, so pausing while docked keeps a market you just found to yourself), and
-**Live / Offline** (Live = the game is writing events). The round button next to it turns the window into a small
-always-on-top **HUD** for a second monitor or the edge of your screen (location, fuel, next star and whether it's
-scoopable, exobiology sampling radar, surface mining radar, system value, last alerts). "Full view" switches back.
+**Live / Offline** (Live = the game is writing events). The round button next to it switches the **overlay** on and
+off: a small black island at the top of the game's screen (see [Overlay](#overlay)). While it's on, the lock beside it
+locks it (clicks go to the game) or unlocks it to move it.
 
 Alerts appear as banners at the top right and are spoken if you enable voice.
 
@@ -50,7 +50,83 @@ choices or market filters, is one click away under **› Options**.
 | Bindings | Your active presets per category, conflicts, missing essentials, searchable list | "Printable reference card" writes an HTML card and opens it. Elite Nexus only reads your bindings and never changes them (change them in the game, Options › Controls). It shows the presets the game uses (`StartPreset.4.start`), each category from its own preset. When one of them can't be read, for example a built-in preset such as KeyboardMouseOnly while the game's folder (where built-in presets are) wasn't found, a warning at the top says so, names the preset shown instead and why, and offers **Choose the game folder…**; the conflicts and missing essentials are then that preset's. |
 | HUD & cockpit | **HUD colours**: recolour or dim the game's HUD with its own colour setting (`GraphicsConfigurationOverride.xml`), with a live cockpit preview, and keep hostile red, friendly green and shield blue out of a theme. **Glare and exposure**: tame the glare of cockpit lights with the game's own tone-mapping values. **Cockpit lights**: dim the cockpit's own lights | **HUD colours**: **Start from** a theme (the standard orange or community themes such as Mocha, Lemon, Empire blue; hover one for its author and what to expect), then turn the **Colour** wheel, lower the **Saturation**, or lower the **Brightness** to dim the whole HUD. **Matrix** shows the nine numbers for exact themes. The swatches under the preview show what each standard colour becomes (HUD orange, hostile red, friendly green, highlight blue, white), and the page warns when hostile and friendly contacts would look alike or the HUD gets too dark. **Apply to Elite Dangerous** writes only the three colour lines of that file and keeps everything else in it; your original file is copied aside the first time. The game reads it only when it starts, so quit to the desktop and restart to see the change. **Copy as XML** and **Use a theme someone shared** take the `<MatrixRed>` lines commanders post on forums; **Save theme** keeps your own (right-click one to delete it). What it can't do: the game has one matrix for the whole interface (it also tints station menus, the on-foot HUD and mission-board portraits, while the main menu stays orange), so it can't colour one element on its own, and it can't dim or recolour the cockpit's lighting (the Cockpit lights tab dims it). If EDHM is installed, the page warns that EDHM needs this setting left at the standard orange. **Keep hostile red, friendly green and shield blue** (under In the game) answers the commonest complaint about themes, friend and foe changing colour with everything else: with Elite Nexus's graphics hook installed and calibrated (the Cockpit lights tab does both; switch its dimmer off there if you only want this), the HUD shaders that apply the game's matrix apply it only to the HUD's orange, so hostile contacts stay red, friendly ones green, and shields, other highlights and white keep their standard colours. The preview, the swatches and the warnings then show it that way. It's saved as soon as you flip it, and the game picks it up when it next starts. Whether a colour counts as the HUD's orange is decided by its green and blue as shares of its red; **Options** sets the three shares (most green 60 %, most blue 30 %, least green 3.5 %). Frontier documents none of this, so if hostile contacts still change colour or parts of the HUD stay orange, adjust them there. Without the hook the switch says what it needs, and it can't be used alongside EDHM or another 3Dmigoto mod. **Glare and exposure**: Odyssey's auto-exposure (brightness adaptation) reacts to the cockpit's own lights, so with a bright dashboard in view everything outside is drawn darker; it can't be switched off. The tab changes what players change instead, in the same file: **Glare from lights** (`GlareCompensation`; the game uses 1.33, lower means less glare around bright lights), the **Standard ACES curve** (draws darks and mid-tones brighter than the game's own curve, highlights the same; the page shows by how much) and, under **Auto-exposure targets**, the three `Percentiles` the exposure is set from. Presets: **Game default**, **Less glare** (glare 1.0) and **Morbad's Odyssey tweak** (CMDR Morbad's 2021 forum settings). Frontier doesn't document these values, so they are an experiment: they change the whole picture (space, stations, planets), the game reads them only at start, and **Game default** + Apply puts the game's own values back. The cockpit lamps themselves can't be dimmed this way; **Bloom** in the game's Graphics options sets how much bright lights glow. **The game's folder**: Cockpit lights and "Keep hostile red…" work in the folder holding `EliteDangerous64.exe`. Elite Nexus looks in every Steam library (with Steam's own folder read from the registry, so a Steam installed on another drive is found too), in Windows' list of installed programs (Steam's and the Frontier launcher's entries) and in the usual Epic and Frontier folders. If it isn't found, both say so and offer **Choose the game folder…**; the folder can also be set under Settings › Game. **Cockpit lights**: the game has no setting for its cockpit lights, so this tab installs a dimmer: 3Dmigoto (a Direct3D 11 hook placed next to the game; open source, GPL-3.0) plus a fix for the game's light shader, so lights within the **Reach** of your eyes (about 5 m covers most cockpits) keep only the **Light kept** share of their light. Only the cockpit's own lights change: stations, carriers, planets and the HUD stay as they are. **Install the dimmer** first says exactly what happens, then downloads 3Dmigoto 1.4.9 (4.7 MB) from its official GitHub release, checks it against pinned checksums and puts d3d11.dll, d3dcompiler_47.dll, d3dx.ini, EliteNexus-3Dmigoto.json and a ShaderFixes folder next to EliteDangerous64.exe, then asks you to **calibrate** once: start the game, get into your cockpit somewhere quiet (docked or in open space), quit to the desktop. For that one session the game records the shaders it loads (about 21 MB, deleted afterwards) and runs without the dimmer; when it closes, Elite Nexus finds the light shader among them and keeps a fix for exactly that shader, named by its fingerprint (**Finish calibration** does it by hand, **Cancel** stops). The HUD shaders for "Keep hostile red…" are found in the same run. In the game 3Dmigoto only swaps those shaders: everything else, including shaders the game adds later (new ships, new carriers), is left alone. The tab shows when and for which game build it was calibrated; after a game update it says so and asks you to **Calibrate again**, because a changed light shader no longer matches (the dimmer is then simply off; the game is unaffected). Installs from Elite Nexus 0.3.0 ran a pattern inside the game on every shader it loaded, which crashed the game near the newer fleet carriers: the tab says so (and, while its hook is in place, a notice at start) and **Update and calibrate** replaces it (and puts back a d3d11.dll that was renamed to switch the hook off). **Remove** takes out exactly those files (any that changed since are left in place), the calibration and its fixes, and the files 3Dmigoto made. The same install is the graphics hook HUD colours uses to keep hostile red, friendly green and shield blue, so Remove switches that off too. Frame captures and exported shaders left in the game folder from setting 3Dmigoto up (`FrameAnalysis-…`, `ShaderCache`) are shown with their size, and **Delete them** removes them; the dimmer doesn't use them. Settings saved here apply the next time the game starts; in the game, **F9** switches the dimmer on and off, **F10** steps the light kept (0, 15, 35, 60, 100 %) and **F11** the reach (5, 8, 12 m), while the game window is in front. They work only without Shift, Ctrl or Alt held. The game gets every press of these keys too (Elite Nexus can't hold one back, and never changes your controls): if the control presets the game uses bind one of them on its own, the tab names the action, because pressing the key then does both, and if it can't read those presets it says so instead of guessing. The fixes are made on your PC from your own game and never leave it. It can't run alongside EDHM or another 3Dmigoto mod (the tab says so if one is there), and Frontier tolerates such mods without having approved them. On Linux it is untested: Proton brings its own d3d11.dll (DXVK) and may skip the one in the game folder, so if calibrating finds no shaders, add `WINEDLLOVERRIDES="d3d11,d3dcompiler_47=n,b" %command%` to Elite Dangerous's launch options in Steam (Properties › General). |
 | Accounts & sync | EDDN / EDSM / Inara / EDAstro | All opt-in. With an Inara key, the Inara section confirms who the key belongs to ("Connected as CMDR …", with a link to your profile) and sends your current profile as soon as sync starts. Inara only accepts apps it has approved by name; it approved "Elite Nexus" in October 2026, so your personal API key is all it needs. Should Inara ever refuse the app ("no access allowed"), sync pauses and the section says so. Keys are encrypted with Windows DPAPI (on Linux they are stored unencrypted, in a settings file only your user account can read). History is never uploaded. Each card shows sent / queued / failed counts and why a service is paused (bad key, rate limit). Unsent items survive restarts (`nexus-data\uplink\`); switching a service off discards its queue. For the first EDDN session you can tick "Test mode" to send to EDDN's test schemas only. |
-| Settings | Journal folder, game folder, voice, toasts, thresholds, text and controls size; on Linux, the app-menu entry | **Custom journal folder**: type or paste a folder, or **Browse…** for one. Quotes around it (Explorer's "Copy as path") are removed, and a folder on another PC works (`\\MAINPC\Users\…\Saved Games\Frontier Developments\Elite Dangerous`, for reading a main PC's journals over the network). When you press Enter, leave the field or pick a folder, Elite Nexus looks for journals (`Journal.….log`) in it and, if there are any, reads them at once; if you picked a folder above the journals (your user folder, Saved Games, Frontier Developments) it uses the game's folder inside. A folder without journals, or one it can't open, is saved anyway, and the page says Elite Nexus keeps reading the old folder until **Reload journals** or the next start. Empty the field to go back to the folder found automatically. When the journal folder can't be read, or holds no commander yet, every page shows this field right under the problem, and Settings opens as usual: a laptop reading another PC's journals can be pointed at them on its first start. **Game folder** (under Game) shows the game folder in use; **Custom game folder** sets it when it isn't found (Steam library, Frontier or Epic folder, or `Products` inside them all work). HUD & cockpit and Bindings' built-in presets use it. "Test voice" checks text-to-speech. Size comes in fixed steps (90–175 %); Ctrl + / Ctrl − also change it and Ctrl 0 resets to 100 %. **About** shows the version and the data folder, and **Sponsor** opens the developer's GitHub Sponsors page: Elite Nexus is free with no ads, and sponsoring is optional (nothing in the app depends on it). |
+| Settings | Journal folder, game folder, voice, toasts, thresholds, text and controls size, the overlay; on Linux, the app-menu entry | **Overlay**: see [Overlay](#overlay). **Custom journal folder**: type or paste a folder, or **Browse…** for one. Quotes around it (Explorer's "Copy as path") are removed, and a folder on another PC works (`\\MAINPC\Users\…\Saved Games\Frontier Developments\Elite Dangerous`, for reading a main PC's journals over the network). When you press Enter, leave the field or pick a folder, Elite Nexus looks for journals (`Journal.….log`) in it and, if there are any, reads them at once; if you picked a folder above the journals (your user folder, Saved Games, Frontier Developments) it uses the game's folder inside. A folder without journals, or one it can't open, is saved anyway, and the page says Elite Nexus keeps reading the old folder until **Reload journals** or the next start. Empty the field to go back to the folder found automatically. When the journal folder can't be read, or holds no commander yet, every page shows this field right under the problem, and Settings opens as usual: a laptop reading another PC's journals can be pointed at them on its first start. **Game folder** (under Game) shows the game folder in use; **Custom game folder** sets it when it isn't found (Steam library, Frontier or Epic folder, or `Products` inside them all work). HUD & cockpit and Bindings' built-in presets use it. "Test voice" checks text-to-speech. Size comes in fixed steps (90–175 %); Ctrl + / Ctrl − also change it and Ctrl 0 resets to 100 %. **About** shows the version and the data folder, and **Sponsor** opens the developer's GitHub Sponsors page: Elite Nexus is free with no ads, and sponsoring is optional (nothing in the app depends on it). |
+
+## Overlay
+
+The overlay is a small black island at the top centre of the game's screen, in a window of its own beside the main
+window. It says what's going on in a word or two, opens up for the moments that need you, and fades away when nothing
+does. Switch it on with the round button in the toolbar or under Settings › Overlay.
+
+What it shows depends on what you're doing:
+
+* **Next jump**: in supercruise with a route, the next star and whether you can scoop it, and the jumps left
+  ("Scoopable · 12 jumps left"). It opens while the FSD charges a hyperspace jump, in hyperspace (the star you're
+  arriving at) and in the galaxy map: the next system's name (on your clipboard when "copy next system" is on),
+  the next neutron star on the route and your fuel.
+* **Arrival**: it opens for five seconds when you arrive somewhere worth it (a body worth at least the high-value
+  setting, biology, an Earth-like, water or ammonia world, or a first discovery) and stays open while the FSS, system
+  map or orrery is; then it settles to the bodies with biology and what the system is worth once mapped.
+* **Approach**: open in orbital cruise and while gliding: the body's gravity, atmosphere and temperature, the genera
+  there (struck through once analysed), what its biology is likely worth (×5 when the first-logged bonus is likely)
+  and, when Elite Nexus knows one, where to land: the settlement you're approaching, the nearest deposit the Rhino
+  refined at, or where your ship set down by a mining location, with distance and compass bearing. On the surface it
+  stays small (bio signals and gravity); while you map the body, its mapped value, then its genera.
+* **Sampling**: "2 of 3 samples" and whether you're far enough from your earlier samples for the next one to count:
+  "Far enough" in green, or "48 m to go" in yellow. It opens for three seconds when you take a sample and when you get
+  far enough, with a radar of your earlier samples and their colony ranges, turned so that up is the way you're
+  facing. Positions come from Status.json while Elite Nexus runs; samples taken without it have none, and it says so.
+* **Rhino mining**: in the Rhino near deposits it refined at, the nearest deposit, how far, and which way to turn. It
+  opens when you reach a deposit and when you turn back to your ship, with the radar of deposits, your ship and where
+  it landed.
+* **Trade stop**: a market you pinned in this system. A pinned fleet carrier shows its callsign (the navigation panel
+  lists carriers by it) and whether the game has listed it here yet. It opens when you drop out of supercruise there:
+  what to buy or sell, how much, the price when you pinned it, and the route's next stop.
+* **Docked**: it opens for six seconds as you dock: the exploration and exobiology data this station buys, and what
+  it's worth, and orders you pinned here.
+* **Carrier**: your carrier's jump countdown ("Carrier → Colonia 7:42"); when something else is going on, in a small
+  capsule of its own beside the island.
+* **Alerts**: an important alert opens the island for four seconds, then it goes back to what it was.
+
+While a cockpit panel or the station's menus are open it's a small empty capsule, and in danger or while being
+interdicted it disappears (only a critical alert shows). It shows only while Elite Dangerous or Elite Nexus is the
+window in front; **Visible over every window** keeps it. When there's nothing to say it fades away; **Keep it when
+idle** keeps the small capsule.
+
+**Locked** (the lock in the toolbar, or Settings › Overlay), clicks go through it to the game and it never takes the
+focus, so the game keeps your keyboard and joystick. Unlock it to drag it elsewhere; a click on it then opens its page
+in the main window. **Where** puts it at the top left, centre or right of the game's screen; **Size** scales it
+(100 to 250 %), whatever size the main window uses.
+
+**See-through** draws just the island over the game, changing shape as it opens and closes. It applies after a
+restart. Off, the overlay is an opaque black panel the size of the open island, and its content crossfades instead;
+where the island would be an empty capsule, the panel hides. On Windows, see-through uses DirectX 12 through
+DirectComposition; a PC without DirectX 12 still starts, with an opaque panel.
+
+What each system can do:
+
+* **Windows**: in exclusive **Fullscreen** the game hides every other window, the overlay too: set Options ›
+  Graphics › Display to **Borderless** or **Windowed**.
+* **Linux**: on X11 (and XWayland) it stays on top and knows which window is in front; see-through needs a compositing
+  window manager. Wayland lets no app keep a window on top or say which one is in front: start Elite Nexus as
+  `WAYLAND_DISPLAY= ./EliteNexus` to run it through XWayland.
+* **macOS**: a game in full screen has a Space of its own, where other apps' windows don't show: run the game in a
+  window. macOS doesn't say which window is in front, so the overlay always shows; with see-through off, macOS may
+  bring the overlay to the front each time it appears.
+
+### VR
+
+**VR mode** (Settings › Overlay) makes the overlay an opaque black panel of fixed size that never hides, with nothing
+smaller than 14 pt, so a tool that mirrors desktop windows into your headset always has it to show. Elite Nexus draws
+nothing inside VR itself. Tools that mirror a window ("Elite Nexus overlay"):
+
+* **Desktop+** (free), **OVR Toolkit** and **XSOverlay** (both paid), with the game in SteamVR: add the window and pin
+  it to your view or to a place in the cockpit.
+* **SteamVR's own desktop view**, from the SteamVR dashboard.
+* **OpenKneeboard**, in its SteamVR mode.
+* With the game in **Oculus** mode (no SteamVR), Meta Quest Link's **Pin to Experience** pins a desktop window inside
+  the game.
+* On Linux, **WayVR**.
 
 ## Voice
 
@@ -118,9 +194,9 @@ yet. Reports are collected in GitHub issue #3 (github.com/uruskan/EliteNexus/iss
   which one spoke, that none is installed, or what went wrong (speech-dispatcher also needs an output module, such as
   `speech-dispatcher-espeak-ng` on Fedora and Nobara). **API keys** aren't encrypted (Linux has no DPAPI); the settings
   file that holds them is readable only by your user account.
-* The window draws with Vulkan or OpenGL, on X11 or Wayland. On Wayland the compact HUD can't keep itself above
-  other windows (Wayland doesn't let apps do that): start Elite Nexus as `WAYLAND_DISPLAY= ./EliteNexus` to run it
-  through XWayland, where it can.
+* The window draws with Vulkan or OpenGL, on X11 or Wayland. On Wayland the overlay can't keep itself above other
+  windows (Wayland doesn't let apps do that): start Elite Nexus as `WAYLAND_DISPLAY= ./EliteNexus` to run it through
+  XWayland, where it can.
 
 ## macOS
 
@@ -148,6 +224,5 @@ the app in Applications. The macOS build is new and hasn't been tried by us with
 * **Voice** uses the system's `say`, in the system voice chosen in System Settings › Accessibility › Spoken
   Content. **API keys** aren't encrypted (there's no DPAPI); the settings file that holds them is readable only by
   your user account.
-* The window draws with Metal. The compact HUD stays above other windows, but macOS gives a full-screen app a Space
-  of its own, where other apps' windows don't show: run the game in a window, or put the compact HUD on a second
-  display.
+* The window draws with Metal. The overlay stays above other windows, but macOS gives a full-screen app a Space of
+  its own, where other apps' windows don't show: run the game in a window.

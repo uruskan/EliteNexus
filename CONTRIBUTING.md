@@ -32,6 +32,7 @@ cargo build --release -p nexus-app     # target/release/EliteNexus (EliteNexus.e
 | `--journal-dir <dir>` | Read another journal folder (a test run; it never uploads). |
 | `--mute` | No voice. |
 | `--demo` | Add a sample Ask conversation and an alert banner (for screenshots). |
+| `--overlay <moment>` | The overlay with sample content: the main window shows the moment compact and expanded, over the game and as the opaque panel, and (except in a screenshot run) the overlay's own window turns between the two every four seconds. Moments: `jump`, `hyperspace`, `arrival`, `approach`, `sampling`, `close`, `mining`, `trade`, `docked`, `carrier`, `two`, `alert`, `quiet`. |
 | `--screenshot <png> [--shot-delay <s>] [--size <w>x<h>]` | Render the page off-screen after loading, save the PNG and exit. The window is never visible and nothing is uploaded. `--size 1000x760` checks a narrow layout; `--shot-delay 8` or more waits for the galaxy image or a Spansh search (5 to 20 s). |
 | `--install-desktop` / `--uninstall-desktop` | Linux only: add Elite Nexus and its icon to the desktop's app menu, or take it out. |
 

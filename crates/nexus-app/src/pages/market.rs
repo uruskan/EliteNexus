@@ -2,7 +2,7 @@
 //! hotspots. Commodity and station names are links: they open the commodity's page (where to buy,
 //! where to sell, latest prices) or the station's market.
 
-use crate::finder::{self, SellPlan};
+use crate::finder::{self, carriers_here, presence, Presence, SellPlan};
 use crate::jobs::Slot;
 use crate::market::{ImportJob, ImportSource, MarketService, SPANSH_STATIONS_URL};
 use crate::runplan::{self, Order, PlanInput, RunPlan};
@@ -259,44 +259,6 @@ fn pin_button(ui: &mut Ui, pinned: bool) -> bool {
 enum RowAction {
     Select(u64),
     Pin(Pin),
-}
-
-/// Fleet carriers the game has listed in the current system since you arrived: (signal name, callsign).
-/// The game logs a carrier's signal when it shows up in your navigation panel: on arrival, or
-/// when you drop out of supercruise near it.
-fn carriers_here(gs: &GameState) -> Vec<(String, String)> {
-    let Some(sys) = gs.exploration.systems.get(&gs.location.system_address) else { return Vec::new() };
-    sys.signals
-        .iter()
-        .filter(|s| s.kind.as_deref() == Some("FleetCarrier") && s.ts >= gs.location.last_arrival)
-        .map(|s| (s.name.clone(), callsign(&s.name)))
-        .collect()
-}
-
-/// A carrier signal's callsign: its last word (`WEDDY BLIRTNAUT H1X-L0L` → `H1X-L0L`).
-fn callsign(signal: &str) -> String {
-    signal.split_whitespace().last().unwrap_or_default().to_ascii_uppercase()
-}
-
-/// Whether a carrier is in the current system, from what the game listed since you arrived.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Presence {
-    Here,
-    /// The game listed this many carriers here, and not this one.
-    NotHere(usize),
-    /// No carrier listed yet this visit.
-    Unknown,
-}
-
-fn presence(listed: &[(String, String)], station: &str) -> Presence {
-    let cs = station.trim().to_ascii_uppercase();
-    if listed.iter().any(|(_, c)| *c == cs) {
-        Presence::Here
-    } else if listed.is_empty() {
-        Presence::Unknown
-    } else {
-        Presence::NotHere(listed.len())
-    }
 }
 
 type Res<T> = Result<Vec<T>, String>;

@@ -24,6 +24,7 @@ FEATURES = [
     'Cockpit light dimmer and Odyssey glare and exposure presets',
     'Engineering blueprint wishlist, materials shopping list and material-trader plan',
     'Fleet loadouts, missions and massacre stacks, mining, fleet carrier, colonisation and BGS tracking',
+    'An overlay at the top of the game screen: next jump, arrivals, approach, sampling distance, Rhino deposits, trade stops',
     'AI co-pilot grounded in your own ship, journal and market data',
     'Opt-in sync with EDDN, EDSM, Inara and EDAstro',
 ]

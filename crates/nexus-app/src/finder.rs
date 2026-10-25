@@ -1,5 +1,6 @@
 //! Market lookups used by other pages: suppliers for colonisation depots, buyers for the cargo
-//! hold. Plain functions over the galaxy database; pages run them in background jobs.
+//! hold. Plain functions over the galaxy database; pages run them in background jobs. And, from the
+//! journal alone, whether a pinned fleet carrier is in this system (the Market page and the overlay).
 
 use nexus_galaxy::{CommodityHit, CommodityQuery, GalaxyDb, Sort, TradeMode};
 use rustc_hash::FxHashMap;
@@ -106,6 +107,45 @@ pub fn sellable_hold(gs: &nexus_model::GameState) -> Vec<Line> {
         }
     }
     lines
+}
+
+/// Fleet carriers the game has listed in the current system since you arrived: (signal name, callsign).
+/// The game logs a carrier's signal when it shows up in your navigation panel: on arrival, or
+/// when you drop out of supercruise near it.
+pub fn carriers_here(gs: &nexus_model::GameState) -> Vec<(String, String)> {
+    let Some(sys) = gs.exploration.systems.get(&gs.location.system_address) else { return Vec::new() };
+    sys.signals
+        .iter()
+        .filter(|s| s.kind.as_deref() == Some("FleetCarrier") && s.ts >= gs.location.last_arrival)
+        .map(|s| (s.name.clone(), callsign(&s.name)))
+        .collect()
+}
+
+/// A carrier signal's callsign: its last word (`WEDDY BLIRTNAUT H1X-L0L` → `H1X-L0L`).
+pub fn callsign(signal: &str) -> String {
+    signal.split_whitespace().last().unwrap_or_default().to_ascii_uppercase()
+}
+
+/// Whether a carrier is in the current system, from what the game listed since you arrived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Presence {
+    Here,
+    /// The game listed this many carriers here, and not this one.
+    NotHere(usize),
+    /// No carrier listed yet this visit.
+    Unknown,
+}
+
+/// Whether the carrier with the callsign `station` is among those `listed` (see [`carriers_here`]).
+pub fn presence(listed: &[(String, String)], station: &str) -> Presence {
+    let cs = station.trim().to_ascii_uppercase();
+    if listed.iter().any(|(_, c)| *c == cs) {
+        Presence::Here
+    } else if listed.is_empty() {
+        Presence::Unknown
+    } else {
+        Presence::NotHere(listed.len())
+    }
 }
 
 #[cfg(test)]

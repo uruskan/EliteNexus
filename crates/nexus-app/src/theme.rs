@@ -27,7 +27,6 @@ pub mod pal {
     pub const SEPARATOR: Color32 = Color32::from_rgb(60, 60, 63);
 
     // Older names, kept so every page shares one palette.
-    pub const BG1: Color32 = WINDOW;
     pub const BORDER: Color32 = SEPARATOR;
 
     // Labels: primary, secondary, tertiary.
@@ -54,6 +53,19 @@ pub mod pal {
     pub const PURPLE: Color32 = Color32::from_rgb(191, 90, 242);
     pub const GOLD: Color32 = Color32::from_rgb(255, 204, 0);
     pub const GRAY: Color32 = Color32::from_rgb(142, 142, 147);
+    /// Apple's indigo, in its lighter accessible tone: fleet carriers.
+    pub const INDIGO: Color32 = Color32::from_rgb(125, 122, 255);
+
+    // The overlay's island: pure black, white text, and opaque equivalents of Apple's translucent greys on black.
+    pub const ISLAND: Color32 = Color32::BLACK;
+    /// Secondary text on the island (62 % white).
+    pub const ISLAND_DIM: Color32 = Color32::from_rgb(146, 146, 152);
+    /// The hairline around the island, over whatever is behind it.
+    pub const ISLAND_HAIR: Color32 = Color32::from_rgba_premultiplied(23, 23, 23, 23);
+    /// A radar dial's face, its rings, and a progress ring's track.
+    pub const ISLAND_DIAL: Color32 = Color32::from_rgb(28, 28, 30);
+    pub const ISLAND_LINE: Color32 = Color32::from_rgb(58, 58, 60);
+    pub const ISLAND_TRACK: Color32 = Color32::from_rgb(41, 41, 42);
 }
 
 /// Semibold: headings, numbers, emphasis.
@@ -70,6 +82,19 @@ pub fn display(size: f32) -> FontId {
 pub fn bold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("bold".into()))
 }
+
+/// Medium text of `size` (the overlay's secondary lines).
+pub fn medium(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("medium".into()))
+}
+
+/// Phosphor's filled icons at `size` (the overlay's glyphs; `egui_phosphor::fill` names them).
+pub fn icon_fill(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name(ICON_FILL.into()))
+}
+
+/// The font family of Phosphor's filled icons.
+const ICON_FILL: &str = "phosphor-fill";
 
 /// Type scale (points), after Apple's text styles, sized for reading at arm's length on a desktop
 /// monitor. Nothing in the app is smaller than `CAPTION`.
@@ -99,6 +124,7 @@ fn find_font(names: &[&str]) -> Option<Vec<u8>> {
 /// Inter (SIL OFL 1.1, data/fonts/inter): the closest open match to Apple's SF Pro, compiled in so
 /// every PC gets the same type.
 const INTER_REGULAR: &[u8] = include_bytes!("../../../data/fonts/inter/Inter-Regular.ttf");
+const INTER_MEDIUM: &[u8] = include_bytes!("../../../data/fonts/inter/Inter-Medium.ttf");
 const INTER_SEMIBOLD: &[u8] = include_bytes!("../../../data/fonts/inter/Inter-SemiBold.ttf");
 const INTER_BOLD: &[u8] = include_bytes!("../../../data/fonts/inter/Inter-Bold.ttf");
 /// Monospace from the system (Cascadia Mono on Windows 11, Consolas everywhere).
@@ -135,12 +161,15 @@ pub fn install(ctx: &egui::Context) {
     }
     // Each weight falls back to the regular stack (icons, emoji, missing glyphs).
     let proportional = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
-    for (family, bytes) in [("semibold", INTER_SEMIBOLD), ("bold", INTER_BOLD)] {
+    for (family, bytes) in [("medium", INTER_MEDIUM), ("semibold", INTER_SEMIBOLD), ("bold", INTER_BOLD)] {
         fonts.font_data.insert(family.into(), Arc::new(FontData::from_static(bytes)));
         let mut stack = vec![family.to_string()];
         stack.extend(proportional.iter().cloned());
         fonts.families.insert(FontFamily::Name(family.into()), stack);
     }
+    // The filled icons share the regular set's code points, so they get a family of their own instead of joining the
+    // text's fallbacks (Inter first: it answers for letters, the icons fall through to Phosphor).
+    egui_phosphor::add_font_bytes_as_family(&mut fonts, ICON_FILL, egui_phosphor::Variant::Fill.font_bytes());
     ctx.set_fonts(fonts);
     // A dark native title bar, so the window frame matches the app.
     ctx.send_viewport_cmd(egui::ViewportCommand::SetTheme(egui::SystemTheme::Dark));

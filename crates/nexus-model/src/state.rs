@@ -39,6 +39,8 @@ pub struct GameState {
     pub cmdr: Commander,
     pub location: Location,
     pub status: Option<Arc<Status>>,
+    /// Status.json updates applied so far: a new value means a new Status.json.
+    pub status_writes: u64,
     pub fleet: Fleet,
     pub inventory: Inventory,
     pub missions: Missions,
@@ -117,6 +119,11 @@ impl GameState {
     pub fn route_remaining(&self) -> &[RouteHop] {
         let start = self.nav_route.iter().position(|h| h.system_address == self.location.system_address).map_or(0, |i| i + 1);
         &self.nav_route[start..]
+    }
+
+    /// In hyperspace: the system being jumped to and its star class (`StartJump`).
+    pub fn jumping_to(&self) -> Option<(&str, &str)> {
+        self.pending_star_class.as_ref().filter(|_| self.location.hyperspace).map(|(s, c)| (s.as_str(), c.as_str()))
     }
 
     /// The carriers the commander has at `now`, their own first: known and not decommissioned.
@@ -403,6 +410,7 @@ impl GameState {
             }
             Event::ApproachSettlement(s) => {
                 self.location.settlement = Some(s.name_localised.clone().unwrap_or_else(|| s.name.clone()));
+                self.location.settlement_pos = s.latitude.zip(s.longitude);
             }
             Event::Embark(e) => {
                 self.location.on_foot = false;
@@ -1145,6 +1153,7 @@ impl GameState {
             Companion::Status(st) => {
                 self.on_status(st, live, alerts);
                 self.status = Some(st.clone());
+                self.status_writes += 1;
             }
             Companion::Market(m, _) => self.market = Some(m.clone()),
             Companion::Outfitting(o, _) => self.outfitting = Some(o.clone()),

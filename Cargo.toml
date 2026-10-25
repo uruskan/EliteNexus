@@ -70,7 +70,8 @@ eframe = { version = "0.36", default-features = false, features = ["default_font
 egui = "0.36"
 egui_extras = { version = "0.36", features = ["all_loaders"] }
 egui_plot = "0.37"
-egui-phosphor = "0.14"
+# Regular icons for the app, filled ones for the overlay.
+egui-phosphor = { version = "0.14", features = ["fill"] }
 arboard = "3"
 tts = "0.26"
 image = { version = "0.25", default-features = false, features = ["png"] }

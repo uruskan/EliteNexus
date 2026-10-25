@@ -9,7 +9,6 @@ use crate::widgets;
 use egui::{Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use egui_phosphor::regular as icon;
 use nexus_model::{Alert, Priority};
-use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -29,6 +28,11 @@ pub struct Overrides {
     pub tab: Option<String>,
     /// `--demo` (screenshot runs only): sample content for pages that need an account, e.g. Ask.
     pub demo: bool,
+    /// `--overlay <moment>`: the overlay with sample content (see `overlay::DEMOS`), and in the main window the moment
+    /// compact and expanded, for screenshots.
+    pub overlay_demo: Option<String>,
+    /// The window renderer was set up for a see-through overlay (Settings › Overlay, read at start).
+    pub overlay_see_through: bool,
 }
 
 pub struct ScreenshotJob {
@@ -66,7 +70,6 @@ pub struct NexusApp {
     data_dir: PathBuf,
     page: Page,
     toasts: Vec<Toast>,
-    alert_log: VecDeque<Alert>,
     speaker: Speaker,
     applied_scale: f32,
     settings_dirty: Option<Instant>,
@@ -100,8 +103,8 @@ pub struct NexusApp {
     shot: Option<ScreenshotJob>,
     last_jump_count: Option<usize>,
     clipboard: Option<arboard::Clipboard>,
-    compact: bool,
-    compact_request: bool,
+    /// The overlay: the island at the top of the game's screen, in a window of its own.
+    overlay: crate::overlay::window::Overlay,
     /// Looking for a cockpit-light dimmer from 0.3.0 in the game folders (a notice if there is one).
     dimmer_check: Option<crate::jobs::Job<bool>>,
     /// When this frame's work began, and when a slow frame was last logged.
@@ -144,6 +147,13 @@ impl NexusApp {
         let speaker = Speaker::start();
         speaker.set_rate(settings.tts_rate);
         speaker.set_volume(settings.tts_volume);
+        // Screenshot runs never open it: nothing may pop up over the game.
+        let overlay = crate::overlay::window::Overlay::new(ov.overlay_see_through, shot.is_none(), ov.overlay_demo.as_deref().and_then(crate::overlay::demo));
+        if let Some(name) = ov.overlay_demo.as_deref()
+            && crate::overlay::demo(name).is_none()
+        {
+            tracing::warn!("--overlay {name}: no such moment (one of {})", crate::overlay::DEMOS.join(", "));
+        }
         NexusApp {
             core,
             settings,
@@ -161,7 +171,6 @@ impl NexusApp {
             } else {
                 Vec::new()
             },
-            alert_log: VecDeque::new(),
             speaker,
             applied_scale: 0.0,
             settings_dirty: None,
@@ -189,8 +198,7 @@ impl NexusApp {
             shot,
             last_jump_count: None,
             clipboard: None,
-            compact: false,
-            compact_request: false,
+            overlay,
             dimmer_check: Some(crate::jobs::Job::spawn(&cc.egui_ctx, crate::notices::old_dimmer_installed)),
             frame_started: None,
             // The first frames load fonts and textures: nothing is logged in the first 10 seconds.
@@ -283,10 +291,7 @@ impl NexusApp {
                 && let Some(s) = &a.speech {
                     self.speaker.say(s.clone());
                 }
-            if self.alert_log.len() >= 200 {
-                self.alert_log.pop_front();
-            }
-            self.alert_log.push_back(a.clone());
+            self.overlay.alert(&a);
             let dup = self.toasts.iter().rev().take(4).any(|t| t.alert.title == a.title && t.alert.detail == a.detail && t.born.elapsed() < Duration::from_secs(20));
             if !dup {
                 self.toasts.push(Toast { alert: a, born: Instant::now() });
@@ -418,15 +423,31 @@ impl NexusApp {
             });
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                 ui.add_space(2.0);
+                let ov = &mut self.settings.overlay;
                 // Wayland doesn't let a window keep itself above the others; XWayland does.
-                let tip = if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some() {
-                    "Compact HUD for a second screen. Wayland doesn't let apps stay on top: to keep it above the game, start Elite Nexus as WAYLAND_DISPLAY= ./EliteNexus (it then runs through XWayland)."
-                } else {
-                    "Compact always-on-top HUD for a second screen"
+                let wayland = cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
+                let tip = match (ov.enabled, wayland) {
+                    (true, _) => "Overlay on: the island at the top of the game's screen. Click to switch it off.",
+                    (false, true) => {
+                        "Overlay: a small island at the top of the game's screen that says what's going on. Wayland doesn't let apps stay on top: to keep it above the game, start Elite Nexus as WAYLAND_DISPLAY= ./EliteNexus (it then runs through XWayland)."
+                    }
+                    (false, false) => "Overlay: a small island at the top of the game's screen that says what's going on",
                 };
-                if toolbar_button(ui, icon::PICTURE_IN_PICTURE, tip).clicked() {
-                    self.compact_request = true;
-                    ui.ctx().request_repaint();
+                if toolbar_button(ui, icon::PICTURE_IN_PICTURE, tip, ov.enabled).clicked() {
+                    ov.enabled = !ov.enabled;
+                    self.settings_dirty = Some(Instant::now());
+                }
+                if ov.enabled {
+                    ui.add_space(6.0);
+                    let (glyph, tip) = if ov.locked {
+                        (icon::LOCK_SIMPLE, "Locked: clicks go to the game. Click to unlock the overlay, then drag it where you want it.")
+                    } else {
+                        (icon::LOCK_SIMPLE_OPEN, "Unlocked: drag the overlay to move it, or click it to open its page here. Click to lock it again.")
+                    };
+                    if toolbar_button(ui, glyph, tip, !ov.locked).clicked() {
+                        ov.locked = !ov.locked;
+                        self.settings_dirty = Some(Instant::now());
+                    }
                 }
                 ui.add_space(8.0);
                 action = toolbar_capsule(ui, &items);
@@ -565,6 +586,7 @@ impl NexusApp {
                     test_voice: false,
                     restart_core: false,
                     voice: self.speaker.status(),
+                    overlay_see_through: self.overlay.see_through(),
                 };
                 pages::settings::show(ui, &mut cx);
                 settings_changed = cx.changed;
@@ -653,6 +675,7 @@ impl NexusApp {
             test_voice: false,
             restart_core: false,
             voice: self.speaker.status(),
+            overlay_see_through: self.overlay.see_through(),
         };
         // Scrolls: with the settings banner above it, a short window would otherwise cut off the folder's buttons.
         egui::ScrollArea::vertical().id_salt(("page", Page::Settings as u8, settings_page)).auto_shrink([false, false]).show(ui, |ui| {
@@ -688,45 +711,6 @@ impl NexusApp {
             self.sync.attach(&self.core);
             self.market.attach(&self.core);
         }
-    }
-
-    fn set_compact(&mut self, ctx: &egui::Context, on: bool) {
-        self.compact = on;
-        if on {
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
-            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(340.0, 300.0)));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(420.0, 640.0)));
-        } else {
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
-            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(Vec2::new(880.0, 600.0)));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(1480.0, 920.0)));
-        }
-    }
-
-    fn compact_ui(&mut self, ui: &mut Ui) {
-        egui::CentralPanel::default().frame(Frame::new().fill(pal::BG1).inner_margin(Margin::same(14))).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(icon::DIAMOND).color(pal::ACCENT));
-                ui.label(RichText::new("Elite Nexus").font(display(13.5)).color(pal::DIM));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.small_button(format!("{} Full view", icon::ARROWS_OUT)).clicked() {
-                        let ctx = ui.ctx().clone();
-                        self.set_compact(&ctx, false);
-                    }
-                });
-            });
-            ui.add_space(4.0);
-            let model = self.core.model.read();
-            match model.active() {
-                Some(gs) => {
-                    let alerts: Vec<Alert> = self.alert_log.iter().cloned().collect();
-                    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| pages::compact::show(ui, gs, &alerts, &self.settings.mining));
-                }
-                None => {
-                    ui.label(RichText::new("Waiting for journal data…").color(pal::DIM));
-                }
-            }
-        });
     }
 
     /// Alerts as macOS-style notification banners, top right, newest first.
@@ -875,15 +859,15 @@ fn toolbar_capsule(ui: &mut Ui, items: &[CapItem]) -> Option<CapAction> {
     clicked
 }
 
-/// A round glass toolbar button.
-fn toolbar_button(ui: &mut Ui, glyph: &str, tip: &str) -> egui::Response {
+/// A round glass toolbar button; its glyph is orange while what it switches is `on`.
+fn toolbar_button(ui: &mut Ui, glyph: &str, tip: &str, on: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
     let p = ui.painter();
     p.add(egui::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(70) }.as_shape(rect, CornerRadius::same(17)));
     let fill = if resp.hovered() { pal::CARD_HI } else { pal::CARD };
     p.rect_filled(rect, CornerRadius::same(17), fill);
     p.rect_stroke(rect, CornerRadius::same(17), Stroke::new(1.0, Color32::from_white_alpha(16)), egui::StrokeKind::Inside);
-    p.text(rect.center(), Align2::CENTER_CENTER, glyph, egui::FontId::proportional(17.0), pal::TEXT);
+    p.text(rect.center(), Align2::CENTER_CENTER, glyph, egui::FontId::proportional(17.0), if on { pal::ACCENT } else { pal::TEXT });
     resp.on_hover_text(tip)
 }
 
@@ -996,6 +980,7 @@ impl eframe::App for NexusApp {
         self.remember_deposits();
         let here = self.core.model.read().active().and_then(|g| g.location.star_pos);
         self.market.set_origin(here);
+        self.overlay_logic(ctx);
         // egui's Ctrl +/−/0 zoom changes the factor directly; keep the setting in step with it.
         let zoom = ctx.zoom_factor();
         if self.applied_scale > 0.0 && (zoom - self.applied_scale).abs() > 1e-3 {
@@ -1014,6 +999,12 @@ impl eframe::App for NexusApp {
             }
         // Keep clocks/countdowns ticking even without journal activity.
         ctx.request_repaint_after(Duration::from_secs(1));
+    }
+
+    /// Transparent: a see-through overlay is see-through wherever the island isn't. The main window paints all of its
+    /// area anyway.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0; 4]
     }
 
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
@@ -1044,16 +1035,51 @@ impl eframe::App for NexusApp {
 }
 
 impl NexusApp {
-    /// The whole window: the sidebar and the page, the compact HUD, the welcome, the banners.
-    fn draw(&mut self, ui: &mut Ui) {
-        if std::mem::take(&mut self.compact_request) {
-            let ctx = ui.ctx().clone();
-            self.set_compact(&ctx, true);
+    /// The overlay: its view from the model (read-locked for this call only; the overlay's window never locks it),
+    /// and what it asks of the main window.
+    fn overlay_logic(&mut self, ctx: &egui::Context) {
+        let (phase_live, fresh) = {
+            let status = self.core.status.read();
+            (matches!(status.phase, Phase::Live), status.last_live.is_some_and(|t| t.elapsed() < Duration::from_secs(120)))
+        };
+        let requests = {
+            let model = self.core.model.read();
+            let gs = model.active();
+            // The journal is followed live and the game is running (as the page header's "Live" says).
+            let live = phase_live && (fresh || gs.is_some_and(|g| !g.game_closed));
+            let src = crate::overlay::Sources {
+                route: self.nav.planned.as_ref(),
+                pins: &self.settings.market.pins,
+                mining: &self.settings.mining,
+                auto_copy: self.settings.auto_copy_next_system,
+                high_value: self.settings.high_value_threshold,
+                now: nexus_journal::Timestamp::now().0,
+            };
+            self.overlay.logic(ctx, gs, &src, &mut self.settings.overlay, live)
+        };
+        if requests.prefs_changed {
+            self.settings_dirty = Some(Instant::now());
         }
-        if self.compact {
-            self.compact_ui(ui);
-            let ctx = ui.ctx().clone();
-            self.toasts(&ctx);
+        if let Some(page) = requests.open {
+            self.page = page;
+        }
+    }
+
+    /// The whole window: the sidebar and the page, the welcome, the banners; and the overlay's window beside it.
+    fn draw(&mut self, ui: &mut Ui) {
+        let ctx = ui.ctx().clone();
+        self.overlay.show(&ctx, &self.settings.overlay);
+        // `--overlay <moment>`: the moment compact and expanded, for screenshots.
+        if let Some(name) = self.overrides.overlay_demo.clone()
+            && let Some(views) = crate::overlay::demo(&name)
+        {
+            use crate::overlay::draw::{stage, Anchor, Look};
+            let look = Look { scale: self.settings.overlay.scale.clamp(1.0, 2.5), see_through: true, vr: false, anchor: Anchor::Centre, locked: true };
+            egui::CentralPanel::default().frame(Frame::new()).show(ui, |ui| stage(ui, &name, &views, &look));
+            return;
+        }
+        // Minimised, nothing of this window is seen: only the overlay's frames run.
+        if ctx.input(|i| i.viewport().minimized == Some(true)) {
             return;
         }
         // Responsive: a full sidebar on wide windows, an icon rail on narrow ones.
@@ -1087,7 +1113,6 @@ impl NexusApp {
                 }
             }
         }
-        let ctx = ui.ctx().clone();
         self.toasts(&ctx);
     }
 }

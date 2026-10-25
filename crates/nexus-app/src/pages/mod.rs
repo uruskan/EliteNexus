@@ -7,7 +7,6 @@ pub mod bindings;
 pub mod carrier;
 pub mod cockpit;
 pub mod colonisation;
-pub mod compact;
 pub mod dashboard;
 pub mod engineering;
 pub mod exobio;

@@ -6,8 +6,19 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Changed
-- The compact view's **Surface radar** is smaller (at most 220 pt, with the three nearest marks), so a mining session
-  fits the window without scrolling. The Mining page keeps the full radar and its note.
+- The compact view is now the **overlay**: one small black island at the top of the game's screen, in a window of its
+  own beside the main window, instead of the whole window turning into a panel. It says what's going on in a word or
+  two ("2 of 3 samples · Far enough", "Scoopable · 12 jumps left", "Carrier → Colonia 7:42"), opens up for the moments
+  that need you and fades away when nothing does. Its moments: **Next jump** (opens while the FSD charges, in
+  hyperspace and in the galaxy map), **Arrival** (opens when a system is worth it, and in the FSS and system map),
+  **Approach** (conditions, the genera there, likely value and where to land), **Sampling** (how many samples and how
+  far to walk, with a radar of your earlier samples), **Rhino mining** (the nearest deposit and which way), **Trade
+  stop** (a pinned market or carrier in the system), **Docked** (the data this station buys), your carrier's countdown
+  and important alerts. It's an empty capsule while a cockpit panel is open, gone in danger, and shows only while the
+  game or Elite Nexus is in front. Locked, clicks go through it and it never takes the focus from the game; unlock it
+  (the lock in the toolbar) to drag it, and a click then opens its page. Settings › Overlay sets where it sits, its
+  size (100 to 250 %), whether it stays when idle, a **see-through** window (after a restart; off, an opaque black
+  panel) and a **VR mode** for mirroring it into a headset. The user guide says what each system can do.
 
 ## [0.7.3-beta.1] - 2026-10-25
 

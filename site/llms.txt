@@ -41,8 +41,10 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   engineering wishlist and material shopping list, fleet loadouts with EDSY/Coriolis links, missions and
   massacre stacks, mining (with the Rhino's surface mining locations and a radar to find their deposits again),
   colonisation depots (yours kept apart from ones you only docked at), BGS and Powerplay (tick hour remembered),
-  bindings (read only: the app never changes them), logbook, statistics, galaxy map, voice alerts, a compact
-  always-on-top HUD, and an AI assistant (Google Gemini, Claude or a local model).
+  bindings (read only: the app never changes them), logbook, statistics, galaxy map, voice alerts, an overlay (a
+  small black island at the top of the game's screen: the next jump, arrivals worth it, approach, sampling distance,
+  the nearest Rhino deposit, trade stops, what a station buys, carrier countdowns; click-through, shown only while the
+  game is in front, with a VR mode for mirroring tools), and an AI assistant (Google Gemini, Claude or a local model).
 - Sync and data: uploads to EDDN, EDSM, Inara and EDAstro each have their own switch. Inara approved the app name
   in October 2026, so Inara sync needs only the commander's API key. Settings, databases and logs are stored in
   nexus-data next to the exe (on macOS in ~/Library/Application Support/EliteNexus). Optional cloud AI sends
@@ -63,8 +65,10 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   Whisky; Elite Nexus finds the journals in the game's prefix in every Steam library (NotProton keeps Proton's
   compatdata layout), then CrossOver's bottles and ~/.wine, then Whisky's bottles. Data lives in
   ~/Library/Application Support/EliteNexus. Voice uses the system's say. Cockpit lights (3Dmigoto) is untested there.
-- Limits: PC only (Windows, Linux, macOS; no console build); no plugins, in-game overlay, VR panels or voice commands; no
-  Frontier Companion API yet. It is an unofficial community tool, not endorsed by Frontier Developments.
+- Limits: PC only (Windows, Linux, macOS; no console build); no plugins, native VR panels or voice commands (VR players
+  mirror the overlay with Desktop+, OVR Toolkit, XSOverlay or SteamVR's desktop view); the overlay can't show over a
+  game in exclusive fullscreen (Borderless or Windowed works) or stay on top under Wayland; no Frontier Companion API
+  yet. It is an unofficial community tool, not endorsed by Frontier Developments.
 
 ## Pages
 

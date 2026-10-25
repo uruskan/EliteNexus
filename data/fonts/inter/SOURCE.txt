@@ -1,6 +1,7 @@
 Source:    https://github.com/rsms/inter  (release v4.1, 2024-11-16)
-Retrieved: 2026-10-12 via https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
-Files:     extras/ttf/Inter-Regular.ttf, Inter-SemiBold.ttf, Inter-Bold.ttf (static) and LICENSE.txt.
+Retrieved: 2026-10-12 (Medium on 2026-10-25) via https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip
+Files:     extras/ttf/Inter-Regular.ttf, Inter-Medium.ttf, Inter-SemiBold.ttf, Inter-Bold.ttf (static) and
+           LICENSE.txt.
 Modified:  the character map no longer lists Private Use Area code points (U+E000..U+F8FF): Inter maps
            745 of them to stylistic alternates, which would shadow the Phosphor icon font that uses the
            same range. Done with tools/fonts/strip_private_use.py; outlines, metrics and every other

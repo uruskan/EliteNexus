@@ -3,6 +3,7 @@
 use crate::core::{CoreStatus, Phase};
 use crate::folders::{self, FolderField};
 use crate::jobs::Job;
+use crate::overlay::draw::Anchor;
 use crate::settings::Settings;
 use crate::theme::{pal, size};
 use crate::widgets::{self, cards, footnote, group, section};
@@ -24,6 +25,8 @@ pub struct SettingsCtx<'a> {
     pub restart_core: bool,
     /// What happened the last time Elite Nexus spoke (shown under Test voice).
     pub voice: crate::tts::VoiceStatus,
+    /// The overlay is see-through this run (its switch applies after a restart).
+    pub overlay_see_through: bool,
 }
 
 /// What the Settings page keeps between frames: the folder fields and what checking a folder found.
@@ -103,6 +106,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                 });
             });
             footnote(ui, "Ctrl + and Ctrl − also change the size; Ctrl 0 goes back to 100 %.");
+            overlay(ui, cx);
         });
         c.add(|ui| {
             let st = cx.status;
@@ -155,6 +159,50 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
             footnote(ui, "Elite Nexus is free software under the GNU GPL, version 3 or later, and comes with no warranty. Source: github.com/uruskan/EliteNexus. Elite Dangerous is a trademark of Frontier Developments plc; Elite Nexus is an unofficial community tool.");
         });
     });
+}
+
+/// Settings › Overlay: the island at the top of the game's screen.
+fn overlay(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
+    section(ui, "Overlay");
+    let running = cx.overlay_see_through;
+    let o = &mut cx.settings.overlay;
+    let mut changed = false;
+    group(ui, |g| {
+        changed |= g.switch(&mut o.enabled, "Show the overlay", "A small black island at the top of the game's screen: it says what's going on in a word or two, opens up for the moments that need you and fades away when nothing does.");
+        changed |= g.switch(&mut o.locked, "Locked", "Clicks go through to the game, which keeps the focus. Unlock it to drag it elsewhere; a click on it then opens its page here.");
+        g.content(|ui| {
+            ui.label(RichText::new("Where").color(pal::TEXT));
+            let mut anchor = o.anchor;
+            if widgets::segmented(ui, &mut anchor, &[(Anchor::Left, "Top left"), (Anchor::Centre, "Top centre"), (Anchor::Right, "Top right")]) {
+                o.anchor = anchor;
+                o.position = None;
+                changed = true;
+            }
+            if o.position.is_some() && widgets::button(ui, "Back to the top of the game's screen").on_hover_text("Where you dragged it is forgotten").clicked() {
+                o.position = None;
+                changed = true;
+            }
+        });
+        g.content(|ui| {
+            ui.label(RichText::new("Size").color(pal::TEXT));
+            let mut scale = o.scale;
+            if widgets::segmented(ui, &mut scale, &crate::overlay::window::SCALES) {
+                o.scale = scale;
+                changed = true;
+            }
+        });
+        changed |= g.switch(&mut o.keep_minimal, "Keep it when idle", "A small empty island stays at the top instead of fading away when there's nothing to say. See-through only: an empty opaque panel hides.");
+        changed |= g.switch(&mut o.always_visible, "Visible over every window", "Off, it shows only while Elite Dangerous or Elite Nexus is the window in front. Wayland and macOS don't say which window that is, so there it always shows.");
+        changed |= g.switch(&mut o.see_through, "See-through", "Just the island over the game, changing shape as it opens and closes. Off: an opaque black panel. Applies after a restart.");
+        if o.see_through != running {
+            g.content(|ui| {
+                ui.add(egui::Label::new(RichText::new("Restart Elite Nexus for this to take effect.").size(size::FOOTNOTE).color(pal::WARN)).wrap());
+            });
+        }
+        changed |= g.switch(&mut o.vr, "VR mode", "An opaque panel of fixed size that never hides, with larger text, to mirror into a headset (the user guide says how).");
+    });
+    cx.changed |= changed;
+    footnote(ui, "The game hides every overlay in exclusive fullscreen: set Options › Graphics › Display to Borderless or Windowed.");
 }
 
 /// The last speech attempt in a line, when there is something to say about it.

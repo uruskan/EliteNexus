@@ -15,6 +15,7 @@ mod icon;
 mod jobs;
 mod market;
 mod notices;
+mod overlay;
 mod pages;
 mod runplan;
 mod secrets;
@@ -161,8 +162,17 @@ fn main() -> eframe::Result {
     });
     let delay = std::time::Duration::from_secs_f64(arg("--shot-delay").and_then(|s| s.parse().ok()).unwrap_or(0.0));
     let shot = arg("--screenshot").map(|p| app::ScreenshotJob::new(p.into(), delay));
-    let overrides = app::Overrides { journal_dir: arg("--journal-dir").map(Into::into), mute: args.iter().any(|a| a == "--mute"), tab: arg("--tab"), demo: args.iter().any(|a| a == "--demo") };
     let screenshot_mode = shot.is_some();
+    // The overlay's see-through window needs the renderer set up for it now (Settings › Overlay, after a restart).
+    let see_through = !screenshot_mode && settings::Settings::overlay_see_through(&data_dir);
+    let overrides = app::Overrides {
+        journal_dir: arg("--journal-dir").map(Into::into),
+        mute: args.iter().any(|a| a == "--mute"),
+        tab: arg("--tab"),
+        demo: args.iter().any(|a| a == "--demo"),
+        overlay_demo: arg("--overlay"),
+        overlay_see_through: see_through,
+    };
 
     // --size 1000x700: window size for responsive-layout screenshots.
     let size = arg("--size").and_then(|s| {
@@ -184,14 +194,32 @@ fn main() -> eframe::Result {
             viewport = viewport.with_position([-20_000.0, -20_000.0]);
         }
     }
-    let options = eframe::NativeOptions {
-        viewport,
+    #[allow(unused_mut)] // changed on Windows only
+    let mut options = eframe::NativeOptions {
+        // eframe sets every window's renderer up from this one flag; the main window itself stays opaque (below).
+        viewport: viewport.with_transparent(see_through),
         // Screenshot runs keep their own state and never restore a window size (eframe would
         // otherwise fall back to a default folder on C: and reuse the last geometry).
         persist_window: !screenshot_mode,
         persistence_path: Some(data_dir.join(if screenshot_mode { "screenshot-ui-state.ron" } else { "ui-state.ron" })),
+        window_builder: Some(Box::new(|builder: egui::ViewportBuilder| builder.with_transparent(false))),
         ..Default::default()
     };
+    // Windows: a DirectX 12 swap chain made on a window is opaque, and so is Vulkan's there; one made through
+    // DirectComposition can be see-through. A computer without DirectX 12 still starts, with an opaque overlay.
+    #[cfg(windows)]
+    if see_through && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+        use eframe::wgpu;
+        setup.instance_descriptor.backend_options.dx12.presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
+        setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'_>>| {
+            let usable = |a: &&wgpu::Adapter| surface.is_none_or(|s| a.is_surface_supported(s));
+            let rank = |a: &&wgpu::Adapter| {
+                let info = a.get_info();
+                (info.backend == wgpu::Backend::Dx12, info.device_type == wgpu::DeviceType::DiscreteGpu)
+            };
+            adapters.iter().filter(usable).max_by_key(rank).cloned().ok_or_else(|| "No graphics adapter can draw to the window".to_string())
+        }));
+    }
     eframe::run_native(
         "Elite Nexus",
         options,

@@ -125,6 +125,8 @@ pub struct Location {
     pub body_type: Option<String>,
     pub station: Option<StationInfo>,
     pub settlement: Option<String>,
+    /// Where the settlement approached last is (`ApproachSettlement`), on the body the commander is at.
+    pub settlement_pos: Option<(f64, f64)>,
     pub docked: bool,
     pub landed: bool,
     pub on_foot: bool,
@@ -169,6 +171,7 @@ impl Location {
                 self.landed = false;
                 self.station = None;
                 self.settlement = None;
+                self.settlement_pos = None;
                 self.supercruise = true;
                 if self.fsd_target.as_ref().is_some_and(|t| t.system_address == a.system_address) {
                     self.fsd_target = None;
@@ -252,6 +255,7 @@ impl Location {
         self.body_id = None;
         self.body_type = None;
         self.settlement = None;
+        self.settlement_pos = None;
     }
 
     pub fn on_supercruise_exit(&mut self, s: &ev::Supercruise) {

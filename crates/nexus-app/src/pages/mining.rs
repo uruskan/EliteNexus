@@ -319,22 +319,24 @@ fn locations_line(gs: &GameState, site: &SurfaceSite) -> Option<String> {
 /// What the radar shows on the body you're at: the deposits the Rhino refined at, your ship, and where it set down
 /// on the last visit to each location.
 pub struct RadarView {
-    heading: f64,
-    marks: Vec<Mark>,
+    pub(crate) heading: f64,
+    pub(crate) marks: Vec<Mark>,
 }
 
-struct Mark {
-    kind: MarkKind,
+pub(crate) struct Mark {
+    pub(crate) kind: MarkKind,
     /// Beside the mark on the radar.
-    tag: String,
+    pub(crate) tag: String,
     /// In the list under it.
-    label: String,
-    dist_m: f64,
-    bearing: f64,
+    pub(crate) label: String,
+    pub(crate) dist_m: f64,
+    pub(crate) bearing: f64,
+    /// The mining location's number (deposits and landings), when the game named one.
+    pub(crate) location: Option<u32>,
 }
 
-#[derive(Clone, Copy)]
-enum MarkKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MarkKind {
     Deposit,
     Ship,
     Landing,
@@ -353,20 +355,20 @@ pub fn radar_view(gs: &GameState, prefs: &MiningPrefs) -> Option<RadarView> {
     let on_body = |k: SiteKey| k.system_address == loc.system_address && k.body_id == body_id;
     let at_location = |n: Option<u32>| n.map(|n| format!(" (mining location {n})")).unwrap_or_default();
     let mut marks = Vec::new();
-    let mut mark = |kind: MarkKind, pos: (f64, f64), tag: String, label: String| {
-        marks.push(Mark { kind, tag, label, dist_m: surface_distance(me, pos, radius_m), bearing: surface_bearing(me, pos) });
+    let mut mark = |kind: MarkKind, pos: (f64, f64), tag: String, label: String, location: Option<u32>| {
+        marks.push(Mark { kind, tag, label, dist_m: surface_distance(me, pos, radius_m), bearing: surface_bearing(me, pos), location });
     };
     for d in prefs.deposits.iter().filter(|d| on_body(d.key())) {
         let tag = d.commodities.first().cloned().unwrap_or_default();
-        mark(MarkKind::Deposit, (d.lat, d.lon), tag, format!("{} deposit{}", d.commodities.join(", "), at_location(d.location)));
+        mark(MarkKind::Deposit, (d.lat, d.lon), tag, format!("{} deposit{}", d.commodities.join(", "), at_location(d.location)), d.location);
     }
     let ship = gs.mining.here.as_ref().filter(|h| on_body(h.key)).and_then(|h| h.ship);
     if let Some(p) = ship {
-        mark(MarkKind::Ship, p, "Ship".into(), "Your ship".into());
+        mark(MarkKind::Ship, p, "Ship".into(), "Your ship".into(), None);
     }
     for site in gs.mining.sites.values().filter(|s| on_body(s.key)) {
         if let Some(&p) = site.landings.last() && Some(p) != ship {
-            mark(MarkKind::Landing, p, "Landed".into(), format!("Where your ship landed last time{}", at_location(site.key.location)));
+            mark(MarkKind::Landing, p, "Landed".into(), format!("Where your ship landed last time{}", at_location(site.key.location)), site.key.location);
         }
     }
     (!marks.is_empty()).then(|| RadarView { heading: st.heading.unwrap_or(0.0), marks })
@@ -382,14 +384,6 @@ pub fn surface_radar(ui: &mut Ui, v: &RadarView) {
         "Up is the way you're facing; turn until your heading shows the bearing. Deposits are where the Rhino refined while Elite Nexus was running \
          (the journal records no positions). Rigs aren't in the journal, so they can't be shown.",
     );
-}
-
-/// The compact view's radar: smaller, with the three nearest marks, so it fits beside the other cards. The note stays
-/// on the Mining page.
-pub fn surface_radar_compact(ui: &mut Ui, v: &RadarView) {
-    radar(ui, v, 220.0);
-    ui.add_space(6.0);
-    radar_list(ui, v, 3);
 }
 
 /// Top-down radar centred on you, "up" = the way you're facing (like the exobiology radar), at most `max_side` wide.
@@ -468,7 +462,7 @@ fn ring_step(max_d: f64) -> f64 {
     STEPS.into_iter().find(|s| max_d / s <= 4.0).unwrap_or(500_000.0)
 }
 
-fn distance_text(m: f64) -> String {
+pub(crate) fn distance_text(m: f64) -> String {
     if m < 1_000.0 {
         format!("{m:.0} m")
     } else if m < 10_000.0 {

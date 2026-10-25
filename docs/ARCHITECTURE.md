@@ -21,7 +21,8 @@ the window is placed off-screen and never takes focus). `--size 1000x700` tests 
 a Market section (`abnormal`, `database`, …), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
 screenshot run), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
-`royalpurple`, …), `--demo` adds a sample Ask conversation and an alert banner, `--shot-delay 8` waits longer (the
+`royalpurple`, …), `--demo` adds a sample Ask conversation and an alert banner, `--overlay <moment>` shows an overlay
+moment compact and expanded with sample content (`overlay::DEMOS`), `--shot-delay 8` waits longer (the
 galaxy image paints in the background, Spansh searches take 5–20 s). `ELITE_NEXUS_GAME_DIR` points HUD & cockpit at
 another game folder (one holding `EliteDangerous64.exe`): test the Cockpit lights installer against a copy, never
 a real install.
@@ -61,6 +62,15 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   (assistant.rs → nexus-ai on a worker thread; `ai_tools.rs` implements its 16 tools over the model, galaxy DB,
   journal and Spansh), Spansh client, TTS. `finder.rs` holds market lookups shared by pages and tools (sell plan,
   colonisation suppliers).
+* The overlay (`overlay.rs`, `overlay/`): one black island at the top of the game's screen, in its own deferred
+  viewport (a borderless always-on-top window beside the main one). `overlay.rs` is its view model, pure and tested:
+  `Inputs::read` copies what it needs from the model (via `nexus_model::context`), `Rhythm::view` picks the moment,
+  its size and its words, and opens it for a few seconds on a trigger. `App::logic` rebuilds it only when its inputs
+  change and hands it over through a mutex; the overlay's frames (`overlay/draw.rs`, drawing helpers in
+  `widgets::island`) never lock the model and only repaint while it moves. `overlay/window.rs` creates the window
+  hidden and inactive, shows it once it has painted, switches click-through on only after that, and hides it while the
+  game isn't in front (`overlay/platform.rs`: the foreground window's class on Windows, `_NET_ACTIVE_WINDOW` on X11).
+  See-through needs the renderer set up for it at start (`main.rs`; DirectComposition on Windows).
 * Routes and tours: Navigation holds one `PlannedRoute` (pages/navigation.rs) that drives the "next system →
   clipboard" automation and the galaxy map. It tracks progress by arrival (`advance`), so a loop that starts here isn't
   finished at once. Navigation plans travel itself (neutron, exact, carrier); scan tours are planned on the page they

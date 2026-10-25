@@ -822,6 +822,250 @@ pub fn hover_xy(h: &egui_plot::HoverPosition<'_>) -> (f64, f64) {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// The overlay's island
+
+/// What the overlay's island is drawn with (overlay/draw.rs lays it out): its colours and type, text with tabular
+/// figures, glyphs, a star, the radar dial and the ring of progress. Sizes are the island's points times `k`, the
+/// overlay's own scale.
+pub mod island {
+    use crate::overlay::{Dial, DialKind, Glyph, StarTone, Style, Tint};
+    use crate::theme::{bold, display, icon_fill, medium, pal};
+    use egui::emath::Rot2;
+    use egui::text::{LayoutJob, TextWrapping};
+    use egui::{Align2, Color32, CornerRadius, FontId, Galley, Mesh, Painter, Pos2, Rect, Shape, Stroke, TextFormat, Vec2};
+    use std::sync::Arc;
+
+    /// A tint's colour.
+    pub fn tint(t: Tint) -> Color32 {
+        match t {
+            Tint::White => Color32::WHITE,
+            Tint::Dim => pal::ISLAND_DIM,
+            Tint::Mint => pal::MINT,
+            Tint::Orange => pal::ACCENT,
+            Tint::Blue => pal::BLUE,
+            Tint::Cyan => pal::CYAN,
+            Tint::Gold => pal::GOLD,
+            Tint::Indigo => pal::INDIGO,
+            Tint::Green => pal::GOOD,
+            Tint::Yellow => pal::WARN,
+            Tint::Red => pal::BAD,
+        }
+    }
+
+    /// A style's font at scale `k`, never below `min` points (12; 14 in VR).
+    pub fn font(style: Style, k: f32, min: f32) -> FontId {
+        let (size, face): (f32, fn(f32) -> FontId) = match style {
+            Style::Caption => (13.0, medium),
+            Style::Label => (13.0, display),
+            Style::Value => (15.0, display),
+            Style::Title => (17.0, display),
+            Style::Figure => (20.0, bold),
+            Style::Hero => (34.0, bold),
+        };
+        face(size.max(min) * k)
+    }
+
+    /// One line of text, cut short with "…" past `max_width`. With `tabular`, every digit takes the width of the
+    /// widest (tabular figures), so a value that changes doesn't make what's beside it jump.
+    pub fn text(p: &Painter, text: &str, font: FontId, color: Color32, tabular: bool, max_width: f32) -> Arc<Galley> {
+        let mut job = LayoutJob { wrap: TextWrapping::truncate_at_width(max_width), ..Default::default() };
+        let format = TextFormat::simple(font.clone(), color);
+        if tabular && text.contains(|c: char| c.is_ascii_digit()) {
+            let advance = |d: char| p.layout_no_wrap(d.to_string(), font.clone(), color).size().x;
+            let cell = ('0'..='9').map(advance).fold(0.0, f32::max);
+            // Each digit is centred in its cell: half the slack before it, half before whatever follows.
+            let (mut start, mut pending) = (0, 0.0);
+            for (i, c) in text.char_indices().filter(|(_, c)| c.is_ascii_digit()) {
+                if start < i {
+                    job.append(&text[start..i], pending, format.clone());
+                    pending = 0.0;
+                }
+                let pad = ((cell - advance(c)) / 2.0).max(0.0);
+                job.append(&text[i..i + 1], pending + pad, format.clone());
+                pending = pad;
+                start = i + 1;
+            }
+            if start < text.len() {
+                job.append(&text[start..], pending, format);
+            }
+        } else {
+            job.append(text, 0.0, format);
+        }
+        p.layout_job(job)
+    }
+
+    /// A glyph's width (and height) at scale `k`.
+    pub fn glyph_width(g: &Glyph, k: f32) -> f32 {
+        k * match g {
+            Glyph::Icon { size, .. } | Glyph::Star { size, .. } | Glyph::Arrow { size, .. } => f32::from(*size),
+            Glyph::Dot { .. } => 8.0,
+        }
+    }
+
+    /// Paints a glyph centred on `c`.
+    pub fn glyph(p: &Painter, g: &Glyph, c: Pos2, k: f32) {
+        match g {
+            Glyph::Icon { icon, tint: t, size } => {
+                p.text(c, Align2::CENTER_CENTER, *icon, icon_fill(f32::from(*size) * k), tint(*t));
+            }
+            Glyph::Star { class, size } => star(p, c, f32::from(*size) * k / 2.0, class, k),
+            Glyph::Arrow { turn, tint: t, size } => arrow(p, c, f32::from(*size) * k, f32::from(*turn), tint(*t), pal::ISLAND),
+            Glyph::Dot { tint: t, hollow: true } => {
+                p.circle_stroke(c, 3.25 * k, Stroke::new(1.5 * k, tint(*t)));
+            }
+            Glyph::Dot { tint: t, hollow: false } => {
+                p.circle_filled(c, 4.0 * k, tint(*t));
+            }
+        }
+    }
+
+    /// A star's colours: lit, middle, rim, and its letter's.
+    fn star_colours(t: StarTone) -> [Color32; 4] {
+        let c = Color32::from_rgb;
+        match t {
+            StarTone::Blue => [c(225, 236, 255), c(150, 185, 255), c(70, 110, 220), c(8, 18, 48)],
+            StarTone::White => [c(255, 255, 255), c(222, 230, 255), c(160, 175, 225), c(18, 24, 44)],
+            StarTone::YellowWhite => [c(255, 252, 235), c(255, 240, 200), c(222, 200, 140), c(44, 34, 10)],
+            StarTone::Yellow => [c(255, 246, 205), c(255, 220, 120), c(218, 165, 45), c(44, 28, 0)],
+            StarTone::Orange => [c(255, 226, 184), c(255, 180, 90), c(217, 115, 28), c(42, 20, 0)],
+            StarTone::Red => [c(255, 205, 175), c(255, 128, 88), c(196, 66, 38), c(44, 10, 0)],
+            StarTone::Brown => [c(232, 176, 146), c(168, 102, 80), c(104, 58, 48), c(255, 238, 228)],
+            StarTone::Neutron => [c(225, 252, 255), c(120, 220, 255), c(36, 146, 218), c(0, 24, 44)],
+            StarTone::Dwarf => [c(248, 251, 255), c(206, 220, 255), c(146, 166, 220), c(14, 20, 40)],
+            StarTone::Black => [c(96, 92, 120), c(44, 42, 58), c(14, 14, 22), c(240, 240, 245)],
+        }
+    }
+
+    /// A star of radius `r`: a disc shaded in its colour as if lit from the upper left, a soft glow, its class letter.
+    fn star(p: &Painter, c: Pos2, r: f32, class: &str, k: f32) {
+        const N: u32 = 40;
+        let [lit, mid, rim, ink] = star_colours(StarTone::of(class));
+        let disc = Rect::from_center_size(c, Vec2::splat(2.0 * r));
+        let round = CornerRadius::same(r.ceil().min(255.0) as u8);
+        p.add(egui::Shadow { offset: [0, 0], blur: r.min(255.0) as u8, spread: 0, color: mid.gamma_multiply(0.45) }.as_shape(disc, round));
+        let hot = c + Vec2::new(-0.32 * r, -0.4 * r);
+        let mut mesh = Mesh::default();
+        mesh.colored_vertex(hot, lit);
+        for i in 0..N {
+            let edge = c + Vec2::angled(i as f32 / N as f32 * std::f32::consts::TAU) * r;
+            mesh.colored_vertex(hot + (edge - hot) * 0.5, mid);
+            mesh.colored_vertex(edge, rim);
+        }
+        for i in 0..N {
+            let (m0, e0, m1, e1) = (1 + 2 * i, 2 + 2 * i, 1 + 2 * ((i + 1) % N), 2 + 2 * ((i + 1) % N));
+            mesh.add_triangle(0, m0, m1);
+            mesh.add_triangle(m0, e0, e1);
+            mesh.add_triangle(m0, e1, m1);
+        }
+        p.add(Shape::mesh(mesh));
+        // The mesh has no anti-aliasing: a hairline smooths its edge.
+        p.circle_stroke(c, r, Stroke::new(k, rim));
+        let letter: String = class.chars().next().map(|l| l.to_ascii_uppercase()).into_iter().collect();
+        p.text(c, Align2::CENTER_CENTER, letter, bold((r * 0.9).max(12.0 * k)), ink);
+    }
+
+    /// The navigation arrow, `size` wide, pointing `turn` degrees clockwise from up, on `background`.
+    pub fn arrow(p: &Painter, c: Pos2, size: f32, turn: f32, color: Color32, background: Color32) {
+        let rot = Rot2::from_angle(turn.to_radians());
+        // In a 24-point box: the tip, the wings and the notch between them.
+        let at = |x: f32, y: f32| c + rot * (Vec2::new(x - 12.0, y - 12.0) * (size / 24.0));
+        let (tip, right, notch, left) = (at(12.0, 2.8), at(18.6, 20.2), at(12.0, 16.6), at(5.4, 20.2));
+        p.add(Shape::convex_polygon(vec![tip, right, left], color, Stroke::NONE));
+        p.add(Shape::convex_polygon(vec![right, notch, left], background, Stroke::NONE));
+    }
+
+    /// The fuel gauge in `rect`: red under a quarter, yellow under half.
+    pub fn fuel(p: &Painter, rect: Rect, pct: u8) {
+        let round = CornerRadius::same((rect.height() / 2.0).ceil().min(255.0) as u8);
+        p.rect_filled(rect, round, pal::ISLAND_TRACK);
+        let col = match pct {
+            0..25 => pal::BAD,
+            25..50 => pal::WARN,
+            _ => pal::CYAN,
+        };
+        p.rect_filled(Rect::from_min_size(rect.min, Vec2::new(rect.width() * f32::from(pct.min(100)) / 100.0, rect.height())), round, col);
+    }
+
+    /// The radar dial of radius `r`: rings, a tick where north is, the marks, and you in the middle facing up.
+    pub fn dial(p: &Painter, c: Pos2, r: f32, d: &Dial, k: f32) {
+        p.circle_filled(c, r, pal::ISLAND_DIAL);
+        let p = p.with_clip_rect(Rect::from_center_size(c, Vec2::splat(2.0 * r)));
+        let n = f32::from(d.rings) + 1.0;
+        for i in 1..=d.rings {
+            p.circle_stroke(c, r * f32::from(i) / n, Stroke::new(k, pal::ISLAND_LINE));
+        }
+        let north = Rot2::from_angle(f32::from(d.north).to_radians());
+        p.line_segment([c + north * Vec2::new(0.0, 2.0 * k - r), c + north * Vec2::new(0.0, 8.0 * k - r)], Stroke::new(2.0 * k, pal::ISLAND_DIM));
+        let inner = r - 4.0 * k;
+        for m in &d.marks {
+            let at = c + Vec2::new(f32::from(m.x), -f32::from(m.y)) / 100.0 * inner;
+            match m.kind {
+                DialKind::Sample { range, close } => {
+                    let col = if close { pal::BAD } else { pal::GOOD };
+                    let rr = f32::from(range) / 100.0 * inner;
+                    p.circle_filled(at, rr, col.gamma_multiply(0.16));
+                    p.circle_stroke(at, rr, Stroke::new(k, col.gamma_multiply(0.75)));
+                    p.circle_filled(at, 2.6 * k, col);
+                }
+                DialKind::Deposit { nearest } => {
+                    let col = if nearest { pal::ACCENT } else { pal::ACCENT.gamma_multiply(0.65) };
+                    let s = 4.2 * k;
+                    p.add(Shape::convex_polygon(vec![at + Vec2::new(0.0, -s), at + Vec2::new(s, 0.0), at + Vec2::new(0.0, s), at + Vec2::new(-s, 0.0)], col, Stroke::NONE));
+                }
+                DialKind::Ship => {
+                    p.circle_filled(at, 3.4 * k, pal::CYAN);
+                }
+                DialKind::Landing => {
+                    p.circle_stroke(at, 2.9 * k, Stroke::new(1.4 * k, pal::ISLAND_DIM));
+                }
+            }
+        }
+        arrow(&p, c, 12.0 * k, 0.0, Color32::WHITE, pal::ISLAND_DIAL);
+    }
+
+    /// A ring of progress of radius `r`, `done` of `of`, with the count inside.
+    pub fn ring(p: &Painter, c: Pos2, r: f32, done: u8, of: u8, k: f32) {
+        let w = 3.2 * k;
+        p.circle_stroke(c, r, Stroke::new(w, pal::ISLAND_TRACK));
+        let f = f32::from(done.min(of)) / f32::from(of.max(1));
+        if f > 0.0 {
+            let n = (48.0 * f).ceil().max(2.0) as usize;
+            let arc = (0..=n).map(|i| c + Vec2::angled(-std::f32::consts::FRAC_PI_2 + std::f32::consts::TAU * f * i as f32 / n as f32) * r).collect();
+            p.add(Shape::line(arc, Stroke::new(w, pal::MINT)));
+        }
+        p.text(c, Align2::CENTER_CENTER, format!("{done}/{of}"), bold(12.0 * k), Color32::WHITE);
+    }
+
+    /// A small capsule whose left edge is at `left` (vertically centred there): mint, or dimmed and struck through
+    /// once done. Returns its width.
+    pub fn chip(p: &Painter, left: Pos2, text: &str, done: bool, k: f32, min: f32) -> f32 {
+        let (fill, col) = if done { (Color32::from_rgb(20, 20, 20), pal::ISLAND_DIM) } else { (Color32::from_rgb(16, 34, 33), pal::MINT) };
+        let mut format = TextFormat::simple(display(12.0_f32.max(min) * k), col);
+        if done {
+            format.strikethrough = Stroke::new(k, col);
+        }
+        let mut job = LayoutJob::default();
+        job.append(text, 0.0, format);
+        let g = p.layout_job(job);
+        let size = g.size() + Vec2::new(18.0 * k, 6.0 * k);
+        let rect = Rect::from_min_size(Pos2::new(left.x, left.y - size.y / 2.0), size);
+        p.rect_filled(rect, CornerRadius::same((size.y / 2.0).ceil().min(255.0) as u8), fill);
+        p.galley(rect.min + Vec2::new(9.0 * k, 3.0 * k), g, col);
+        size.x
+    }
+
+    /// The island's black shape with its hairline; over the game, a soft shadow under it.
+    pub fn shape(p: &Painter, rect: Rect, radius: f32, shadow: bool, k: f32) {
+        let round = CornerRadius::same(radius.ceil().clamp(0.0, 255.0) as u8);
+        if shadow {
+            p.add(egui::Shadow { offset: [0, (6.0 * k).min(127.0) as i8], blur: (14.0 * k).min(255.0) as u8, spread: 0, color: Color32::from_black_alpha(120) }.as_shape(rect, round));
+        }
+        p.rect_filled(rect, round, pal::ISLAND);
+        p.rect_stroke(rect, round, Stroke::new(0.5 * k, pal::ISLAND_HAIR), egui::StrokeKind::Outside);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

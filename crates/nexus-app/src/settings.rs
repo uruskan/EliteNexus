@@ -44,6 +44,8 @@ pub struct Settings {
     pub bgs: crate::pages::bgs::BgsPrefs,
     /// Mining: the deposits the Rhino refined at (positions exist only live), notes on mining locations.
     pub mining: crate::pages::mining::MiningPrefs,
+    /// The overlay: the island at the top of the game's screen.
+    pub overlay: crate::overlay::window::OverlayPrefs,
 }
 
 /// A named HUD colour matrix.
@@ -159,6 +161,7 @@ impl Default for Settings {
             colonisation: Default::default(),
             bgs: Default::default(),
             mining: Default::default(),
+            overlay: Default::default(),
         }
     }
 }
@@ -239,6 +242,16 @@ impl Settings {
         settings.welcomed = true;
         tracing::warn!(%what, "settings.json: started without some settings");
         (settings, Some(LoadProblem { what, can_save }))
+    }
+
+    /// Settings › Overlay › See-through, read before the window opens (the renderer is set up for it then). Reads the
+    /// file only: a file that can't be read is dealt with when the settings load.
+    pub fn overlay_see_through(dir: &Path) -> bool {
+        std::fs::read(dir.join("settings.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| v.get("overlay")?.get("see_through")?.as_bool())
+            .unwrap_or(false)
     }
 
     pub fn save(&self, dir: &Path) {
