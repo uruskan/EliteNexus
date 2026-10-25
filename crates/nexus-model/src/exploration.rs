@@ -200,6 +200,12 @@ impl Body {
         self.kind == BodyKind::Planet
     }
 
+    /// Nothing biological left to do here: no biological signals, or one species analysed per signal
+    /// (each signal is a genus, and only one species per genus grows on a body).
+    pub fn bio_done(&self) -> bool {
+        self.bio_signals == 0 || self.organics.iter().filter(|o| o.analysed).count() >= self.bio_signals as usize
+    }
+
     pub fn recompute_value(&mut self, odyssey: bool) {
         self.value = match self.kind {
             BodyKind::Star => {
@@ -426,6 +432,15 @@ impl SystemScan {
 
     pub fn bio_signal_total(&self) -> u32 {
         self.bodies.values().map(|b| b.bio_signals).sum()
+    }
+
+    /// Nothing left worth doing here: the FSS found every body, every planet worth at least `high_value`
+    /// credits once mapped has been mapped, and every body with biological signals has all of them analysed.
+    /// Planets below the threshold don't need mapping. `high_value` is the Settings "High-value body" threshold.
+    pub fn fully_explored(&self, high_value: i64) -> bool {
+        self.all_bodies_found
+            && self.bodies.values().all(|b| b.mapped || !b.is_mappable() || b.value.mapped < high_value)
+            && self.bodies.values().all(Body::bio_done)
     }
 
     pub fn body_mut(&mut self, id: u32, name: &str) -> &mut Body {

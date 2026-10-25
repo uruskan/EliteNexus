@@ -10,6 +10,15 @@ release time that section becomes the new version and the release workflow publi
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
+- **Settings › Follow my flight** (off by default) changes the page as you fly, the way Elite Dangerous
+  Exploration Buddy switches its tabs: it reads what you're doing from the game's Status.json and switches when
+  that changes. Flying a system opens Exploration; getting below **Planet view below** (150 km by default) over a
+  planet, landing, or stepping outside on foot opens Exobiology when the planet has biological signals you haven't
+  finished analysing (Exploration otherwise); climbing back above it returns to Exploration; the galaxy map, a
+  charging hyperspace jump or a finished system (every body found, every planet worth the high-value threshold
+  mapped, every genus analysed) opens Navigation. It only ever moves between those three pages: on any other page it
+  leaves you alone; docked, in an SRV or on foot inside it changes nothing, and it reacts only to what happens while
+  the game runs, never to the journals read at start.
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain

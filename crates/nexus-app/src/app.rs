@@ -8,8 +8,11 @@ use crate::tts::Speaker;
 use crate::widgets;
 use egui::{Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use egui_phosphor::regular as icon;
+use nexus_journal::companion::{GuiFocus, Status};
+use nexus_model::context::{Activity, Context};
 use nexus_model::{Alert, Priority};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 struct Toast {
@@ -60,6 +63,49 @@ fn save_png(path: &std::path::Path, img: &egui::ColorImage) {
     }
 }
 
+/// What Follow my flight follows: the commander's context (`nexus_model::context`), reduced to the pages here the
+/// way Elite Dangerous Exploration Buddy reduces it to its tabs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Flight {
+    /// Nothing to follow: not in the game, docked, driving, on foot inside.
+    Idle,
+    /// The galaxy map, a charging hyperspace jump, hyperspace: Navigation.
+    Route,
+    /// Flying the system, orbital cruise included: Exploration.
+    System,
+    /// Under the "Planet view below" altitude over a body, landed, or on foot outside: Exobiology when the body has
+    /// life still to analyse, Exploration otherwise.
+    Planet,
+}
+
+impl Flight {
+    /// `altitude_m` is Status.json's altitude, when it gives one; `planet_m` is Settings' "Planet view below".
+    fn of(cx: &Context, altitude_m: Option<f64>, planet_m: f64) -> Flight {
+        if cx.focus == GuiFocus::GalaxyMap {
+            return Flight::Route;
+        }
+        match cx.activity {
+            Activity::NotInGame | Activity::Docked | Activity::Srv(_) => Flight::Idle,
+            Activity::ChargingJump | Activity::Hyperspace => Flight::Route,
+            Activity::Landed | Activity::OnFootPlanet => Flight::Planet,
+            Activity::NearBody | Activity::Glide => if altitude_m.is_some_and(|a| a < planet_m) { Flight::Planet } else { Flight::System },
+            Activity::Supercruise | Activity::Space => Flight::System,
+        }
+    }
+}
+
+/// What Follow my flight compares from one Status.json update or journal event to the next.
+struct FlightSnapshot {
+    /// The Status.json the model held when this was taken, compared by pointer (`Arc::ptr_eq`): the model makes a
+    /// new `Arc` for every update, while the timestamp inside has one-second resolution and could miss one.
+    status: Option<Arc<Status>>,
+    /// `GameState::events_applied` when this was taken.
+    events: u64,
+    flight: Flight,
+    /// The current system is fully explored (Settings "High-value body" threshold).
+    done: bool,
+}
+
 pub struct NexusApp {
     core: Core,
     settings: Settings,
@@ -102,6 +148,9 @@ pub struct NexusApp {
     overrides: Overrides,
     shot: Option<ScreenshotJob>,
     last_jump_count: Option<usize>,
+    /// What the commander was doing at the last Status.json update or journal event (Settings › Follow my flight);
+    /// `None` until the first frame with a commander.
+    flight: Option<FlightSnapshot>,
     clipboard: Option<arboard::Clipboard>,
     /// The overlay: the island at the top of the game's screen, in a window of its own.
     overlay: crate::overlay::window::Overlay,
@@ -199,6 +248,7 @@ impl NexusApp {
             overrides: ov,
             shot,
             last_jump_count: None,
+            flight: None,
             clipboard: None,
             overlay,
             xsoverlay: Default::default(),
@@ -254,6 +304,56 @@ impl NexusApp {
                 }),
                 Err(e) => tracing::warn!("clipboard: {e}"),
             }
+        }
+    }
+
+    /// Follow my flight: read what the commander is doing (`Context::of`, from Status.json while the game runs) and,
+    /// when it changes, open the page that fits: Navigation in the galaxy map, while a hyperspace jump charges and in
+    /// hyperspace; Exploration while flying the system; Exobiology under the "Planet view below" altitude, landed or
+    /// on foot outside, when the body has life still to analyse (Exploration otherwise); Navigation too once the
+    /// system is done. Only moves between those three pages. Runs only when a Status.json update or a journal event
+    /// arrived: on every other frame it costs the model read lock, one counter comparison and one pointer comparison,
+    /// no allocation. The snapshot is kept even with the setting off, so switching it on never acts on an old
+    /// transition, and the history read at start never switches.
+    fn follow_flight(&mut self) {
+        let target = {
+            let model = self.core.model.read();
+            let Some(gs) = model.active() else { return };
+            let same_status = |p: &FlightSnapshot| match (&p.status, &gs.status) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if self.flight.as_ref().is_some_and(|p| p.events == gs.events_applied && same_status(p)) {
+                return;
+            }
+            let cx = Context::of(gs);
+            let flight = Flight::of(&cx, gs.status.as_ref().and_then(|s| s.altitude), f64::from(self.settings.auto_page_altitude_km) * 1000.0);
+            let system = gs.exploration.current_system();
+            let done = system.is_some_and(|s| s.fully_explored(self.settings.high_value_threshold));
+            let prev = self.flight.replace(FlightSnapshot { status: gs.status.clone(), events: gs.events_applied, flight, done });
+            let Some(prev) = prev else { return };
+            if flight != prev.flight {
+                match flight {
+                    Flight::Route => Some(Page::Navigation),
+                    Flight::System => Some(Page::Exploration),
+                    Flight::Planet => {
+                        // The body by its id when the journal named it, else by Status.json's name.
+                        let body = cx.body.as_ref().zip(system).and_then(|(b, s)| b.id.and_then(|id| s.bodies.get(&id)).or_else(|| s.bodies.values().find(|x| x.name == b.name)));
+                        Some(if body.is_some_and(|b| b.bio_signals > 0 && !b.bio_done()) { Page::Exobiology } else { Page::Exploration })
+                    }
+                    Flight::Idle => None,
+                }
+            } else if done && !prev.done {
+                Some(Page::Navigation)
+            } else {
+                None
+            }
+        };
+        let Some(target) = target else { return };
+        let following = matches!(self.page, Page::Navigation | Page::Exploration | Page::Exobiology);
+        if self.settings.auto_page && following && self.page != target && self.shot.is_none() && matches!(self.core.status.read().phase, Phase::Live) {
+            self.page = target;
         }
     }
 
@@ -984,6 +1084,7 @@ impl eframe::App for NexusApp {
         }
         self.auto_copy_next();
         self.remember_deposits();
+        self.follow_flight();
         let here = self.core.model.read().active().and_then(|g| g.location.star_pos);
         self.market.set_origin(here);
         self.overlay_logic(ctx);
@@ -1123,3 +1224,35 @@ impl NexusApp {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nexus_model::context::Vehicle;
+
+    fn cx(activity: Activity, focus: GuiFocus) -> Context {
+        Context { activity, focus, danger: false, body: None }
+    }
+
+    /// The pages Follow my flight moves between, from the commander's context, EDEB's way.
+    #[test]
+    fn flight_from_context() {
+        const KM150: f64 = 150_000.0;
+        let of = |a: Activity, alt: Option<f64>| Flight::of(&cx(a, GuiFocus::None), alt, KM150);
+        assert_eq!(of(Activity::Supercruise, None), Flight::System);
+        assert_eq!(of(Activity::Space, None), Flight::System);
+        assert_eq!(of(Activity::ChargingJump, None), Flight::Route);
+        assert_eq!(of(Activity::Hyperspace, None), Flight::Route);
+        assert_eq!(of(Activity::NearBody, Some(400_000.0)), Flight::System, "orbital cruise");
+        assert_eq!(of(Activity::NearBody, Some(149_999.0)), Flight::Planet);
+        assert_eq!(of(Activity::NearBody, None), Flight::System, "no altitude isn't under it");
+        assert_eq!(of(Activity::Glide, Some(20_000.0)), Flight::Planet);
+        assert_eq!(of(Activity::Landed, Some(0.0)), Flight::Planet);
+        assert_eq!(of(Activity::OnFootPlanet, Some(0.0)), Flight::Planet);
+        assert_eq!(of(Activity::Srv(Vehicle::Scarab), Some(0.0)), Flight::Idle, "driving changes nothing");
+        assert_eq!(of(Activity::Docked, None), Flight::Idle);
+        assert_eq!(of(Activity::NotInGame, None), Flight::Idle);
+        assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::GalaxyMap), Some(1_000.0), KM150), Flight::Route, "the galaxy map wins");
+        assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::SystemMap), Some(1_000.0), KM150), Flight::Planet, "the system map doesn't");
+        assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::None), Some(100_000.0), 50_000.0), Flight::System, "the altitude is the setting's");
+    }
+}
