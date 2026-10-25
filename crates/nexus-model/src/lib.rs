@@ -19,4 +19,4 @@ pub mod session;
 pub mod state;
 
 pub use alerts::{Alert, AlertKind, Alerts, Priority};
-pub use state::{FeedItem, GameState, Model};
+pub use state::{Activity, FeedItem, GameState, Model};

@@ -6,10 +6,19 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
-- **Settings › Follow my flight** (off by default) changes the page as you fly. Arriving in a system opens
-  Exploration; approaching a planet with biological signals you haven't finished analysing opens Exobiology, and
-  leaving it returns to Exploration. A finished system, or the start of a hyperspace jump, opens Navigation. It
-  reacts only to what happens while the game runs, never to the journals read at start.
+- **Settings › Follow my flight** (off by default) changes the page as you fly, the way Elite Dangerous
+  Exploration Buddy switches its tabs: it reads what you're doing from the game's Status.json and switches when
+  that changes. Flying a system opens Exploration; getting below **Planet view below** (150 km by default) over a
+  planet, or stepping outside on foot, opens Exobiology when the planet has biological signals you haven't finished
+  analysing (Exploration otherwise); climbing back above it returns to Exploration; the galaxy map, a charging
+  hyperspace jump or a finished system (every body found, every planet worth the high-value threshold mapped, every
+  genus analysed) opens Navigation. It only ever moves between those three pages: on any other page it leaves you
+  alone, and it reacts only to what happens while the game runs, never to the journals read at start.
+
+### Fixed
+- Navigation: once every stop of a planned route was reached, the page kept showing "Route complete" and hid the
+  route plotted in the game afterwards (so did "Copy the next system" and the auto-copy after a jump). The game's
+  route now takes over, under the finished tour's summary.
 
 ## [0.7.3-beta.1] - 2026-10-25
 

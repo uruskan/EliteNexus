@@ -8,9 +8,11 @@ use crate::tts::Speaker;
 use crate::widgets;
 use egui::{Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use egui_phosphor::regular as icon;
-use nexus_model::{Alert, Priority};
+use nexus_journal::companion::Status;
+use nexus_model::{Activity, Alert, Priority};
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 struct Toast {
@@ -56,14 +58,14 @@ fn save_png(path: &std::path::Path, img: &egui::ColorImage) {
     }
 }
 
-/// What "Follow my flight" compares from one journal event to the next.
-#[derive(Default, Clone, Copy)]
+/// What "Follow my flight" compares from one Status.json update or journal event to the next.
 struct FlightSnapshot {
+    /// The Status.json the model held when this was taken, compared by pointer (`Arc::ptr_eq`): the model makes a
+    /// new `Arc` for every update, while the timestamp inside has one-second resolution and could miss one.
+    status: Option<Arc<Status>>,
     /// `GameState::events_applied` when this was taken.
     events: u64,
-    system: u64,
-    near_body: Option<u32>,
-    hyperspace: bool,
+    activity: Activity,
     /// The current system is fully explored (Settings "High-value body" threshold).
     done: bool,
 }
@@ -111,8 +113,8 @@ pub struct NexusApp {
     overrides: Overrides,
     shot: Option<ScreenshotJob>,
     last_jump_count: Option<usize>,
-    /// Where the commander was at the last journal event (Settings › Follow my flight); `None` until the first frame
-    /// with a commander.
+    /// What the commander was doing at the last Status.json update or journal event (Settings › Follow my flight);
+    /// `None` until the first frame with a commander.
     flight: Option<FlightSnapshot>,
     clipboard: Option<arboard::Clipboard>,
     compact: bool,
@@ -262,46 +264,50 @@ impl NexusApp {
         }
     }
 
-    /// Follow my flight: watch the jump state, the system, the planet we're near and whether the system is done,
-    /// and open the page that fits (Navigation when a jump starts or the system is finished, Exploration on arrival
-    /// or leaving a planet, Exobiology near a planet with life still to analyse). Runs only when journal events
-    /// arrived: on every other frame it costs one counter comparison. The snapshot is kept even with the setting off,
-    /// so switching it on never acts on old transitions, and the history read at start never switches.
+    /// Follow my flight: read what the commander is doing from Status.json (`GameState::activity`, EDEB's model) and,
+    /// when it changes, open the page that fits: Navigation in the galaxy map or while a hyperspace jump charges,
+    /// Exploration while flying the system, Exobiology near a planet with life still to analyse (Exploration near
+    /// any other planet); Navigation too once the system is done. Only switches between those three pages. Runs only
+    /// when a Status.json update or a journal event arrived: on every other frame it costs the model read lock, one
+    /// counter comparison and one pointer comparison, no allocation. The snapshot is kept even with the setting off,
+    /// so switching it on never acts on an old transition, and the history read at start never switches.
     fn follow_flight(&mut self) {
         let target = {
             let model = self.core.model.read();
             let Some(gs) = model.active() else { return };
-            let prev = self.flight;
-            if prev.is_some_and(|p| p.events == gs.events_applied) {
+            let same_status = |p: &FlightSnapshot| match (&p.status, &gs.status) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if self.flight.as_ref().is_some_and(|p| p.events == gs.events_applied && same_status(p)) {
                 return;
             }
             let system = gs.exploration.current_system();
-            let new = FlightSnapshot {
-                events: gs.events_applied,
-                system: gs.location.system_address,
-                near_body: gs.location.near_body,
-                hyperspace: gs.location.hyperspace,
-                done: system.is_some_and(|s| s.fully_explored(self.settings.high_value_threshold)),
-            };
-            self.flight = Some(new);
+            let activity = gs.activity(f64::from(self.settings.auto_page_altitude_km) * 1000.0);
+            let done = system.is_some_and(|s| s.fully_explored(self.settings.high_value_threshold));
+            let prev = self.flight.replace(FlightSnapshot { status: gs.status.clone(), events: gs.events_applied, activity, done });
             let Some(prev) = prev else { return };
-            if new.hyperspace && !prev.hyperspace {
-                Some(Page::Navigation)
-            } else if new.system != prev.system {
-                Some(Page::Exploration)
-            } else if new.near_body != prev.near_body {
-                match new.near_body {
-                    Some(id) => system.and_then(|s| s.bodies.get(&id)).filter(|b| b.bio_signals > 0 && !b.bio_done()).map(|_| Page::Exobiology),
-                    None => Some(Page::Exploration),
+            if activity != prev.activity {
+                match activity {
+                    Activity::Route => Some(Page::Navigation),
+                    Activity::System => Some(Page::Exploration),
+                    Activity::Planet => {
+                        let name = gs.status.as_ref().and_then(|st| st.body_name.as_deref());
+                        let body = system.zip(name).and_then(|(s, name)| s.bodies.values().find(|b| b.name == name));
+                        Some(if body.is_some_and(|b| b.bio_signals > 0 && !b.bio_done()) { Page::Exobiology } else { Page::Exploration })
+                    }
+                    Activity::None | Activity::Other => None,
                 }
-            } else if new.done && !prev.done {
+            } else if done && !prev.done {
                 Some(Page::Navigation)
             } else {
                 None
             }
         };
         let Some(target) = target else { return };
-        if self.settings.auto_page && self.shot.is_none() && !self.compact && self.page != Page::Settings && matches!(self.core.status.read().phase, Phase::Live) {
+        let following = matches!(self.page, Page::Navigation | Page::Exploration | Page::Exobiology);
+        if self.settings.auto_page && following && self.page != target && self.shot.is_none() && !self.compact && matches!(self.core.status.read().phase, Phase::Live) {
             self.page = target;
         }
     }

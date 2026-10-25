@@ -123,9 +123,6 @@ pub struct Location {
     pub body: Option<String>,
     pub body_id: Option<u32>,
     pub body_type: Option<String>,
-    /// BodyID of the planet we're in orbital cruise around, landed on or on foot on (ApproachBody,
-    /// Touchdown, or a login on a planet); cleared on LeaveBody and when the ship leaves the system.
-    pub near_body: Option<u32>,
     pub station: Option<StationInfo>,
     pub settlement: Option<String>,
     pub docked: bool,
@@ -166,7 +163,6 @@ impl Location {
         }
         match kind {
             ArrivalKind::Jump => {
-                self.near_body = None;
                 self.docked = false;
                 self.landed = false;
                 self.station = None;
@@ -177,8 +173,6 @@ impl Location {
                 }
             }
             ArrivalKind::Location | ArrivalKind::CarrierJump => {
-                // A login on a planet (landed, in the SRV, on foot) counts as near it; a carrier jump never does.
-                self.near_body = if kind == ArrivalKind::Location && a.body_type.as_deref() == Some("Planet") { a.body_id } else { None };
                 self.docked = a.docked.unwrap_or(false);
                 self.on_foot = a.on_foot.unwrap_or(self.on_foot && !new_system);
                 self.in_srv = a.in_srv.unwrap_or(false);

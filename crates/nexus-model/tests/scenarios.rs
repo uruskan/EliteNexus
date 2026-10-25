@@ -1,7 +1,7 @@
 //! Scenario tests: real-format journal lines through the full model.
 
 use nexus_journal::{raw::scan_line, Event, EventCtx};
-use nexus_model::{Alerts, Model};
+use nexus_model::{Activity, Alerts, Model};
 
 /// Applies journal lines (live = true so alerts fire) and returns the collected alerts.
 fn feed(model: &mut Model, lines: &[&str]) -> Vec<nexus_model::Alert> {
@@ -611,27 +611,58 @@ fn surface_mining_from_history_has_no_positions() {
     assert_eq!(gs.mining.spots_rev, 0);
 }
 
-/// `near_body` follows orbital cruise: set on ApproachBody, cleared on LeaveBody and when a hyperspace jump starts.
+/// Applies a Status.json with these flags (`extra` adds fields, e.g. `, "GuiFocus":6`) and returns the activity it
+/// implies with `threshold_m` as the planet-view altitude.
+fn status_activity(m: &mut Model, flags: u32, flags2: u32, extra: &str, threshold_m: f64) -> Activity {
+    let text = format!(r#"{{ "timestamp":"2026-10-01T10:05:00Z", "event":"Status", "Flags":{flags}, "Flags2":{flags2}{extra} }}"#);
+    let status = nexus_journal::Companion::parse(nexus_journal::CompanionKind::Status, &text).expect("Status.json");
+    m.apply_companion(&status, true, &mut Alerts::live());
+    m.active().unwrap().activity(threshold_m)
+}
+
+/// Follow my flight reads what the commander is doing from Status.json the way EDEB does: the first rule that
+/// matches wins (galaxy map, on foot, near a body, FSD charging, out of the main ship, else flying the system).
 #[test]
-fn near_body_follows_approach_and_leave() {
+fn activity_follows_status_json() {
+    use nexus_journal::companion::{flags, flags2};
+    const KM150: f64 = 150_000.0;
     let mut m = Model::default();
     feed(&mut m, LOGIN);
-    assert_eq!(m.active().unwrap().location.near_body, None, "logged in next to a star");
-    let near = |m: &Model| m.active().unwrap().location.near_body;
-    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"ApproachBody", "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 2", "BodyID":2 }"#]);
-    assert_eq!(near(&m), Some(2));
-    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"LeaveBody", "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 2", "BodyID":2 }"#]);
-    assert_eq!(near(&m), None);
-    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"ApproachBody", "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 3", "BodyID":3 }"#]);
-    assert_eq!(near(&m), Some(3));
-    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:04:00Z", "event":"StartJump", "JumpType":"Hyperspace", "StarSystem":"Beta", "SystemAddress":200, "StarClass":"M" }"#]);
-    assert_eq!(near(&m), None, "a hyperspace jump leaves the planet behind");
-    feed(&mut m, &[jump("2026-10-01T10:04:20Z", "Beta", 200, 10.0).as_str()]);
-    assert_eq!(near(&m), None);
+    assert_eq!(m.active().unwrap().activity(KM150), Activity::None, "no Status.json yet");
+    let ship = flags::IN_MAIN_SHIP | flags::SUPERCRUISE;
+    assert_eq!(status_activity(&mut m, ship, 0, "", KM150), Activity::System);
 
-    // Logging in landed on a planet counts as near it.
-    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T11:00:00Z", "event":"Location", "Docked":false, "StarSystem":"Beta", "SystemAddress":200, "StarPos":[10.0,0.0,0.0], "Population":0, "Body":"Beta 1", "BodyID":4, "BodyType":"Planet", "Latitude":12.5, "Longitude":-40.0 }"#]);
-    assert_eq!(near(&m), Some(4));
+    // The galaxy map wins over everything: near a planet, on foot, a charging jump.
+    assert_eq!(status_activity(&mut m, ship, 0, r#", "GuiFocus":6, "BodyName":"Alpha 2", "Altitude":1000.0"#, KM150), Activity::Route);
+    assert_eq!(status_activity(&mut m, 0, flags2::ON_FOOT | flags2::ON_FOOT_EXTERIOR, r#", "GuiFocus":6"#, KM150), Activity::Route);
+    assert_eq!(status_activity(&mut m, ship | flags::FSD_CHARGING, flags2::FSD_HYPERDRIVE_CHARGING, r#", "GuiFocus":6"#, KM150), Activity::Route);
+    assert_eq!(status_activity(&mut m, ship, 0, r#", "GuiFocus":7"#, KM150), Activity::System, "the system map isn't the galaxy map");
+
+    // On foot: outside is the planet, in a hangar or a station isn't.
+    assert_eq!(status_activity(&mut m, 0, flags2::ON_FOOT | flags2::ON_FOOT_ON_PLANET | flags2::ON_FOOT_EXTERIOR, r#", "BodyName":"Alpha 2", "Altitude":0.0"#, KM150), Activity::Planet);
+    assert_eq!(status_activity(&mut m, 0, flags2::ON_FOOT | flags2::ON_FOOT_IN_HANGAR, "", KM150), Activity::Other);
+    assert_eq!(status_activity(&mut m, 0, flags2::ON_FOOT | flags2::ON_FOOT_IN_STATION | flags2::ON_FOOT_SOCIAL_SPACE, "", KM150), Activity::Other);
+
+    // Near a body: under the threshold is the planet, at or above it the system; the threshold is the caller's.
+    assert_eq!(status_activity(&mut m, ship, 0, r#", "BodyName":"Alpha 2", "Altitude":20000.0"#, KM150), Activity::Planet);
+    assert_eq!(status_activity(&mut m, ship, 0, r#", "BodyName":"Alpha 2", "Altitude":149999.0"#, KM150), Activity::Planet);
+    assert_eq!(status_activity(&mut m, ship, 0, r#", "BodyName":"Alpha 2", "Altitude":150000.0"#, KM150), Activity::System);
+    assert_eq!(status_activity(&mut m, ship, 0, r#", "BodyName":"Alpha 2", "Altitude":400000.0"#, KM150), Activity::System);
+    assert_eq!(status_activity(&mut m, ship, 0, r#", "BodyName":"Alpha 2", "Altitude":100000.0"#, 50_000.0), Activity::System);
+    assert_eq!(status_activity(&mut m, ship, 0, r#", "BodyName":"Alpha 2", "Altitude":100000.0"#, 500_000.0), Activity::Planet);
+    assert_eq!(status_activity(&mut m, ship, 0, r#", "BodyName":"Alpha 2""#, KM150), Activity::System, "a body name without an altitude isn't near it");
+
+    // FSD charging: a hyperspace jump is the route, a supercruise charge is still the system.
+    assert_eq!(status_activity(&mut m, ship | flags::FSD_CHARGING, flags2::FSD_HYPERDRIVE_CHARGING, "", KM150), Activity::Route);
+    assert_eq!(status_activity(&mut m, ship | flags::FSD_CHARGING, 0, "", KM150), Activity::System);
+    assert_eq!(status_activity(&mut m, ship | flags::FSD_CHARGING, flags2::FSD_HYPERDRIVE_CHARGING, r#", "BodyName":"Alpha 2", "Altitude":1000.0"#, KM150), Activity::Planet, "near a body comes before the charge");
+
+    // Out of the main ship: the SRV and a fighter are Other, unless Status.json places them on a body; no flags at all is the main menu.
+    assert_eq!(status_activity(&mut m, flags::IN_SRV, 0, "", KM150), Activity::Other);
+    assert_eq!(status_activity(&mut m, flags::IN_FIGHTER, 0, "", KM150), Activity::Other);
+    assert_eq!(status_activity(&mut m, flags::IN_SRV, 0, r#", "BodyName":"Alpha 2", "Altitude":0.0"#, KM150), Activity::Planet);
+    assert_eq!(status_activity(&mut m, 0, 0, "", KM150), Activity::None);
+    assert_eq!(status_activity(&mut m, flags::IN_MAIN_SHIP, 0, "", KM150), Activity::System, "normal space");
 }
 
 /// A system is done once every body is found, the planets worth mapping are mapped and every biological signal is analysed.

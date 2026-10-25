@@ -16,7 +16,7 @@ use crate::missions::{MissionOutcome, Missions};
 use crate::session::Session;
 use nexus_data::names::{clean_station_name, compact_credits, group_digits};
 use nexus_journal::companion::{
-    flags, Companion, FCMaterialsFile, MarketFile, ModulesInfoFile, OutfittingFile, RouteHop, ShipyardFile, Status,
+    flags, flags2, Companion, FCMaterialsFile, GuiFocus, MarketFile, ModulesInfoFile, OutfittingFile, RouteHop, ShipyardFile, Status,
 };
 use nexus_journal::events::{self as ev, Event};
 use nexus_journal::{EventCtx, Timestamp};
@@ -32,6 +32,22 @@ pub struct FeedItem {
 }
 
 const FEED_LEN: usize = 300;
+
+/// What the commander is doing, read from Status.json the way Elite Dangerous Exploration Buddy does
+/// (`GameState::activity`). `Planet` means close to a planet's surface or on foot outside.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Activity {
+    /// No Status.json yet, or the game is at the main menu.
+    None,
+    /// The galaxy map is open or a hyperspace jump is charging.
+    Route,
+    /// Flying the system: supercruise, normal space, a supercruise charge.
+    System,
+    /// Close to a planet's surface or on foot outside.
+    Planet,
+    /// On foot inside, in the SRV or a fighter: nothing to follow.
+    Other,
+}
 
 /// Everything Elite Nexus knows about one commander.
 #[derive(Debug, Clone, Default)]
@@ -321,7 +337,6 @@ impl GameState {
             Event::StartJump(s) => {
                 if s.jump_type == "Hyperspace" {
                     self.location.hyperspace = true;
-                    self.location.near_body = None;
                     if let (Some(sys), Some(class)) = (&s.star_system, &s.star_class) {
                         self.pending_star_class = Some((sys.clone(), class.clone()));
                         self.star_class_alert(ts, sys, class, alerts);
@@ -369,16 +384,13 @@ impl GameState {
                 self.location.body_id = Some(b.body_id);
                 self.location.body_type = Some("Planet".into());
                 self.mining.at_body(b.system_address, Some(b.body_id));
-                self.location.near_body = Some(b.body_id);
             }
             Event::LeaveBody(_) => {
                 self.location.lat_lon = None;
                 self.mining.leave_body();
-                self.location.near_body = None;
             }
             Event::Touchdown(t) => {
                 self.location.landed = true;
-                self.location.near_body = Some(t.body_id);
                 self.location.body = Some(t.body.clone());
                 self.location.body_id = Some(t.body_id);
                 if let (Some(lat), Some(lon)) = (t.latitude, t.longitude) {
@@ -1217,6 +1229,29 @@ impl GameState {
     }
 
     // ---------------------------------------------------------------- convenience queries
+
+    /// What the commander is doing, from Status.json, following EDEB's activity model: the first rule that matches
+    /// wins. The galaxy map is `Route`; on foot outside is `Planet`, on foot anywhere else `Other`; near a body
+    /// (Status.json names it and gives an altitude) it's `Planet` under `bio_altitude_m` metres and `System` above;
+    /// a charging hyperdrive is `Route`, a supercruise charge `System`; out of the main ship, no flags at all (the
+    /// main menu) is `None` and anything else (SRV, fighter) `Other`; everything else is `System`. No Status.json
+    /// is `None`. `Planet` means close to a planet's surface or on foot outside.
+    pub fn activity(&self, bio_altitude_m: f64) -> Activity {
+        let Some(st) = self.status.as_ref() else { return Activity::None };
+        if st.gui_focus() == GuiFocus::GalaxyMap {
+            Activity::Route
+        } else if st.on_foot() {
+            if st.has2(flags2::ON_FOOT_EXTERIOR) { Activity::Planet } else { Activity::Other }
+        } else if let (Some(_), Some(altitude)) = (&st.body_name, st.altitude) {
+            if altitude < bio_altitude_m { Activity::Planet } else { Activity::System }
+        } else if st.has(flags::FSD_CHARGING) {
+            if st.has2(flags2::FSD_HYPERDRIVE_CHARGING) { Activity::Route } else { Activity::System }
+        } else if !st.has(flags::IN_MAIN_SHIP) {
+            if st.flags == 0 { Activity::None } else { Activity::Other }
+        } else {
+            Activity::System
+        }
+    }
 
     pub fn current_body_radius(&self) -> Option<f64> {
         self.status.as_ref().and_then(|s| s.planet_radius)
