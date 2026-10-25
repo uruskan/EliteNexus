@@ -5,6 +5,12 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+## [0.7.3-beta.2] - 2026-10-25
+
+A second beta of 0.7.3: the compact view becomes the **overlay**, a small island at the top of the game's screen
+that says what's going on and opens up for the moments that need you, and important alerts can also appear in
+XSOverlay in VR.
+
 ### Changed
 - The compact view is now the **overlay**: one small black island at the top of the game's screen, in a window of its
   own beside the main window, instead of the whole window turning into a panel. It says what's going on in a word or
