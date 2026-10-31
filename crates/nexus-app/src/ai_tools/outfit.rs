@@ -7,6 +7,7 @@ use nexus_spansh::{BodyRecord, Coords, SearchRequest, SortDir, filter};
 use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::future::Future;
+use std::time::{Duration, Instant};
 
 /// Spansh's body search answers 100 rows a page here; five pages are 500 bodies. The cap keeps the answer quick: each
 /// page is one request to Spansh.
@@ -14,6 +15,16 @@ const BODY_PAGE: u32 = 100;
 const MAX_BODY_PAGES: u32 = 5;
 /// Bodies listed, and the number of hits after which the search stops reading further pages.
 const BODY_HITS: usize = 10;
+/// What `BodySearch::interrupted` holds when the search ran out of time.
+const TIME_LIMIT: &str = "time limit";
+/// The whole body search, all pages together, stops after this.
+const BODY_SEARCH_LIMIT: Duration = Duration::from_secs(60);
+
+/// How long the next Spansh page may take, or `None` when the search has used up its time.
+fn page_budget(elapsed: Duration) -> Option<Duration> {
+    let left = BODY_SEARCH_LIMIT.checked_sub(elapsed).filter(|d| !d.is_zero())?;
+    Some(left.min(SPANSH_TIMEOUT))
+}
 
 fn add_note(out: &mut Value, text: &str) {
     let note = out["note"].as_str().map(|n| format!("{n} {text}")).unwrap_or_else(|| text.to_string());
@@ -91,8 +102,10 @@ fn shape_bodies(s: &BodySearch, mut hits: Vec<(f64, BodyRecord)>) -> Value {
     if s.enough {
         add_note(&mut out, "The search stopped as soon as it had enough bodies, so the nearer ones are listed, not the richest in the whole cap.");
     }
-    if let Some(e) = &s.interrupted {
-        add_note(&mut out, &format!("The search stopped early: {e}."));
+    match s.interrupted.as_deref() {
+        Some(TIME_LIMIT) => add_note(&mut out, &format!("The search stopped early: it reached its {} second time limit.", BODY_SEARCH_LIMIT.as_secs())),
+        Some(e) => add_note(&mut out, &format!("The search stopped early: {e}.")),
+        None => {}
     }
     if found == 0 {
         add_note(&mut out, "None of them holds it: try a larger max_gravity_g or another near_system.");
@@ -101,9 +114,9 @@ fn shape_bodies(s: &BodySearch, mut hits: Vec<(f64, BodyRecord)>) -> Value {
 }
 
 impl NexusTools {
-    /// One Spansh call, under the usual timeout.
-    fn spansh_call<T>(&self, call: impl Future<Output = nexus_spansh::Result<T>>) -> Result<T, String> {
-        match self.rt.block_on(async { tokio::time::timeout(SPANSH_TIMEOUT, call).await }) {
+    /// One Spansh call, under `timeout`.
+    fn spansh_call_within<T>(&self, timeout: Duration, call: impl Future<Output = nexus_spansh::Result<T>>) -> Result<T, String> {
+        match self.rt.block_on(async { tokio::time::timeout(timeout, call).await }) {
             Ok(Ok(v)) => Ok(v),
             Ok(Err(e)) => Err(format!("Spansh: {e}")),
             Err(_) => Err("Spansh: no answer in time".to_string()),
@@ -129,7 +142,13 @@ impl NexusTools {
         let (origin, near) = self.origin(a, &me)?;
         let mut hits: Vec<(f64, BodyRecord)> = Vec::new();
         let (mut searched, mut enough, mut interrupted) = (0usize, false, None);
+        let started = Instant::now();
         for page in 0..MAX_BODY_PAGES {
+            // Every page gets what is left of the search's time; none starts once it is used up.
+            let Some(budget) = page_budget(started.elapsed()) else {
+                interrupted = Some(TIME_LIMIT.to_string());
+                break;
+            };
             let req = SearchRequest::new()
                 .near(Coords { x: origin[0], y: origin[1], z: origin[2] })
                 .filter("is_landable", filter::eq(true))
@@ -137,7 +156,7 @@ impl NexusTools {
                 .sort_by("distance", SortDir::Asc)
                 .size(BODY_PAGE)
                 .page(page);
-            let rows = match self.spansh_call(self.spansh.search_bodies(&req)) {
+            let rows = match self.spansh_call_within(budget, self.spansh.search_bodies(&req)) {
                 Ok(res) => res.results,
                 Err(e) if page == 0 => return Err(e),
                 Err(e) => {
@@ -197,6 +216,21 @@ mod tests {
         assert_eq!(v["max_distance_ls"], 50_000.0);
         let none = shape_bodies(&s, Vec::new());
         assert!(none["note"].as_str().unwrap().contains("None of them"), "{none}");
+    }
+
+    #[test]
+    fn the_body_search_has_a_time_limit() {
+        let s = Duration::from_secs;
+        assert_eq!(page_budget(s(0)), Some(SPANSH_TIMEOUT), "a page never gets more than the usual timeout");
+        assert_eq!(page_budget(s(40)), Some(s(20)), "later pages get what is left");
+        assert_eq!(page_budget(s(59)), Some(s(1)));
+        assert_eq!(page_budget(BODY_SEARCH_LIMIT), None);
+        assert_eq!(page_budget(s(90)), None);
+        // So five pages can never take longer than the limit, whatever Spansh does.
+        let polonium = materials::material("Polonium").unwrap();
+        let search = BodySearch { near: "Deciat", material: polonium, max_gravity_g: 1.0, max_ls: None, searched: 200, enough: false, interrupted: Some(TIME_LIMIT.into()) };
+        let note = shape_bodies(&search, Vec::new())["note"].as_str().unwrap().to_string();
+        assert!(note.contains("60 second time limit"), "{note}");
     }
 
     #[test]

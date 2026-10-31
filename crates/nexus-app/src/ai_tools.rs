@@ -2019,7 +2019,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "find_material_body",
-        description: "Landable bodies near a system that hold a raw material (e.g. Polonium), richest first, from Spansh. Searches the 500 nearest landable bodies at most (a cap that keeps the answer quick); max_gravity_g defaults to 1.0.",
+        description: "Landable bodies near a system that hold a raw material (e.g. Polonium), from Spansh. Reads the nearest landable bodies page by page (up to 500), stops once it has 10 hits or after 60 seconds, and lists those richest first, so a richer body may lie farther out. max_gravity_g defaults to 1.0. A search can take tens of seconds.",
         params: || {
             schema(
                 json!({
