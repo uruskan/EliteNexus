@@ -1956,6 +1956,55 @@ pub static TOOLS: &[Tool] = &[
         mcp: true,
         run: |t, _| t.progress(),
     },
+    Tool {
+        name: "materials",
+        description: "Engineering materials the commander holds (raw, manufactured, encoded), each with its grade, storage cap and whether it's full. Filter by category or by part of a name.",
+        params: || {
+            schema(
+                json!({
+                    "category": { "type": "string", "enum": ["raw", "manufactured", "encoded"], "description": "Only this category. Default: all three." },
+                    "name": { "type": "string", "description": "Only materials whose name contains this (e.g. polonium, wake echoes)." }
+                }),
+                &[],
+            )
+        },
+        working: "Counting your materials…",
+        noun: "your materials",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::materials,
+    },
+    Tool {
+        name: "on_foot",
+        description: "On-foot equipment: suit loadouts (suit, modifications, weapons and their modifications), the one in use, and what's in the ship locker and backpack (items, components, consumables, data).",
+        params: || schema(json!({}), &[]),
+        working: "Checking your on-foot gear…",
+        noun: "your on-foot gear",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: |t, _| t.on_foot(),
+    },
+    Tool {
+        name: "credit_history",
+        description: "Credits earned and spent since the game was last loaded (or in the last since_hours), newest first, with totals per category. Built from the journal: a few game actions record no amount, so the list may not add up to the balance exactly.",
+        params: || {
+            schema(
+                json!({
+                    "limit": { "type": "integer", "description": "How many transactions to list, newest first. Default 25, at most 100." },
+                    "since_hours": { "type": "number", "description": "Look back this many hours instead of since the game was last loaded." }
+                }),
+                &[],
+            )
+        },
+        working: "Reading your credit history…",
+        noun: "your credit history",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::credit_history,
+    },
 ];
 
 /// One line about the commander for each question (location, ship, credits, date).
@@ -2409,6 +2458,228 @@ mod tests {
         assert!(p["game"]["at_main_menu"].is_boolean());
         assert_eq!(p["game"]["mode"], "Solo");
         assert!(p["powerplay"].is_null() && p["squadron"].is_null(), "not pledged, no squadron: {p}");
+    }
+
+    /// `m` with journal lines replayed on top.
+    fn with_lines(mut m: Model, lines: &[String]) -> Model {
+        let mut quiet = Alerts::disabled();
+        for line in lines {
+            let (ts, name) = scan_line(line).expect("line");
+            let ev = Event::parse(name, line).expect("event");
+            m.apply(&EventCtx { ts, name, line, live: false }, &ev, &mut quiet);
+        }
+        m
+    }
+
+    /// An ISO timestamp `secs` after now.
+    fn at(secs: i64) -> String {
+        nexus_journal::Timestamp(nexus_journal::Timestamp::now().0 + secs).to_iso()
+    }
+
+    /// The commander with iron (full) and polonium, a suit loadout in use and a ship locker.
+    fn geared_commander() -> Model {
+        let t = at(30);
+        with_lines(
+            commander(),
+            &[
+                format!(r#"{{ "timestamp":"{t}", "event":"Materials", "Raw":[ {{ "Name":"iron", "Name_Localised":"Iron", "Count":300 }}, {{ "Name":"polonium", "Name_Localised":"Polonium", "Count":12 }} ], "Manufactured":[ {{ "Name":"chemicaldistillery", "Name_Localised":"Chemical Distillery", "Count":4 }} ], "Encoded":[ ] }}"#),
+                format!(r#"{{ "timestamp":"{t}", "event":"SuitLoadout", "SuitID":1700216165682989, "SuitName":"tacticalsuit_class1", "SuitName_Localised":"Dominator Suit", "SuitMods":["suit_increased_air_reserves"], "LoadoutID":4293000001, "LoadoutName":"Fighter", "Modules":[ {{ "SlotName":"PrimaryWeapon1", "SuitModuleID":1700216180036986, "ModuleName":"wpn_m_assaultrifle_plasma_fauto", "ModuleName_Localised":"Manticore Tormentor", "Class":3, "WeaponMods":["weapon_extended_magazine"] }}, {{ "SlotName":"SecondaryWeapon", "SuitModuleID":1700216180036987, "ModuleName":"wpn_s_pistol_kinetic_sauto", "ModuleName_Localised":"Karma P-15", "Class":1, "WeaponMods":[] }} ] }}"#),
+                format!(r#"{{ "timestamp":"{t}", "event":"ShipLocker", "Items":[ {{ "Name":"healthpack", "Name_Localised":"Medkit", "OwnerID":0, "Count":3 }} ], "Components":[ {{ "Name":"graphene", "Name_Localised":"Graphene", "OwnerID":0, "Count":9 }} ], "Consumables":[ {{ "Name":"energycell", "Name_Localised":"Energy Cell", "OwnerID":0, "Count":5 }} ], "Data":[ {{ "Name":"airqualityreports", "Name_Localised":"Air Quality Reports", "OwnerID":0, "Count":2 }} ] }}"#),
+            ],
+        )
+    }
+
+    #[test]
+    fn materials_have_grade_cap_and_full_flag() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = model_tools(geared_commander(), &rt);
+        let all = tools.call("materials", &json!({})).unwrap();
+        let raw = all["raw"].as_array().unwrap();
+        let iron = raw.iter().find(|m| m["name"] == "Iron").expect("iron");
+        assert_eq!((&iron["count"], &iron["grade"], &iron["cap"], &iron["full"]), (&json!(300), &json!(1), &json!(300), &json!(true)), "{iron}");
+        let polonium = raw.iter().find(|m| m["name"] == "Polonium").expect("polonium");
+        assert_eq!((&polonium["count"], &polonium["grade"], &polonium["cap"]), (&json!(12), &json!(4), &json!(150)), "{polonium}");
+        assert!(polonium["full"] != true, "{polonium}");
+        assert_eq!(all["manufactured"][0]["name"], "Chemical Distillery");
+        assert!(all["encoded"].as_array().unwrap().is_empty());
+
+        let one = tools.call("materials", &json!({ "category": "raw", "name": "polo" })).unwrap();
+        let raw = one["raw"].as_array().unwrap();
+        assert_eq!(raw.len(), 1, "{one}");
+        assert_eq!(raw[0]["name"], "Polonium");
+        assert!(one["manufactured"].as_array().unwrap().is_empty());
+
+        // A name filter reaches every category; an unknown category is an error, not an empty answer.
+        let distill = tools.call("materials", &json!({ "name": "DISTILL" })).unwrap();
+        assert_eq!(distill["manufactured"].as_array().unwrap().len(), 1);
+        assert!(distill["raw"].as_array().unwrap().is_empty());
+        assert!(tools.call("materials", &json!({ "category": "guardian" })).is_err());
+    }
+
+    #[test]
+    fn materials_stay_within_the_assistants_result_size() {
+        use nexus_data::materials::{MaterialKind, all};
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let limit = nexus_ai::agent::MAX_RESULT_CHARS;
+        // Every material the game knows, held at its cap: the most the commander can ever ask about.
+        let mut m = commander();
+        let mats = &mut m.active_mut().expect("commander").inventory.materials;
+        for x in all() {
+            let map = match x.kind {
+                MaterialKind::Raw => &mut mats.raw,
+                MaterialKind::Manufactured => &mut mats.manufactured,
+                MaterialKind::Encoded => &mut mats.encoded,
+            };
+            map.insert(x.symbol.clone(), i64::from(x.cap()));
+        }
+        let held = mats.raw.len() + mats.manufactured.len() + mats.encoded.len();
+        assert!(held > 120, "{held} materials held");
+        let tools = model_tools(m, &rt);
+        let v = tools.call("materials", &json!({})).unwrap();
+        let len = v.to_string().len();
+        assert!(len < limit, "{len} chars for {held} materials");
+        let listed: usize = ["raw", "manufactured", "encoded"].iter().map(|k| v[k].as_array().unwrap().len()).sum();
+        assert_eq!(listed, held, "every material is still listed: {}", v["notes"]);
+        let raw = tools.call("materials", &json!({ "category": "raw" })).unwrap();
+        assert!(raw.to_string().len() < limit);
+    }
+
+    #[test]
+    fn on_foot_lists_loadouts_and_locker() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = model_tools(geared_commander(), &rt);
+        let v = tools.call("on_foot", &json!({})).unwrap();
+        let loadouts = v["loadouts"].as_array().unwrap();
+        assert_eq!(loadouts.len(), 1, "{v}");
+        assert_eq!(loadouts[0]["suit"], "Dominator Suit");
+        assert_eq!(loadouts[0]["name"], "Fighter");
+        assert_eq!(loadouts[0]["current"], true);
+        assert_eq!(loadouts[0]["suit_mods"][0], "suit_increased_air_reserves");
+        let weapons = loadouts[0]["weapons"].as_array().unwrap();
+        assert_eq!(weapons.len(), 2);
+        assert_eq!(weapons[0]["weapon"], "Manticore Tormentor");
+        assert_eq!(weapons[0]["grade"], 3);
+        assert_eq!(weapons[0]["mods"][0], "weapon_extended_magazine");
+        assert!(weapons[1].get("mods").is_none(), "no mods, no key: {}", weapons[1]);
+        assert_eq!(v["locker"]["items"]["Medkit"], 3);
+        assert_eq!(v["locker"]["components"]["Graphene"], 9);
+        assert_eq!(v["locker"]["consumables"]["Energy Cell"], 5);
+        assert_eq!(v["locker"]["data"]["Air Quality Reports"], 2);
+        assert!(v["backpack"]["items"].as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn on_foot_stays_within_the_assistants_result_size() {
+        use nexus_model::inventory::{Locker, LockerItem, SuitLoadoutInfo};
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let limit = nexus_ai::agent::MAX_RESULT_CHARS;
+        let fill = |l: &mut Locker, n: usize| {
+            for (kind, map) in [&mut l.items, &mut l.components, &mut l.consumables, &mut l.data].into_iter().enumerate() {
+                for i in 0..n {
+                    map.insert(format!("k{kind}i{i}"), LockerItem { name: format!("Ultra Long Micro-resource Name {kind}-{i}"), count: 100 + i as i64 });
+                }
+            }
+        };
+        let mut m = commander();
+        let inv = &mut m.active_mut().expect("commander").inventory;
+        fill(&mut inv.ship_locker, 80);
+        fill(&mut inv.backpack, 40);
+        for id in 1..=10u64 {
+            inv.suit_loadouts.insert(
+                id,
+                SuitLoadoutInfo {
+                    loadout_id: id,
+                    name: format!("Loadout number {id}"),
+                    suit_id: id,
+                    suit_name: "Maverick Suit".into(),
+                    suit_mods: vec!["suit_increased_air_reserves".into(), "suit_improved_battery_capacity".into(), "suit_added_melee_damage".into()],
+                    weapons: (0..3).map(|w| (format!("Weapon{w}"), "Manticore Tormentor".into(), 5, vec!["weapon_extended_magazine".into(), "weapon_scope".into(), "weapon_stability".into()])).collect(),
+                },
+            );
+        }
+        inv.current_suit_loadout = Some(3);
+        let tools = model_tools(m, &rt);
+        let v = tools.call("on_foot", &json!({})).unwrap();
+        let len = v.to_string().len();
+        assert!(len < limit, "{len} chars");
+        assert_eq!(v["loadouts"].as_array().unwrap().len(), 10, "every loadout is still listed");
+        assert_eq!(v["loadouts"][0]["current"], true, "the one in use comes first");
+        assert!(v["notes"][0].as_str().unwrap().contains("locker"), "says what was cut: {}", v["notes"]);
+        assert_eq!(v["locker"]["counts"]["items"]["distinct"], 80, "counts per kind instead of the list: {}", v["locker"]);
+    }
+
+    /// The commander with a sale at +60 s and a refuel at +120 s after logging in, and a refuel an hour before.
+    fn paid_commander() -> Model {
+        let (old, t1, t2) = (at(-3600), at(60), at(120));
+        with_lines(
+            commander(),
+            &[
+                format!(r#"{{ "timestamp":"{old}", "event":"RefuelAll", "Cost":999, "Amount":3.0 }}"#),
+                format!(r#"{{ "timestamp":"{t1}", "event":"MarketSell", "MarketID":5001, "Type":"silver", "Type_Localised":"Silver", "Count":20, "SellPrice":5000, "TotalSale":100000, "AvgPricePaid":4000 }}"#),
+                format!(r#"{{ "timestamp":"{t2}", "event":"RefuelAll", "Cost":1500, "Amount":10.5 }}"#),
+            ],
+        )
+    }
+
+    #[test]
+    fn credit_history_since_login_newest_first() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let m = paid_commander();
+        let credits = m.active().unwrap().cmdr.credits;
+        let tools = model_tools(m, &rt);
+        let v = tools.call("credit_history", &json!({})).unwrap();
+        assert_eq!(v["balance"], credits);
+        let tx = v["transactions"].as_array().unwrap();
+        assert_eq!(tx.len(), 2, "the refuel before the login is left out: {v}");
+        assert_eq!(tx[0]["category"], "Fuel", "newest first");
+        assert_eq!(tx[0]["amount"], -1500);
+        assert_eq!(tx[1]["category"], "Trade");
+        assert_eq!(tx[1]["amount"], 100_000);
+        assert!(tx[1]["note"].as_str().unwrap().contains("Silver"));
+        let totals = v["totals"].as_array().unwrap();
+        let trade = totals.iter().find(|t| t["category"] == "Trade").expect("trade");
+        assert_eq!(trade["income"], 100_000);
+        let fuel = totals.iter().find(|t| t["category"] == "Fuel").expect("fuel");
+        assert_eq!(fuel["expense"], -1500);
+        assert_eq!(v["transactions_total"], 2);
+
+        let one = tools.call("credit_history", &json!({ "limit": 1 })).unwrap();
+        assert_eq!(one["transactions"].as_array().unwrap().len(), 1);
+        assert_eq!(one["transactions"][0]["category"], "Fuel");
+        assert_eq!(one["transactions_total"], 2, "says how many there were: {one}");
+
+        // since_hours reaches back past the login.
+        let wide = tools.call("credit_history", &json!({ "since_hours": 2 })).unwrap();
+        assert_eq!(wide["transactions"].as_array().unwrap().len(), 3);
+        assert_eq!(wide["transactions"][2]["amount"], -999);
+    }
+
+    #[test]
+    fn credit_history_stays_within_the_assistants_result_size() {
+        use nexus_model::history::LedgerCategory;
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let limit = nexus_ai::agent::MAX_RESULT_CHARS;
+        let mut m = commander();
+        let gs = m.active_mut().expect("commander");
+        let base = nexus_journal::Timestamp::now().0 + 10;
+        let cats = [LedgerCategory::Trade, LedgerCategory::Mining, LedgerCategory::Missions, LedgerCategory::Outfitting, LedgerCategory::Exobiology, LedgerCategory::Bounties];
+        for i in 0..300i64 {
+            let note = format!("Sold {} Low Temperature Diamonds to a very long named station in a very long named system (profit {})", 700 + i, 12_345_678 + i);
+            gs.history.ledger(nexus_journal::Timestamp(base + i), cats[(i % 6) as usize], if i % 3 == 0 { -123_456_789 - i } else { 987_654_321 + i }, note);
+        }
+        let tools = model_tools(m, &rt);
+        let v = tools.call("credit_history", &json!({ "limit": 100 })).unwrap();
+        let len = v.to_string().len();
+        assert!(len < limit, "{len} chars");
+        let tx = v["transactions"].as_array().unwrap();
+        assert!(tx.len() >= 50, "{} transactions", tx.len());
+        assert_eq!(tx[0]["amount"], 987_654_321i64 + 299, "newest first");
+        assert_eq!(v["transactions_total"], 300);
+        assert!(v["notes"][0].as_str().unwrap().contains("note"), "says what was shortened: {}", v["notes"]);
+        // limit is clamped to 1..=100.
+        let many = tools.call("credit_history", &json!({ "limit": 5000 })).unwrap();
+        assert!(many["transactions"].as_array().unwrap().len() <= 100);
+        assert!(many.to_string().len() < limit);
     }
 
     #[test]

@@ -1,12 +1,14 @@
-//! The assistant's tools about the commander themselves: their fleet, their progress. Each takes one short read of
-//! the model and returns compact JSON.
+//! The assistant's tools about the commander themselves: their fleet, their progress, their materials, on-foot gear
+//! and credits. Each takes one short read of the model and returns compact JSON.
 
-use super::{NexusTools, arg_bool, r1, strip_nulls};
+use super::{NexusTools, arg_bool, arg_f64, arg_str, r1, strip_nulls};
+use nexus_data::materials::{self, Material};
 use nexus_data::outfitting::{display_name, slot_display};
 use nexus_data::ranks::RankKind;
 use nexus_journal::Timestamp;
 use nexus_model::GameState;
 use nexus_model::fleet::{Ship, ShipModule};
+use nexus_model::inventory::{Locker, MaterialCategory, SuitLoadoutInfo};
 use serde_json::{Value, json};
 
 fn pct(x: f64) -> i64 {
@@ -119,7 +121,254 @@ fn engineer_order(status: &str) -> u8 {
     }
 }
 
+/// One material the commander holds.
+struct Held {
+    name: String,
+    count: i64,
+    /// What the game's catalogue says about it (None for a material it doesn't list).
+    info: Option<&'static Material>,
+}
+
+/// How a material is written, from the most to the least detailed.
+fn material_row(h: &Held, form: u8) -> Value {
+    let grade = h.info.map(|m| m.grade);
+    let cap = h.info.map(|m| i64::from(m.cap()));
+    let full = cap.map(|c| h.count >= c);
+    match form {
+        0 => {
+            let mut v = json!({ "name": h.name, "count": h.count, "grade": grade, "cap": cap, "full": full });
+            strip_nulls(&mut v);
+            v
+        }
+        1 => {
+            let mut v = json!({ "name": h.name, "count": h.count, "grade": grade, "full": full.filter(|f| *f) });
+            strip_nulls(&mut v);
+            v
+        }
+        _ => json!([h.name, h.count, grade]),
+    }
+}
+
+/// `{ "distinct": n, "total": n }` for a bucket of the locker.
+fn locker_counts(m: &std::collections::BTreeMap<String, nexus_model::inventory::LockerItem>) -> Value {
+    json!({ "distinct": m.len(), "total": m.values().map(|i| i.count).sum::<i64>() })
+}
+
+/// A locker or backpack: `{ name: count }` for each kind, or only how many there are of each when the lists would
+/// not fit.
+fn locker(l: &Locker, counts_only: bool) -> Value {
+    let mut v = if counts_only {
+        json!({ "counts": { "items": locker_counts(&l.items), "components": locker_counts(&l.components), "consumables": locker_counts(&l.consumables), "data": locker_counts(&l.data) } })
+    } else {
+        let list = |m: &std::collections::BTreeMap<String, nexus_model::inventory::LockerItem>| {
+            let mut out = serde_json::Map::new();
+            for i in m.values().filter(|i| i.count > 0) {
+                let n = out.entry(i.name.clone()).or_insert(json!(0));
+                *n = json!(n.as_i64().unwrap_or(0) + i.count);
+            }
+            Value::Object(out)
+        };
+        json!({ "items": list(&l.items), "components": list(&l.components), "consumables": list(&l.consumables), "data": list(&l.data) })
+    };
+    v["as_of"] = (!l.updated.is_zero()).then(|| l.updated.to_iso()).into();
+    strip_nulls(&mut v);
+    v
+}
+
+/// A suit loadout: `detail` 0 = everything, 1 = no weapon modifications, 2 = only which suit and weapons.
+fn loadout(l: &SuitLoadoutInfo, current: bool, detail: u8) -> Value {
+    let mut v = json!({ "name": text(&l.name), "suit": l.suit_name, "current": current });
+    if detail >= 2 {
+        v["weapons"] = l.weapons.iter().map(|w| w.1.clone()).collect();
+    } else {
+        if !l.suit_mods.is_empty() {
+            v["suit_mods"] = json!(l.suit_mods);
+        }
+        v["weapons"] = l
+            .weapons
+            .iter()
+            .map(|(slot, weapon, class, mods)| {
+                let mut w = json!({ "slot": slot, "weapon": weapon, "grade": class });
+                if detail == 0 && !mods.is_empty() {
+                    w["mods"] = json!(mods);
+                }
+                w
+            })
+            .collect();
+    }
+    strip_nulls(&mut v);
+    v
+}
+
+/// `s` cut to `max` characters, with an ellipsis when something was cut.
+fn clip(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut t: String = s.chars().take(max.saturating_sub(1)).collect();
+    t.push('…');
+    t
+}
+
 impl NexusTools {
+    pub(super) fn materials(&self, a: &Value) -> Result<Value, String> {
+        let category = match arg_str(a, "category") {
+            None => None,
+            Some(c) => Some(match c.to_ascii_lowercase().as_str() {
+                "raw" => MaterialCategory::Raw,
+                "manufactured" => MaterialCategory::Manufactured,
+                "encoded" => MaterialCategory::Encoded,
+                _ => return Err(format!("category must be raw, manufactured or encoded, not \"{c}\".")),
+            }),
+        };
+        let query = arg_str(a, "name").map(|n| n.to_lowercase());
+        let (lists, as_of) = {
+            let model = self.model.read();
+            let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
+            let mats = &gs.inventory.materials;
+            let lists: Vec<(&'static str, Vec<Held>)> = [("raw", MaterialCategory::Raw), ("manufactured", MaterialCategory::Manufactured), ("encoded", MaterialCategory::Encoded)]
+                .into_iter()
+                .map(|(key, cat)| {
+                    let held = if category.is_none_or(|c| c == cat) {
+                        mats.map(cat)
+                            .iter()
+                            .filter(|(_, n)| **n > 0)
+                            .map(|(sym, n)| Held { name: mats.names.get(sym).cloned().unwrap_or_else(|| materials::display_name(sym)), count: *n, info: materials::material(sym) })
+                            .filter(|h| query.as_ref().is_none_or(|q| h.name.to_lowercase().contains(q) || h.info.is_some_and(|m| m.symbol.contains(q.as_str()))))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    (key, held)
+                })
+                .collect();
+            (lists, (!mats.updated.is_zero()).then(|| mats.updated.to_iso()))
+        };
+        // The reply has to fit what the model is given of a tool result: the storage cap goes first, then the objects
+        // become rows, and in the end only how many there are.
+        let mut notes: Vec<&str> = Vec::new();
+        for form in 0..=3u8 {
+            let mut out = json!({ "as_of": as_of });
+            strip_nulls(&mut out);
+            for (key, held) in &lists {
+                out[*key] = if form >= 3 { json!({ "distinct": held.len(), "total": held.iter().map(|h| h.count).sum::<i64>() }) } else { held.iter().map(|h| material_row(h, form)).collect() };
+            }
+            match form {
+                1 => notes.push("Too many to give each one's storage cap: it is 300, 250, 200, 150 or 100 for grade 1 to 5, and a material is full at its cap."),
+                2 => notes.push("Written as [name, count, grade] rows to fit."),
+                3 => notes.push("Too many to list: only how many of each category. Ask with category= or name= to see them."),
+                _ => {}
+            }
+            if lists.iter().all(|(_, h)| h.is_empty()) && as_of.is_none() {
+                out["notes"] = json!(["No materials reported yet: the game lists them when it starts."]);
+                return Ok(out);
+            }
+            if !notes.is_empty() {
+                out["notes"] = json!(notes);
+            }
+            if form == 3 || out.to_string().len() <= BUDGET {
+                return Ok(out);
+            }
+        }
+        Err("Too many materials to list.".into())
+    }
+
+    pub(super) fn on_foot(&self) -> Result<Value, String> {
+        let model = self.model.read();
+        let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
+        let inv = &gs.inventory;
+        let mut loadouts: Vec<&SuitLoadoutInfo> = inv.suit_loadouts.values().collect();
+        loadouts.sort_by_key(|l| (inv.current_suit_loadout != Some(l.loadout_id), l.loadout_id));
+        // What gives way when there is too much: the ship locker's lists, then the backpack's, then the weapon
+        // modifications, then everything about a loadout but its suit and weapons.
+        let mut notes: Vec<&str> = Vec::new();
+        for level in 0..=4u8 {
+            let mut out = json!({
+                "loadouts": loadouts.iter().map(|l| loadout(l, inv.current_suit_loadout == Some(l.loadout_id), level.saturating_sub(2))).collect::<Vec<_>>(),
+                "locker": locker(&inv.ship_locker, level >= 1),
+                "backpack": locker(&inv.backpack, level >= 2),
+            });
+            match level {
+                1 => notes.push("Ship locker too big to list: how many of each kind (items, components, consumables, data) instead."),
+                2 => notes.push("Backpack too big to list: how many of each kind instead."),
+                3 => notes.push("Weapon modifications left out to fit."),
+                4 => notes.push("Suit modifications and weapon details left out to fit."),
+                _ => {}
+            }
+            if !notes.is_empty() {
+                out["notes"] = json!(notes);
+            }
+            if level == 4 || out.to_string().len() <= BUDGET {
+                return Ok(out);
+            }
+        }
+        Err("Too much to list.".into())
+    }
+
+    pub(super) fn credit_history(&self, a: &Value) -> Result<Value, String> {
+        let limit = arg_f64(a, "limit").map_or(25, |l| l.clamp(1.0, 100.0) as usize);
+        let now = Timestamp::now();
+        let model = self.model.read();
+        let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
+        let since = match arg_f64(a, "since_hours").filter(|h| *h > 0.0) {
+            Some(h) => Timestamp(now.0 - (h.min(1.0e6) * 3600.0) as i64),
+            None => gs.cmdr.last_login,
+        };
+        let mut entries: Vec<&nexus_model::history::LedgerEntry> = gs.history.ledger.iter().filter(|e| e.ts >= since).collect();
+        entries.sort_by_key(|e| std::cmp::Reverse(e.ts));
+        let total = entries.len();
+        let totals: Vec<Value> = gs.history.totals_since(since).into_iter().map(|(c, income, expense)| json!({ "category": c.label(), "income": income, "expense": expense })).collect();
+        entries.truncate(limit);
+        let rows: Vec<(Timestamp, &'static str, i64, String)> = entries.iter().map(|e| (e.ts, e.category.label(), e.amount, e.note.clone())).collect();
+        let (balance, commander) = (gs.cmdr.credits, gs.cmdr.name.clone());
+        drop(model);
+        // The reply has to fit what the model is given of a tool result: long notes are cut, then dropped, then the
+        // oldest transactions go.
+        let mut notes: Vec<&str> = Vec::new();
+        let mut note_max = Some(100usize);
+        let mut shown = rows.len();
+        loop {
+            let tx: Vec<Value> = rows[..shown]
+                .iter()
+                .map(|(ts, category, amount, note)| {
+                    let mut v = json!({ "time": ts.to_iso(), "category": category, "amount": amount });
+                    if let Some(max) = note_max.filter(|m| *m > 0) {
+                        v["note"] = json!(clip(note, max));
+                    }
+                    v
+                })
+                .collect();
+            let mut out = json!({
+                "commander": commander, "balance": balance, "since": (!since.is_zero()).then(|| since.to_iso()),
+                "transactions_total": total, "transactions": tx, "totals": totals,
+            });
+            strip_nulls(&mut out);
+            if !notes.is_empty() {
+                out["notes"] = json!(notes);
+            }
+            if out.to_string().len() <= BUDGET || shown <= 1 {
+                return Ok(out);
+            }
+            match note_max {
+                Some(100) => {
+                    note_max = Some(40);
+                    notes.push("Transaction notes shortened to fit.");
+                }
+                Some(40) => {
+                    note_max = Some(0);
+                    notes.pop();
+                    notes.push("Transaction notes left out to fit.");
+                }
+                _ => {
+                    shown -= 1;
+                    if !notes.iter().any(|n| n.starts_with("Oldest")) {
+                        notes.push("Oldest transactions left out to fit: ask with a smaller limit or since_hours.");
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn fleet(&self, a: &Value) -> Result<Value, String> {
         let all_modules = arg_bool(a, "all_modules").unwrap_or(false);
         let query = a.get("ship").and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string()))).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());

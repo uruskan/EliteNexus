@@ -13,6 +13,10 @@ release time that section becomes the new version and the release workflow publi
   cargo, value, rebuy and the engineered modules with their blueprint, grade and experimental effect, from the last
   loadout the game reported for that ship) and tell you how far you are on every rank, which engineers you've
   unlocked, your superpower reputation, Powerplay, squadron, and whether the game is running or at the main menu.
+  It also knows your engineering materials (each with its grade, storage cap and whether it's full), your on-foot
+  gear (suit loadouts with their modifications and weapons, and what's in your ship locker and backpack) and where
+  your credits went since you last loaded the game (or in the last few hours), newest first, with totals per
+  category.
 - **BGS & Powerplay** shows the merits you earned in each system, on the system's card beside its factions'
   influence, bonds, profit and data (asked for by NetworX on the Frontier Forums). The journal doesn't say which
   system a merit award counts for, so each award is placed in the system you were in when the game awarded it. The
