@@ -56,7 +56,16 @@ fn whereabouts(gs: &GameState, s: &Ship, now: Timestamp) -> Value {
     v
 }
 
-fn ship(gs: &GameState, s: &Ship, all_modules: bool, now: Timestamp) -> Value {
+/// How much of a ship `ship` writes out.
+#[derive(Clone, Copy)]
+struct Detail {
+    /// Every module of the ship, not only the engineered ones.
+    modules: bool,
+    /// Only how many modules are engineered, not which.
+    counts_only: bool,
+}
+
+fn ship(gs: &GameState, s: &Ship, detail: Detail, now: Timestamp) -> Value {
     // A ship known only from StoredShips has no loadout: its jump range, cargo and hull would be zeros and a full
     // hull that nobody reported, so they are left out rather than shown.
     let loadout = !s.loadout_ts.is_zero();
@@ -71,14 +80,33 @@ fn ship(gs: &GameState, s: &Ship, all_modules: bool, now: Timestamp) -> Value {
         "hull_pct": loadout.then(|| pct(s.hull_health)),
         "hot": s.hot.then_some(true),
         "modules_as_of": loadout.then(|| s.loadout_ts.to_iso()),
-        "engineered": s.modules.iter().filter_map(engineered).collect::<Vec<_>>(),
     });
-    if all_modules {
+    if detail.counts_only {
+        v["engineered_count"] = s.engineered_modules().into();
+    } else {
+        v["engineered"] = s.modules.iter().filter_map(engineered).collect();
+    }
+    if detail.modules {
         v["modules"] = s.modules.iter().map(module).collect();
     }
     strip_nulls(&mut v);
     v
 }
+
+/// Ships matching what the commander asked for: an id, or a name, ident or type (as written, ignoring case); when
+/// none matches exactly, a name, ident or type that contains it.
+fn find_ships<'a>(gs: &'a GameState, query: &str) -> Vec<&'a Ship> {
+    let q = query.trim().to_lowercase();
+    let is = |s: &Ship, f: fn(&str, &str) -> bool| f(&s.name.to_lowercase(), &q) || f(&s.ident.to_lowercase(), &q) || f(&s.type_name.to_lowercase(), &q);
+    let exact: Vec<&Ship> = gs.fleet.ships.values().filter(|s| s.id.to_string() == q || is(s, |a, b| a == b)).collect();
+    if !exact.is_empty() {
+        return exact;
+    }
+    gs.fleet.ships.values().filter(|s| is(s, |a, b| !a.is_empty() && a.contains(b))).collect()
+}
+
+/// Room left for the reply once the model's tool-result limit is taken off, so it is never cut mid-JSON.
+const BUDGET: usize = nexus_ai::agent::MAX_RESULT_CHARS - 1_000;
 
 /// How far an engineer is on the road to Unlocked, for sorting.
 fn engineer_order(status: &str) -> u8 {
@@ -94,17 +122,65 @@ fn engineer_order(status: &str) -> u8 {
 impl NexusTools {
     pub(super) fn fleet(&self, a: &Value) -> Result<Value, String> {
         let all_modules = arg_bool(a, "all_modules").unwrap_or(false);
+        let query = a.get("ship").and_then(|v| v.as_str().map(str::to_string).or_else(|| v.as_u64().map(|n| n.to_string()))).map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
         let now = Timestamp::now();
         let model = self.model.read();
         let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
         // The ship being flown first, then the most valuable.
-        let mut ships: Vec<&Ship> = gs.fleet.ships.values().collect();
+        let mut ships: Vec<&Ship> = match &query {
+            Some(q) => find_ships(gs, q),
+            None => gs.fleet.ships.values().collect(),
+        };
+        if let (true, Some(q)) = (ships.is_empty(), &query) {
+            let mut all: Vec<&Ship> = gs.fleet.ships.values().collect();
+            all.sort_by_key(|s| s.id);
+            let list: Vec<String> = all.iter().take(30).map(|s| format!("{} ({}{})", text(&s.name).unwrap_or("unnamed"), s.type_name, text(&s.ident).map(|i| format!(", {i}")).unwrap_or_default())).collect();
+            let more = all.len().saturating_sub(30);
+            return Err(if list.is_empty() {
+                format!("No ship matches \"{q}\": no ships are known yet.")
+            } else {
+                format!("No ship matches \"{q}\". The commander's ships: {}{}.", list.join("; "), if more > 0 { format!("; and {more} more") } else { String::new() })
+            });
+        }
         ships.sort_by_key(|s| (gs.fleet.current_ship_id != Some(s.id), std::cmp::Reverse(s.total_value())));
-        Ok(json!({
-            "commander": gs.cmdr.name,
-            "ships": ships.into_iter().map(|s| ship(gs, s, all_modules, now)).collect::<Vec<_>>(),
-            "total_value_cr": gs.fleet.total_value(),
-        }))
+        // The reply has to fit what the model is given of a tool result. A big fleet gives up detail in this order:
+        // the module lists, then which modules are engineered, then the ships of least value.
+        let (mut with_modules, mut counts_only, mut omitted) = (all_modules, false, 0usize);
+        let mut notes: Vec<&str> = Vec::new();
+        loop {
+            let listed: Vec<Value> = ships
+                .iter()
+                .map(|s| {
+                    // With no ship asked for, only the ship being flown gets its whole module list.
+                    let modules = with_modules && (query.is_some() || gs.fleet.current_ship_id == Some(s.id));
+                    ship(gs, s, Detail { modules, counts_only }, now)
+                })
+                .collect();
+            let mut out = json!({ "commander": gs.cmdr.name, "ships": listed, "total_value_cr": gs.fleet.total_value() });
+            if omitted > 0 {
+                out["ships_omitted"] = omitted.into();
+            }
+            if !notes.is_empty() {
+                out["notes"] = json!(notes);
+            }
+            let fits = out.to_string().len() <= BUDGET;
+            if fits || (ships.len() <= 1 && !with_modules && counts_only) {
+                return Ok(out);
+            }
+            if with_modules {
+                with_modules = false;
+                notes.push("Too much to list every module: ask for one ship with ship= to see its modules.");
+            } else if !counts_only {
+                counts_only = true;
+                notes.push("Too many engineered modules to list: engineered_count says how many each ship has; ask for one ship with ship= to see which.");
+            } else {
+                ships.pop();
+                omitted += 1;
+                if !notes.iter().any(|n| n.starts_with("Ships left out")) {
+                    notes.push("Ships left out (the least valuable) to fit: ask for one with ship=.");
+                }
+            }
+        }
     }
 
     pub(super) fn progress(&self) -> Result<Value, String> {

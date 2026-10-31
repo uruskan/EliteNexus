@@ -1928,8 +1928,16 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "fleet",
-        description: "Every ship the commander owns: where it is (or that it's in transit and when it arrives), jump range, cargo, value, rebuy and its engineered modules (blueprint, grade, experimental effect). all_modules=true adds every module. Modules are those of the last loadout the game reported for that ship.",
-        params: || schema(json!({ "all_modules": { "type": "boolean", "description": "Also list every module of every ship, not only the engineered ones." } }), &[]),
+        description: "Every ship the commander owns: where it is (or that it's in transit and when it arrives), jump range, cargo, value, rebuy and its engineered modules (blueprint, grade, experimental effect). ship= picks one ship (name, ident or type); all_modules=true adds every module of that ship, or of the current ship. Modules are those of the last loadout the game reported for that ship.",
+        params: || {
+            schema(
+                json!({
+                    "ship": { "type": "string", "description": "Only this ship: its name, ident, type (e.g. Python) or id. Default: every ship." },
+                    "all_modules": { "type": "boolean", "description": "Also list every module, not only the engineered ones: of the ship picked with ship, or of the current ship." }
+                }),
+                &[],
+            )
+        },
         working: "Reading your fleet…",
         noun: "your fleet",
         read_only: true,
@@ -2262,6 +2270,101 @@ mod tests {
         assert_eq!(modules[0]["slot"], "Frame Shift Drive");
         assert_eq!(modules[0]["engineered"], true);
         assert!(modules[0]["module"].as_str().is_some_and(|m| !m.is_empty()));
+
+        // ship= picks one ship, by name or type, and all_modules then lists the modules of that ship only.
+        let mule = tools.call("fleet", &json!({ "ship": "mule", "all_modules": true })).unwrap();
+        assert_eq!(mule["ships"].as_array().unwrap().len(), 1);
+        assert_eq!(mule["ships"][0]["name"], "Mule");
+        assert_eq!(mule["ships"][0]["modules"].as_array().map(Vec::len), Some(0), "no loadout known for it: {mule}");
+        let anaconda = tools.call("fleet", &json!({ "ship": "ANACONDA", "all_modules": true })).unwrap();
+        assert_eq!(anaconda["ships"].as_array().unwrap().len(), 1);
+        assert_eq!(anaconda["ships"][0]["modules"].as_array().map(Vec::len), Some(1));
+        let one_id = tools.call("fleet", &json!({ "ship": 2 })).unwrap();
+        assert_eq!(one_id["ships"][0]["name"], "Mule");
+        let err = tools.call("fleet", &json!({ "ship": "nope" })).unwrap_err();
+        assert!(err.contains("Mule (Python)") && err.contains("Anaconda"), "lists the commander's ships: {err}");
+    }
+
+    /// The commander's fleet grown to `n` ships of 8 engineered modules each (idents `ID-00`...), the first one flown.
+    fn crowded_fleet(n: u64) -> Model {
+        use nexus_model::fleet::{ModuleEngineering, Ship, ShipModule};
+        let mut m = commander();
+        let gs = m.active_mut().expect("commander");
+        gs.fleet.ships.clear();
+        let slots = ["HugeHardpoint1", "LargeHardpoint1", "LargeHardpoint2", "FrameShiftDrive", "PowerPlant", "MainEngines", "PowerDistributor", "Slot01_Size6"];
+        for id in 1..=n {
+            let mut s = Ship::new(id, "Python");
+            s.name = format!("Pythonesque number {id}");
+            s.ident = format!("ID-{:02}", id - 1);
+            s.hull_value = 50_000_000 + id as i64;
+            s.rebuy = 2_000_000;
+            s.cargo_capacity = 192;
+            s.max_jump_range = 21.7;
+            s.loadout_ts = nexus_journal::Timestamp::now();
+            s.modules = slots
+                .iter()
+                .map(|slot| ShipModule {
+                    slot: slot.to_string(),
+                    item: "int_hyperdrive_size5_class5".into(),
+                    on: true,
+                    health: 1.0,
+                    engineering: Some(ModuleEngineering {
+                        engineer: Some("Tod 'The Blaster' McQuinn".into()),
+                        blueprint: "Weapon_LongRange".into(),
+                        level: 5,
+                        quality: 0.87,
+                        experimental: Some("Scramble Spectrum".into()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .collect();
+            gs.fleet.ships.insert(id, s);
+        }
+        gs.fleet.current_ship_id = Some(1);
+        m
+    }
+
+    #[test]
+    fn fleet_stays_within_the_assistants_result_size() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let limit = nexus_ai::agent::MAX_RESULT_CHARS;
+        let tools = model_tools(crowded_fleet(15), &rt);
+
+        let f = tools.call("fleet", &json!({})).unwrap();
+        assert!(f.to_string().len() < limit, "{} chars", f.to_string().len());
+        assert_eq!(f["ships"].as_array().unwrap().len(), 15, "every ship is still listed: {}", f["notes"]);
+        assert!(f["ships"][0]["current"] == true && f["ships"][0]["engineered_count"] == 8, "engineered_count replaces the list: {}", f["ships"][0]);
+        assert!(f["notes"][0].as_str().unwrap().contains("ship="), "says how to get the detail: {}", f["notes"]);
+
+        let all = tools.call("fleet", &json!({ "all_modules": true })).unwrap();
+        assert!(all.to_string().len() < limit, "{} chars", all.to_string().len());
+        assert_eq!(all["ships"].as_array().unwrap().len(), 15);
+
+        // One ship asked for by its ident: exactly that one, in full.
+        let one = tools.call("fleet", &json!({ "ship": "ID-07", "all_modules": true })).unwrap();
+        assert!(one.to_string().len() < limit);
+        let ships = one["ships"].as_array().unwrap();
+        assert_eq!(ships.len(), 1);
+        assert_eq!(ships[0]["ident"], "ID-07");
+        assert_eq!(ships[0]["engineered"].as_array().unwrap().len(), 8);
+        assert_eq!(ships[0]["modules"].as_array().unwrap().len(), 8);
+        assert!(one.get("notes").is_none());
+
+        assert!(tools.call("fleet", &json!({ "ship": "nope" })).is_err());
+    }
+
+    #[test]
+    fn fleet_drops_the_least_valuable_ships_when_even_the_short_form_is_too_long() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = model_tools(crowded_fleet(120), &rt);
+        let f = tools.call("fleet", &json!({})).unwrap();
+        assert!(f.to_string().len() < nexus_ai::agent::MAX_RESULT_CHARS);
+        let shown = f["ships"].as_array().unwrap().len();
+        assert!(shown > 20 && shown < 120, "{shown} ships");
+        assert_eq!(f["ships_omitted"], 120 - shown);
+        assert_eq!(f["ships"][0]["current"], true, "the ship being flown stays");
+        assert!(f["notes"].as_array().unwrap().iter().any(|n| n.as_str().is_some_and(|n| n.starts_with("Ships left out"))));
     }
 
     #[test]
