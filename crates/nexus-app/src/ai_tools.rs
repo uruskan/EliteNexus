@@ -2763,11 +2763,16 @@ mod tests {
     /// Tools over `lines` written as a journal file in `dir` and indexed the way the app does; the model is the
     /// commander with those lines replayed on top.
     fn journal_tools(dir: &JournalDir, lines: &[String], rt: &tokio::runtime::Runtime) -> NexusTools {
+        journal_tools_indexing(dir, lines, lines, rt)
+    }
+
+    /// Like [`journal_tools`], but the journal file and its index hold only `indexed` lines of those the model saw.
+    fn journal_tools_indexing(dir: &JournalDir, lines: &[String], indexed: &[String], rt: &tokio::runtime::Runtime) -> NexusTools {
         let path = dir.0.join("Journal.2026-10-31T100000.01.log");
         let mut text = String::new();
         let mut index = JournalIndex::default();
         let file = index.add_file(path.clone());
-        for line in lines {
+        for line in indexed {
             let (ts, name) = scan_line(line).expect("line");
             index.push(ts, file, text.len() as u64, line.len(), name);
             text.push_str(line);
@@ -2777,6 +2782,14 @@ mod tests {
         let tools = model_tools(with_lines(commander(), lines), rt);
         *tools.index.write() = index;
         tools
+    }
+
+    /// The lines of a login of commander `fid`.
+    fn login(ts: &str, fid: &str, name: &str) -> Vec<String> {
+        vec![
+            format!(r#"{{ "timestamp":"{ts}", "event":"Commander", "FID":"{fid}", "Name":"{name}" }}"#),
+            format!(r#"{{ "timestamp":"{ts}", "event":"LoadGame", "FID":"{fid}", "Commander":"{name}", "Horizons":true, "Odyssey":true, "Ship":"Anaconda", "ShipID":1, "ShipName":"", "ShipIdent":"", "FuelLevel":32.0, "FuelCapacity":32.0, "GameMode":"Solo", "Credits":1000, "Loan":0 }}"#),
+        ]
     }
 
     fn runtime() -> tokio::runtime::Runtime {
@@ -2821,6 +2834,53 @@ mod tests {
         assert_eq!(f[1]["my_reputation"], -10.0);
         assert!(f[1].get("pending_states").is_none(), "empty lists are left out: {}", f[1]);
         assert!(v["source"].as_str().unwrap().contains("journal"));
+    }
+
+    /// The journal index holds every commander's journals: the answer is about the commander asking, with the time
+    /// they were there, not about whoever arrived in that system last.
+    #[test]
+    fn factions_are_the_active_commanders_own_visit() {
+        let (dir, rt) = (JournalDir::new("factions-alt"), runtime());
+        let (mine, alt_visit, back) = (at(10), at(30), at(40));
+        let mut lines = vec![gamma_jump(&mine)];
+        lines.extend(login(&at(20), "F2", "Alt"));
+        lines.push(gamma_jump(&alt_visit).replace("42.5", "99.0"));
+        lines.extend(login(&back, "F1", "Tester"));
+        lines.push(alpha_location(&at(50)));
+        let tools = journal_tools(&dir, &lines, &rt);
+        assert_eq!(tools.model.read().active().unwrap().cmdr.name, "Tester");
+        let v = tools.call("system_factions", &json!({ "system": "Gamma" })).unwrap();
+        assert_eq!(v["as_of"], mine, "{v}");
+        assert_eq!(v["factions"][0]["my_reputation"], 42.5, "not the alt's: {v}");
+        assert!(!v["notes"].to_string().contains("another commander"), "{}", v["notes"]);
+    }
+
+    /// When the entry of that second isn't in the index, the newest earlier arrival is given, and it says so.
+    #[test]
+    fn factions_say_when_the_exact_arrival_was_not_found() {
+        let (dir, rt) = (JournalDir::new("factions-walk"), runtime());
+        let (mine, earlier) = (at(10), at(5));
+        let tools = journal_tools_indexing(&dir, &[gamma_jump(&mine), alpha_location(&at(20))], &[gamma_jump(&earlier), alpha_location(&at(20))], &rt);
+        let v = tools.call("system_factions", &json!({ "system": "Gamma" })).unwrap();
+        assert_eq!(v["as_of"], earlier, "{v}");
+        assert!(v["notes"].to_string().contains("another commander"), "{}", v["notes"]);
+    }
+
+    /// A system the commander never visited is told from their own history: the journal index isn't touched.
+    #[test]
+    fn unvisited_system_does_not_read_the_journal_index() {
+        let (dir, rt) = (JournalDir::new("factions-no-index"), runtime());
+        let tools = journal_tools(&dir, &[gamma_jump(&at(10)), alpha_location(&at(20))], &rt);
+        let guard = tools.index.write();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::scope(|s| {
+            let tools = &tools;
+            s.spawn(move || tx.send(tools.call("system_factions", &json!({ "system": "Nowhere" }))).ok());
+            let answer = rx.recv_timeout(std::time::Duration::from_secs(5));
+            drop(guard);
+            let e = answer.expect("system_factions waited for the journal index").unwrap_err();
+            assert!(e.contains("Nowhere") && e.contains("system_info"), "{e}");
+        });
     }
 
     #[test]

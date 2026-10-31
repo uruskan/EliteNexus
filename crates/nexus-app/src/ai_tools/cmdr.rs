@@ -539,58 +539,76 @@ impl NexusTools {
         }))
     }
 
-    /// The last arrival in `system` the journal records (FSDJump, Location or CarrierJump), found newest first. Only
-    /// the entries are copied under the index lock; the lines are read from disk after it is released.
-    fn last_arrival_in(&self, system: &str) -> Option<(SystemArrival, Timestamp)> {
-        let (candidates, files) = {
-            let index = self.index.read();
-            let ids: Vec<u16> = ["FSDJump", "Location", "CarrierJump"].iter().filter_map(|n| index.id_of(n)).collect();
-            let candidates: Vec<IndexEntry> = index.entries.iter().rev().filter(|e| ids.contains(&e.name)).copied().collect();
-            (candidates, index.files.clone())
-        };
+    /// The index entries of arrivals (FSDJump, Location, CarrierJump) up to `last`, newest first: only those of that
+    /// very second, or all of them. Copied under one short read of the index, with the journal files' paths.
+    fn arrival_entries(&self, last: Timestamp, exact_only: bool) -> (Vec<IndexEntry>, Vec<PathBuf>) {
+        let index = self.index.read();
+        let ids: Vec<u16> = ["FSDJump", "Location", "CarrierJump"].iter().filter_map(|n| index.id_of(n)).collect();
+        let upto = index.entries.partition_point(|e| e.ts <= last.0);
+        let arrivals = index.entries[..upto].iter().rev().filter(|e| ids.contains(&e.name));
+        let entries = if exact_only { arrivals.take_while(|e| e.ts == last.0).copied().collect() } else { arrivals.copied().collect() };
+        (entries, index.files.clone())
+    }
+
+    /// The arrival in `system` the commander made at `last`, the time their own history says they were there last.
+    /// The journal index covers every commander's journals, so the entries of that second are looked at first; only
+    /// if none matches does it walk back from there, which can then land on another commander's arrival (the bool
+    /// says so). The lines are read from disk without any lock.
+    fn arrival_in(&self, system: &str, last: Timestamp) -> Option<(SystemArrival, Timestamp, bool)> {
         let needle = system.to_ascii_lowercase();
-        let mut open = None;
-        for e in candidates {
-            let Some(line) = read_entry(&files, &e, &mut open) else { continue };
-            if !line.to_ascii_lowercase().contains(&needle) {
-                continue;
+        let find = |(entries, files): (Vec<IndexEntry>, Vec<PathBuf>)| {
+            let mut open = None;
+            for e in entries {
+                let Some(line) = read_entry(&files, &e, &mut open) else { continue };
+                if !line.to_ascii_lowercase().contains(&needle) {
+                    continue;
+                }
+                if let Ok(a) = serde_json::from_str::<SystemArrival>(&line)
+                    && a.star_system.eq_ignore_ascii_case(system)
+                {
+                    return Some((a, Timestamp(e.ts)));
+                }
             }
-            if let Ok(a) = serde_json::from_str::<SystemArrival>(&line)
-                && a.star_system.eq_ignore_ascii_case(system)
-            {
-                return Some((a, Timestamp(e.ts)));
-            }
+            None
+        };
+        if let Some((a, ts)) = find(self.arrival_entries(last, true)) {
+            return Some((a, ts, false));
         }
-        None
+        find(self.arrival_entries(last, false)).map(|(a, ts)| (a, ts, true))
     }
 
     pub(super) fn system_factions(&self, a: &Value) -> Result<Value, String> {
         let asked = arg_str(a, "system");
-        // The system being flown comes from the model; any other from the journal.
-        let here = {
+        // The system being flown comes from the model, and so does when the commander was last in any other: from
+        // their own history, not the journal index, which also holds their alts' journals.
+        let (here, last) = {
             let model = self.model.read();
             let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
             let loc = &gs.location;
             match &asked {
-                Some(s) if !loc.system.eq_ignore_ascii_case(s) => None,
+                Some(s) if !loc.system.eq_ignore_ascii_case(s) => (None, gs.history.visited.values().filter(|v| v.name.eq_ignore_ascii_case(s)).map(|v| v.last).max()),
                 _ if text(&loc.system).is_none() => return Err("The commander's current system isn't known yet: name a system with system=.".into()),
-                _ => Some((loc.system.clone(), loc.info.clone())),
+                _ => (Some((loc.system.clone(), loc.info.clone())), None),
             }
         };
+        let mut notes: Vec<&str> = vec!["my_reputation runs from -100 to 100; influence_pct is the faction's share of the system's influence."];
         let (system, info, source) = match here {
             Some((system, info)) => (system, info, "Commander's journal: what the game reported at the last arrival in this system. Influence and states may have moved since."),
             None => {
                 let name = asked.unwrap_or_default();
-                let (arrival, ts) = self.last_arrival_in(&name).ok_or_else(|| {
+                let unknown = || {
                     format!("\"{}\" isn't in the commander's journal, so there is nothing to say about its factions or the commander's reputation there. system_info has EDDN faction data for any system, without reputation.", clip(&name, 60))
-                })?;
+                };
+                let (arrival, ts, walked) = self.arrival_in(&name, last.ok_or_else(unknown)?).ok_or_else(unknown)?;
+                if walked {
+                    notes.push("The commander's own arrival wasn't found in the journal index: this is the newest earlier arrival there, which may be another commander's, so my_reputation may not be theirs.");
+                }
                 let info = SystemInfo::from_arrival(&arrival, ts);
                 (arrival.star_system, info, "Commander's journal: what the game reported when the commander last arrived in this system. Influence and states may have moved since.")
             }
         };
         // The reply has to fit what the model is given of a tool result: government, allegiance and happiness go
         // first, then the pending, active and recovering states.
-        let mut notes: Vec<&str> = vec!["my_reputation runs from -100 to 100; influence_pct is the faction's share of the system's influence."];
         if info.factions.is_empty() {
             notes.push("The journal lists no factions for this system (uninhabited, or it was not reported).");
         }
