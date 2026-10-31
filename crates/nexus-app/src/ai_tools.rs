@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 
 mod cmdr;
+mod outfit;
 
 pub struct NexusTools {
     pub model: Arc<RwLock<Model>>,
@@ -2016,6 +2017,27 @@ pub static TOOLS: &[Tool] = &[
         mcp: true,
         run: NexusTools::system_factions,
     },
+    Tool {
+        name: "find_material_body",
+        description: "Landable bodies near a system that hold a raw material (e.g. Polonium), richest first, from Spansh. Searches the 500 nearest landable bodies at most (a cap that keeps the answer quick); max_gravity_g defaults to 1.0.",
+        params: || {
+            schema(
+                json!({
+                    "material": { "type": "string", "description": "A raw material, e.g. Polonium, Tellurium, Niobium, Arsenic." },
+                    "near_system": { "type": "string", "description": NEAR },
+                    "max_gravity_g": { "type": "number", "description": "Highest surface gravity in g. Default 1.0." },
+                    "max_distance_ls": { "type": "number", "description": "Farthest from the arrival star, in ls. Default: any." }
+                }),
+                &["material"],
+            )
+        },
+        working: "Searching Spansh for bodies… (can take a while)",
+        noun: "Spansh",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::find_material_body,
+    },
 ];
 
 /// One line about the commander for each question (location, ship, credits, date).
@@ -3149,6 +3171,37 @@ mod tests {
         assert_eq!(short_name("Earth", "Sol"), "Earth");
         assert!(body_matches("Swoilz MH-W c17-3 A 4", "Swoilz MH-W c17-3", "A 4"));
         assert!(!body_matches("Swoilz MH-W c17-3 A 4 a", "Swoilz MH-W c17-3", "A 4"));
+    }
+
+    #[test]
+    fn find_material_body_rejects_non_raw() {
+        let rt = runtime();
+        let tools = model_tools(commander(), &rt);
+        let e = tools.call("find_material_body", &json!({ "material": "Biotech Conductors" })).unwrap_err();
+        assert!(e.contains("raw"), "{e}");
+        assert!(tools.call("find_material_body", &json!({ "material": "Unobtainium" })).is_err());
+        assert!(tools.call("find_material_body", &json!({})).is_err());
+    }
+
+    /// A runtime that drives network I/O for `Handle::block_on` (a current-thread one only does inside its own `block_on`).
+    fn live_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap()
+    }
+
+    /// Live: `cargo test -p nexus-app live_find -- --ignored --nocapture` (needs the internet; reads Spansh only).
+    #[test]
+    #[ignore]
+    fn live_find_material_body() {
+        let rt = live_runtime();
+        let tools = model_tools(commander(), &rt);
+        let v = tools.call("find_material_body", &json!({ "material": "Polonium", "near_system": "Deciat" })).unwrap();
+        println!("{v:#}");
+        let bodies = v["bodies"].as_array().unwrap();
+        assert!(!bodies.is_empty(), "{v}");
+        let shares: Vec<f64> = bodies.iter().map(|b| b["share_pct"].as_f64().unwrap()).collect();
+        assert!(shares.windows(2).all(|w| w[0] >= w[1]), "richest first: {shares:?}");
+        assert!(bodies.iter().all(|b| b["system"].is_string() && b["gravity_g"].is_number()));
+        assert!(v["searched_bodies"].as_u64().unwrap() <= 500);
     }
 }
 
