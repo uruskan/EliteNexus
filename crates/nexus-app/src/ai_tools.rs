@@ -27,6 +27,8 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 
+mod cmdr;
+
 pub struct NexusTools {
     pub model: Arc<RwLock<Model>>,
     pub db: Option<GalaxyDb>,
@@ -1924,6 +1926,28 @@ pub static TOOLS: &[Tool] = &[
         mcp: true,
         run: NexusTools::knowledge,
     },
+    Tool {
+        name: "fleet",
+        description: "Every ship the commander owns: where it is (or that it's in transit and when it arrives), jump range, cargo, value, rebuy and its engineered modules (blueprint, grade, experimental effect). all_modules=true adds every module. Modules are those of the last loadout the game reported for that ship.",
+        params: || schema(json!({ "all_modules": { "type": "boolean", "description": "Also list every module of every ship, not only the engineered ones." } }), &[]),
+        working: "Reading your fleet…",
+        noun: "your fleet",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::fleet,
+    },
+    Tool {
+        name: "progress",
+        description: "The commander's progress: every rank with its progress to the next, engineers (unlocked with their rank, or invited/known), superpower reputation, Powerplay, squadron, and whether the game is running or at the main menu.",
+        params: || schema(json!({}), &[]),
+        working: "Checking your ranks and engineers…",
+        noun: "your ranks and engineers",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: |t, _| t.progress(),
+    },
 ];
 
 /// One line about the commander for each question (location, ship, credits, date).
@@ -1969,8 +1993,13 @@ mod tests {
             format!(r#"{{ "timestamp":"{now}", "event":"Commander", "FID":"F1", "Name":"Tester" }}"#),
             format!(r#"{{ "timestamp":"{now}", "event":"LoadGame", "FID":"F1", "Commander":"Tester", "Horizons":true, "Odyssey":true, "Ship":"Anaconda", "ShipID":1, "ShipName":"", "ShipIdent":"", "FuelLevel":32.0, "FuelCapacity":32.0, "GameMode":"Solo", "Credits":250000000, "Loan":0 }}"#),
             format!(r#"{{ "timestamp":"{now}", "event":"Location", "Docked":false, "StarSystem":"Alpha", "SystemAddress":1001, "StarPos":[0.0,0.0,0.0], "Population":1000, "Body":"Alpha", "BodyID":0, "BodyType":"Star" }}"#),
-            format!(r#"{{ "timestamp":"{now}", "event":"Loadout", "Ship":"anaconda", "ShipID":1, "ShipName":"", "ShipIdent":"", "HullValue":100, "ModulesValue":100, "HullHealth":1.0, "UnladenMass":400.0, "CargoCapacity":400, "MaxJumpRange":30.5, "FuelCapacity":{{ "Main":32.0, "Reserve":1.07 }}, "Rebuy":5000000, "Modules":[] }}"#),
+            format!(r#"{{ "timestamp":"{now}", "event":"Loadout", "Ship":"anaconda", "ShipID":1, "ShipName":"", "ShipIdent":"", "HullValue":100, "ModulesValue":100, "HullHealth":1.0, "UnladenMass":400.0, "CargoCapacity":400, "MaxJumpRange":30.5, "FuelCapacity":{{ "Main":32.0, "Reserve":1.07 }}, "Rebuy":5000000, "Modules":[ {{ "Slot":"FrameShiftDrive", "Item":"int_hyperdrive_size6_class5", "On":true, "Priority":0, "Health":1.0, "Value":3000000, "Engineering":{{ "Engineer":"Felicity Farseer", "EngineerID":300100, "BlueprintID":128673694, "BlueprintName":"FSD_LongRange", "Level":5, "Quality":1.0, "ExperimentalEffect":"special_fsd_heavy", "ExperimentalEffect_Localised":"Mass Manager", "Modifiers":[] }} }} ] }}"#),
             format!(r#"{{ "timestamp":"{now}", "event":"Cargo", "Vessel":"Ship", "Count":100, "Inventory":[ {{ "Name":"gold", "Name_Localised":"Gold", "Count":100, "Stolen":0 }} ] }}"#),
+            // A second ship in storage, and the progress the Rank, Progress and EngineerProgress events carry.
+            format!(r#"{{ "timestamp":"{now}", "event":"StoredShips", "StationName":"Alpha Port", "MarketID":5001, "StarSystem":"Alpha", "ShipsHere":[ {{ "ShipID":2, "ShipType":"Python", "Name":"Mule", "Value":55000000, "Hot":false }} ], "ShipsRemote":[ ] }}"#),
+            format!(r#"{{ "timestamp":"{now}", "event":"Rank", "Combat":3, "Trade":4, "Explore":6, "Soldier":0, "Exobiologist":2, "Empire":7, "Federation":1, "CQC":0 }}"#),
+            format!(r#"{{ "timestamp":"{now}", "event":"Progress", "Combat":30, "Trade":46, "Explore":78, "Soldier":0, "Exobiologist":35, "Empire":37, "Federation":100, "CQC":0 }}"#),
+            format!(r#"{{ "timestamp":"{now}", "event":"EngineerProgress", "Engineers":[ {{ "Engineer":"Felicity Farseer", "EngineerID":300100, "Progress":"Unlocked", "RankProgress":0, "Rank":5 }}, {{ "Engineer":"Eleanor Bresa", "EngineerID":400011, "Progress":"Known" }} ] }}"#),
         ];
         let mut m = Model::default();
         let mut quiet = Alerts::disabled();
@@ -2024,13 +2053,13 @@ mod tests {
         assert!(tools.call("journal_search", &json!({ "query": "gold" })).unwrap()["matches_newest_first"].as_array().unwrap().is_empty());
         assert!(tools.call("nope", &json!({})).is_err());
         assert!(tools.call("find_commodity", &json!({})).is_err(), "missing required argument is an error, not a panic");
-        assert_eq!(specs(Caller::Ask).len(), 16);
+        assert!(specs(Caller::Ask).len() >= 16);
 
         // The full loop with a scripted model: one tool call, then an answer.
         struct Script(parking_lot::Mutex<Vec<nexus_ai::Reply>>);
         impl nexus_ai::Backend for Script {
             fn complete(&self, _s: &str, tools: &[ToolSpec], turns: &[nexus_ai::Turn]) -> Result<nexus_ai::Reply, nexus_ai::AiError> {
-                assert_eq!(tools.len(), 16);
+                assert_eq!(tools.len(), specs(Caller::Ask).len());
                 if turns.len() > 1 {
                     assert!(matches!(&turns[2], nexus_ai::Turn::ToolResult { content, is_error: false, .. } if content.contains("Beta Hub")));
                 }
@@ -2183,6 +2212,121 @@ mod tests {
 
         assert!(tools.call("journal_search", &json!({ "query": "FSDJump", "from": "22/10" })).is_err());
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Tools over a model alone: no database, no network (Spansh is never reached by the tools these tests call).
+    fn model_tools(m: Model, rt: &tokio::runtime::Runtime) -> NexusTools {
+        NexusTools {
+            model: Arc::new(RwLock::new(m)),
+            db: None,
+            index: Arc::new(RwLock::new(JournalIndex::default())),
+            spansh: Spansh::new(),
+            rt: rt.handle().clone(),
+            routes: Arc::new(Mutex::new(None)),
+            caller: Caller::Ask,
+            budget: Caller::Ask.budget(),
+        }
+    }
+
+    #[test]
+    fn fleet_lists_every_ship_with_engineering() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = model_tools(commander(), &rt);
+        let f = tools.call("fleet", &json!({})).unwrap();
+        let ships = f["ships"].as_array().unwrap();
+        assert_eq!(ships.len(), 2, "{f}");
+        let here = ships.iter().find(|s| s["current"] == true).expect("the current ship");
+        assert_eq!(here["type"], "Anaconda");
+        assert_eq!(here["where"]["system"], "Alpha");
+        assert_eq!(here["max_jump_range_ly"], 30.5);
+        assert_eq!(here["rebuy_cr"], 5_000_000);
+        let engineered = here["engineered"].as_array().unwrap();
+        assert_eq!(engineered.len(), 1);
+        assert_eq!(engineered[0]["blueprint"], "FSD_LongRange");
+        assert_eq!(engineered[0]["grade"], 5);
+        assert_eq!(engineered[0]["engineer"], "Felicity Farseer");
+        assert_eq!(engineered[0]["experimental"], "Mass Manager");
+        assert!(here.get("modules").is_none(), "modules only on request: {here}");
+        let stored = ships.iter().find(|s| s["current"] != true).expect("the stored ship");
+        assert_eq!(stored["name"], "Mule");
+        assert_eq!(stored["where"]["station"], "Alpha Port");
+        assert_eq!(stored["where"]["system"], "Alpha");
+        assert_eq!(stored["value_cr"], 55_000_000);
+        assert!(stored["engineered"].as_array().unwrap().is_empty());
+        assert_eq!(f["total_value_cr"], 55_000_000 + 200);
+
+        let all = tools.call("fleet", &json!({ "all_modules": true })).unwrap();
+        let here = all["ships"].as_array().unwrap().iter().find(|s| s["current"] == true).unwrap();
+        let modules = here["modules"].as_array().unwrap();
+        assert_eq!(modules.len(), 1);
+        assert_eq!(modules[0]["slot"], "Frame Shift Drive");
+        assert_eq!(modules[0]["engineered"], true);
+        assert!(modules[0]["module"].as_str().is_some_and(|m| !m.is_empty()));
+    }
+
+    #[test]
+    fn fleet_says_when_a_ship_is_in_transit() {
+        let mut m = commander();
+        let arrives = nexus_journal::Timestamp(nexus_journal::Timestamp::now().0 + 1800);
+        let gs = m.active_mut().expect("commander");
+        let ship = gs.fleet.ships.get_mut(&2).expect("stored ship");
+        ship.location = nexus_model::fleet::ShipLocation { system: Some("Beta".into()), station: Some("Beta Hub".into()), in_transit: true, arrives: Some(arrives), ..Default::default() };
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let f = model_tools(m, &rt).call("fleet", &json!({})).unwrap();
+        let stored = f["ships"].as_array().unwrap().iter().find(|s| s["current"] != true).unwrap();
+        assert_eq!(stored["where"]["in_transit"], true);
+        assert_eq!(stored["where"]["station"], "Beta Hub");
+        assert_eq!(stored["where"]["arrives"], arrives.to_iso());
+        assert_eq!(stored["where"]["arrives_in_min"], 30);
+    }
+
+    #[test]
+    fn progress_has_ranks_engineers_and_game_state() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let m = commander();
+        let (closed, expected_rank) = {
+            let gs = m.active().unwrap();
+            (gs.game_closed, gs.cmdr.rank_name(nexus_data::ranks::RankKind::Explore))
+        };
+        let tools = model_tools(m, &rt);
+        let p = tools.call("progress", &json!({})).unwrap();
+        let ranks = p["ranks"].as_array().unwrap();
+        assert_eq!(ranks.len(), 8);
+        let explore = ranks.iter().find(|r| r["rank"] == "Explore").unwrap();
+        assert_eq!(explore["name"], expected_rank);
+        assert_eq!(explore["progress_pct"], 78);
+        let engineers = p["engineers"].as_array().unwrap();
+        assert_eq!(engineers[0]["name"], "Felicity Farseer", "unlocked engineers come first: {p}");
+        assert_eq!(engineers[0]["status"], "Unlocked");
+        assert_eq!(engineers[0]["rank"], 5);
+        assert_eq!(engineers[1]["name"], "Eleanor Bresa");
+        assert_eq!(engineers[1]["status"], "Known");
+        assert!(engineers[1].get("rank").is_none());
+        assert_eq!(p["game"]["running"], !closed);
+        assert!(p["game"]["at_main_menu"].is_boolean());
+        assert_eq!(p["game"]["mode"], "Solo");
+        assert!(p["powerplay"].is_null() && p["squadron"].is_null(), "not pledged, no squadron: {p}");
+    }
+
+    #[test]
+    fn new_tools_are_appended_and_old_ones_unchanged() {
+        let old = [
+            "commander", "find_commodity", "price_deals", "untouched_biology", "sell_my_cargo", "trade_routes", "nearest_service", "mining_hotspots",
+            "mining_sites", "system_info", "system_bodies", "plan_route", "money_routes", "exobiology_here", "journal_search", "knowledge",
+        ];
+        let names: Vec<&str> = specs(Caller::Ask).iter().map(|s| s.name).collect();
+        assert_eq!(&names[..old.len()], &old, "the first 16 specs keep their order");
+        assert!(names.len() > old.len());
+        let unique: std::collections::BTreeSet<&str> = names.iter().copied().collect();
+        assert_eq!(unique.len(), names.len(), "tool names are unique");
+        // With no commander loaded the tools fail early (no database, no network), but every one of them is known.
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = model_tools(Model::default(), &rt);
+        for name in names {
+            if let Err(e) = tools.call(name, &json!({})) {
+                assert!(!e.contains("Unknown tool"), "{name} is in specs() but not handled by call()");
+            }
+        }
     }
 
     /// "Where did I mine Iridium?": the Rhino's mining locations, from the journal.
