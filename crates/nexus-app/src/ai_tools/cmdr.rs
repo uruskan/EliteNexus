@@ -1,16 +1,21 @@
-//! The assistant's tools about the commander themselves: their fleet, their progress, their materials, on-foot gear
-//! and credits. Each takes one short read of the model and returns compact JSON.
+//! The assistant's tools about the commander themselves: their fleet, their progress, their materials, on-foot gear,
+//! credits and the factions of the systems they have visited. Each takes one short read of the model (or the journal
+//! index) and returns compact JSON; nothing is read from disk under a lock.
 
 use super::{NexusTools, arg_bool, arg_f64, arg_str, r1, strip_nulls};
 use nexus_data::materials::{self, Material};
 use nexus_data::outfitting::{display_name, slot_display};
 use nexus_data::ranks::RankKind;
-use nexus_journal::Timestamp;
+use nexus_journal::events::SystemArrival;
+use nexus_journal::{IndexEntry, Timestamp};
 use nexus_model::GameState;
 use nexus_model::fleet::{Ship, ShipModule};
 use nexus_model::history::LedgerCategory;
 use nexus_model::inventory::{Locker, MaterialCategory, SuitLoadoutInfo};
+use nexus_model::location::{FactionSummary, SystemInfo};
 use serde_json::{Value, json};
+use std::io::{Read, Seek, SeekFrom};
+use std::path::PathBuf;
 
 fn pct(x: f64) -> i64 {
     (x * 100.0).round() as i64
@@ -209,6 +214,64 @@ fn clip(s: &str, max: usize) -> String {
     let mut t: String = s.chars().take(max.saturating_sub(1)).collect();
     t.push('…');
     t
+}
+
+/// A list for the reply, or nothing when it is empty.
+fn list(v: &[String]) -> Option<&[String]> {
+    (!v.is_empty()).then_some(v)
+}
+
+/// One faction of a system, from the most (0) to the least (2) detailed.
+fn faction(f: &FactionSummary, form: u8) -> Value {
+    let mut v = json!({
+        "name": f.name, "state": text(&f.state), "influence_pct": r1(f.influence * 100.0), "my_reputation": f.my_reputation.map(r1),
+    });
+    if form < 2 {
+        v["active_states"] = json!(list(&f.active_states));
+        v["pending_states"] = json!(list(&f.pending_states));
+        v["recovering_states"] = json!(list(&f.recovering_states));
+    }
+    if form < 1 {
+        v["government"] = json!(text(&f.government));
+        v["allegiance"] = json!(text(&f.allegiance));
+        v["happiness"] = json!(text(&f.happiness));
+    }
+    strip_nulls(&mut v);
+    v
+}
+
+/// A system's factions and conflicts as one reply of the given form.
+fn system_reply(system: &str, info: &SystemInfo, source: &str, form: u8) -> Value {
+    let side = |s: &nexus_journal::events::ConflictSide| {
+        let mut v = json!({ "faction": s.name, "stake": if form < 1 { text(&s.stake) } else { None }, "days_won": s.won_days });
+        strip_nulls(&mut v);
+        v
+    };
+    let mut v = json!({
+        "system": system, "source": source, "as_of": (!info.updated.is_zero()).then(|| info.updated.to_iso()),
+        "controlling_faction": info.controlling_faction, "controlling_faction_state": info.controlling_faction_state.as_deref().and_then(text),
+        "government": text(&info.government), "allegiance": text(&info.allegiance), "economy": text(&info.economy), "security": text(&info.security),
+        "population": info.population,
+        "factions": info.factions.iter().map(|f| faction(f, form)).collect::<Vec<_>>(),
+    });
+    if !info.conflicts.is_empty() {
+        v["conflicts"] = info.conflicts.iter().map(|c| json!({ "type": text(&c.war_type), "status": text(&c.status), "sides": [side(&c.faction1), side(&c.faction2)] })).collect();
+    }
+    strip_nulls(&mut v);
+    v
+}
+
+/// The raw line of an index entry, read from disk. The last file opened stays open in `open`: a walk through the
+/// journal newest first reads one file's lines together.
+fn read_entry(files: &[PathBuf], e: &IndexEntry, open: &mut Option<(u32, std::fs::File)>) -> Option<String> {
+    if open.as_ref().is_none_or(|(file, _)| *file != e.file) {
+        *open = Some((e.file, std::fs::File::open(files.get(e.file as usize)?).ok()?));
+    }
+    let (_, f) = open.as_mut()?;
+    f.seek(SeekFrom::Start(u64::from(e.offset))).ok()?;
+    let mut buf = vec![0u8; e.len as usize];
+    f.read_exact(&mut buf).ok()?;
+    Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
 impl NexusTools {
@@ -474,5 +537,75 @@ impl NexusTools {
             "squadron": c.squadron.as_ref().map(|s| json!({ "name": s.name, "rank": s.rank_name.clone().or_else(|| s.rank.map(|r| r.to_string())) })),
             "game": game,
         }))
+    }
+
+    /// The last arrival in `system` the journal records (FSDJump, Location or CarrierJump), found newest first. Only
+    /// the entries are copied under the index lock; the lines are read from disk after it is released.
+    fn last_arrival_in(&self, system: &str) -> Option<(SystemArrival, Timestamp)> {
+        let (candidates, files) = {
+            let index = self.index.read();
+            let ids: Vec<u16> = ["FSDJump", "Location", "CarrierJump"].iter().filter_map(|n| index.id_of(n)).collect();
+            let candidates: Vec<IndexEntry> = index.entries.iter().rev().filter(|e| ids.contains(&e.name)).copied().collect();
+            (candidates, index.files.clone())
+        };
+        let needle = system.to_ascii_lowercase();
+        let mut open = None;
+        for e in candidates {
+            let Some(line) = read_entry(&files, &e, &mut open) else { continue };
+            if !line.to_ascii_lowercase().contains(&needle) {
+                continue;
+            }
+            if let Ok(a) = serde_json::from_str::<SystemArrival>(&line)
+                && a.star_system.eq_ignore_ascii_case(system)
+            {
+                return Some((a, Timestamp(e.ts)));
+            }
+        }
+        None
+    }
+
+    pub(super) fn system_factions(&self, a: &Value) -> Result<Value, String> {
+        let asked = arg_str(a, "system");
+        // The system being flown comes from the model; any other from the journal.
+        let here = {
+            let model = self.model.read();
+            let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
+            let loc = &gs.location;
+            match &asked {
+                Some(s) if !loc.system.eq_ignore_ascii_case(s) => None,
+                _ if text(&loc.system).is_none() => return Err("The commander's current system isn't known yet: name a system with system=.".into()),
+                _ => Some((loc.system.clone(), loc.info.clone())),
+            }
+        };
+        let (system, info, source) = match here {
+            Some((system, info)) => (system, info, "Commander's journal: what the game reported at the last arrival in this system. Influence and states may have moved since."),
+            None => {
+                let name = asked.unwrap_or_default();
+                let (arrival, ts) = self.last_arrival_in(&name).ok_or_else(|| {
+                    format!("\"{}\" isn't in the commander's journal, so there is nothing to say about its factions or the commander's reputation there. system_info has EDDN faction data for any system, without reputation.", clip(&name, 60))
+                })?;
+                let info = SystemInfo::from_arrival(&arrival, ts);
+                (arrival.star_system, info, "Commander's journal: what the game reported when the commander last arrived in this system. Influence and states may have moved since.")
+            }
+        };
+        // The reply has to fit what the model is given of a tool result: government, allegiance and happiness go
+        // first, then the pending, active and recovering states.
+        let mut notes: Vec<&str> = vec!["my_reputation runs from -100 to 100; influence_pct is the faction's share of the system's influence."];
+        if info.factions.is_empty() {
+            notes.push("The journal lists no factions for this system (uninhabited, or it was not reported).");
+        }
+        for form in 0..=2u8 {
+            let mut out = system_reply(&system, &info, source, form);
+            match form {
+                1 => notes.push("Government, allegiance and happiness left out to fit."),
+                2 => notes.push("Active, pending and recovering states left out to fit."),
+                _ => {}
+            }
+            out["notes"] = json!(notes);
+            if form == 2 || out.to_string().len() <= BUDGET {
+                return Ok(out);
+            }
+        }
+        Err("Too much to list.".into())
     }
 }
