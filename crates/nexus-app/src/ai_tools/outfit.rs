@@ -26,6 +26,12 @@ fn page_budget(elapsed: Duration) -> Option<Duration> {
     Some(left.min(SPANSH_TIMEOUT))
 }
 
+/// Why a body search stopped: its own time limit when that is used up (a page cut short by it comes back as a Spansh
+/// timeout), else the error Spansh gave.
+fn interruption(error: String, elapsed: Duration) -> String {
+    if page_budget(elapsed).is_none() { TIME_LIMIT.to_string() } else { error }
+}
+
 fn add_note(out: &mut Value, text: &str) {
     let note = out["note"].as_str().map(|n| format!("{n} {text}")).unwrap_or_else(|| text.to_string());
     out["note"] = json!(note);
@@ -138,14 +144,18 @@ impl NexusTools {
             return Err("max_gravity_g must be above 0.".to_string());
         }
         let max_ls = arg_f64(a, "max_distance_ls").filter(|d| *d > 0.0);
+        // The limit counts from here: looking up near_system takes its share.
+        let started = Instant::now();
         let me = self.me()?;
         let (origin, near) = self.origin(a, &me)?;
         let mut hits: Vec<(f64, BodyRecord)> = Vec::new();
         let (mut searched, mut enough, mut interrupted) = (0usize, false, None);
-        let started = Instant::now();
         for page in 0..MAX_BODY_PAGES {
             // Every page gets what is left of the search's time; none starts once it is used up.
             let Some(budget) = page_budget(started.elapsed()) else {
+                if page == 0 {
+                    return Err(format!("Spansh: the {} second time limit was used up before the first page.", BODY_SEARCH_LIMIT.as_secs()));
+                }
                 interrupted = Some(TIME_LIMIT.to_string());
                 break;
             };
@@ -160,7 +170,7 @@ impl NexusTools {
                 Ok(res) => res.results,
                 Err(e) if page == 0 => return Err(e),
                 Err(e) => {
-                    interrupted = Some(e);
+                    interrupted = Some(interruption(e, started.elapsed()));
                     break;
                 }
             };
@@ -226,6 +236,11 @@ mod tests {
         assert_eq!(page_budget(s(59)), Some(s(1)));
         assert_eq!(page_budget(BODY_SEARCH_LIMIT), None);
         assert_eq!(page_budget(s(90)), None);
+        // A page cut short by the limit comes back as a Spansh timeout; it is reported as the limit, not as Spansh's.
+        let timeout = || "Spansh: no answer in time".to_string();
+        assert_eq!(interruption(timeout(), s(60)), TIME_LIMIT);
+        assert_eq!(interruption(timeout(), s(75)), TIME_LIMIT);
+        assert_eq!(interruption(timeout(), s(30)), "Spansh: no answer in time", "time was left: Spansh's own error stands");
         // So five pages can never take longer than the limit, whatever Spansh does.
         let polonium = materials::material("Polonium").unwrap();
         let search = BodySearch { near: "Deciat", material: polonium, max_gravity_g: 1.0, max_ls: None, searched: 200, enough: false, interrupted: Some(TIME_LIMIT.into()) };
