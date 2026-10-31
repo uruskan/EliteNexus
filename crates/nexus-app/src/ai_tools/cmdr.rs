@@ -314,7 +314,7 @@ impl NexusTools {
             Some(h) => Timestamp(now.0 - (h.min(1.0e6) * 3600.0) as i64),
             None => gs.cmdr.last_login,
         };
-        let mut entries: Vec<&nexus_model::history::LedgerEntry> = gs.history.ledger.iter().filter(|e| e.ts >= since).collect();
+        let mut entries: Vec<&nexus_model::history::LedgerEntry> = gs.history.ledger.iter().rev().filter(|e| e.ts >= since).collect();
         entries.sort_by_key(|e| std::cmp::Reverse(e.ts));
         let total = entries.len();
         let totals: Vec<Value> = gs.history.totals_since(since).into_iter().map(|(c, income, expense)| json!({ "category": c.label(), "income": income, "expense": expense })).collect();
