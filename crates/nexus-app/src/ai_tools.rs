@@ -2540,6 +2540,11 @@ mod tests {
         assert!(len < limit, "{len} chars for {held} materials");
         let listed: usize = ["raw", "manufactured", "encoded"].iter().map(|k| v[k].as_array().unwrap().len()).sum();
         assert_eq!(listed, held, "every material is still listed: {}", v["notes"]);
+        // 147 materials at full detail are too long, so the storage cap is dropped (and said once in a note) while
+        // the grade and the full flag stay: this is the form the test means to cover.
+        let first = &v["raw"][0];
+        assert!(first.get("grade").is_some() && first.get("full").is_some() && first.get("cap").is_none(), "{first}");
+        assert!(v["notes"][0].as_str().unwrap().contains("storage cap"), "{}", v["notes"]);
         let raw = tools.call("materials", &json!({ "category": "raw" })).unwrap();
         assert!(raw.to_string().len() < limit);
     }
@@ -2583,6 +2588,8 @@ mod tests {
         let mut m = commander();
         let inv = &mut m.active_mut().expect("commander").inventory;
         fill(&mut inv.ship_locker, 80);
+        // Something used up (count 0) is not counted as held.
+        inv.ship_locker.items.insert("used".into(), LockerItem { name: "Used up".into(), count: 0 });
         fill(&mut inv.backpack, 40);
         for id in 1..=10u64 {
             inv.suit_loadouts.insert(
@@ -2652,6 +2659,34 @@ mod tests {
         let wide = tools.call("credit_history", &json!({ "since_hours": 2 })).unwrap();
         assert_eq!(wide["transactions"].as_array().unwrap().len(), 3);
         assert_eq!(wide["transactions"][2]["amount"], -999);
+    }
+
+    #[test]
+    fn credit_history_lists_the_later_of_two_same_second_entries_first() {
+        use nexus_model::history::LedgerCategory;
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let mut m = commander();
+        let ts = nexus_journal::Timestamp(nexus_journal::Timestamp::now().0 + 10);
+        let h = &mut m.active_mut().expect("commander").history;
+        h.ledger(ts, LedgerCategory::Repairs, -10, "applied first");
+        h.ledger(ts, LedgerCategory::Ammo, -20, "applied second");
+        let v = model_tools(m, &rt).call("credit_history", &json!({})).unwrap();
+        let tx = v["transactions"].as_array().unwrap();
+        assert_eq!((tx[0]["amount"].clone(), tx[1]["amount"].clone()), (json!(-20), json!(-10)), "{v}");
+    }
+
+    #[test]
+    fn credit_history_says_carrier_transfers_are_not_income_or_spending() {
+        use nexus_model::history::LedgerCategory;
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let ts = nexus_journal::Timestamp(nexus_journal::Timestamp::now().0 + 10);
+        let mut m = paid_commander();
+        let none = model_tools(m.clone(), &rt).call("credit_history", &json!({})).unwrap();
+        assert!(none.get("notes").is_none(), "no transfer, no note: {none}");
+        m.active_mut().expect("commander").history.ledger(ts, LedgerCategory::Transfer, -5_000, "To carrier");
+        let v = model_tools(m, &rt).call("credit_history", &json!({})).unwrap();
+        assert!(v["totals"].as_array().unwrap().iter().any(|t| t["category"] == "Carrier transfers"));
+        assert_eq!(v["notes"][0], "Carrier transfers move credits between you and your carrier: they are not income or spending.");
     }
 
     #[test]

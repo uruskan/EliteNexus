@@ -8,6 +8,7 @@ use nexus_data::ranks::RankKind;
 use nexus_journal::Timestamp;
 use nexus_model::GameState;
 use nexus_model::fleet::{Ship, ShipModule};
+use nexus_model::history::LedgerCategory;
 use nexus_model::inventory::{Locker, MaterialCategory, SuitLoadoutInfo};
 use serde_json::{Value, json};
 
@@ -151,7 +152,7 @@ fn material_row(h: &Held, form: u8) -> Value {
 
 /// `{ "distinct": n, "total": n }` for a bucket of the locker.
 fn locker_counts(m: &std::collections::BTreeMap<String, nexus_model::inventory::LockerItem>) -> Value {
-    json!({ "distinct": m.len(), "total": m.values().map(|i| i.count).sum::<i64>() })
+    json!({ "distinct": m.values().filter(|i| i.count > 0).count(), "total": m.values().map(|i| i.count.max(0)).sum::<i64>() })
 }
 
 /// A locker or backpack: `{ name: count }` for each kind, or only how many there are of each when the lists would
@@ -274,19 +275,23 @@ impl NexusTools {
     }
 
     pub(super) fn on_foot(&self) -> Result<Value, String> {
-        let model = self.model.read();
-        let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
-        let inv = &gs.inventory;
-        let mut loadouts: Vec<&SuitLoadoutInfo> = inv.suit_loadouts.values().collect();
-        loadouts.sort_by_key(|l| (inv.current_suit_loadout != Some(l.loadout_id), l.loadout_id));
+        // Copied under one short read; the shrinking below happens without the lock.
+        let (loadouts, current, ship_locker, backpack) = {
+            let model = self.model.read();
+            let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
+            let inv = &gs.inventory;
+            let mut loadouts: Vec<SuitLoadoutInfo> = inv.suit_loadouts.values().cloned().collect();
+            loadouts.sort_by_key(|l| (inv.current_suit_loadout != Some(l.loadout_id), l.loadout_id));
+            (loadouts, inv.current_suit_loadout, inv.ship_locker.clone(), inv.backpack.clone())
+        };
         // What gives way when there is too much: the ship locker's lists, then the backpack's, then the weapon
         // modifications, then everything about a loadout but its suit and weapons.
         let mut notes: Vec<&str> = Vec::new();
         for level in 0..=4u8 {
             let mut out = json!({
-                "loadouts": loadouts.iter().map(|l| loadout(l, inv.current_suit_loadout == Some(l.loadout_id), level.saturating_sub(2))).collect::<Vec<_>>(),
-                "locker": locker(&inv.ship_locker, level >= 1),
-                "backpack": locker(&inv.backpack, level >= 2),
+                "loadouts": loadouts.iter().map(|l| loadout(l, current == Some(l.loadout_id), level.saturating_sub(2))).collect::<Vec<_>>(),
+                "locker": locker(&ship_locker, level >= 1),
+                "backpack": locker(&backpack, level >= 2),
             });
             match level {
                 1 => notes.push("Ship locker too big to list: how many of each kind (items, components, consumables, data) instead."),
@@ -317,6 +322,7 @@ impl NexusTools {
         let mut entries: Vec<&nexus_model::history::LedgerEntry> = gs.history.ledger.iter().rev().filter(|e| e.ts >= since).collect();
         entries.sort_by_key(|e| std::cmp::Reverse(e.ts));
         let total = entries.len();
+        let transfers = entries.iter().any(|e| e.category == LedgerCategory::Transfer);
         let totals: Vec<Value> = gs.history.totals_since(since).into_iter().map(|(c, income, expense)| json!({ "category": c.label(), "income": income, "expense": expense })).collect();
         entries.truncate(limit);
         let rows: Vec<(Timestamp, &'static str, i64, String)> = entries.iter().map(|e| (e.ts, e.category.label(), e.amount, e.note.clone())).collect();
@@ -325,6 +331,9 @@ impl NexusTools {
         // The reply has to fit what the model is given of a tool result: long notes are cut, then dropped, then the
         // oldest transactions go.
         let mut notes: Vec<&str> = Vec::new();
+        if transfers {
+            notes.push("Carrier transfers move credits between you and your carrier: they are not income or spending.");
+        }
         let mut note_max = Some(100usize);
         let mut shown = rows.len();
         loop {
