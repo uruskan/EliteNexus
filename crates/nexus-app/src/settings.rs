@@ -22,6 +22,13 @@ pub struct Settings {
     pub high_value_threshold: i64,
     /// Copy the next route system to the clipboard after each jump.
     pub auto_copy_next_system: bool,
+    /// Switch pages by itself as the commander flies: Exploration while flying a system, Exobiology near a
+    /// planet with life still to analyse, Navigation in the galaxy map, while a jump charges or when the
+    /// system is done. Only while on one of those three pages.
+    pub auto_page: bool,
+    /// Altitude (km) below which Follow my flight treats the commander as exploring the planet rather than
+    /// the system: EDEB's default of 150 km.
+    pub auto_page_altitude_km: f32,
     pub accounts: Accounts,
     /// The first-run welcome has been completed.
     pub welcomed: bool,
@@ -150,6 +157,8 @@ impl Default for Settings {
             ui_scale: 1.0,
             high_value_threshold: 1_000_000,
             auto_copy_next_system: true,
+            auto_page: false,
+            auto_page_altitude_km: 150.0,
             accounts: Accounts { eddn_listen: true, inara_dev_mode: true, ..Default::default() },
             welcomed: false,
             wishlist: Vec::new(),
