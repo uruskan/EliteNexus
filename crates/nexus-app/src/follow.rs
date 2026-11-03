@@ -26,6 +26,7 @@ enum Flight {
 impl Flight {
     /// `altitude_m` is Status.json's altitude, when it gives one; `planet_m` is Settings' "Planet view below".
     fn of(cx: &Context, altitude_m: Option<f64>, planet_m: f64) -> Flight {
+        // Plotting the next trip, wherever the map is opened: docked or in an SRV too.
         if cx.focus == GuiFocus::GalaxyMap {
             return Flight::Route;
         }
@@ -129,6 +130,8 @@ mod tests {
         assert_eq!(of(Activity::Docked, None), Flight::Idle);
         assert_eq!(of(Activity::NotInGame, None), Flight::Idle);
         assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::GalaxyMap), Some(1_000.0), KM150), Flight::Route, "the galaxy map wins");
+        assert_eq!(Flight::of(&cx(Activity::Docked, GuiFocus::GalaxyMap), None, KM150), Flight::Route, "docked too");
+        assert_eq!(Flight::of(&cx(Activity::Srv(Vehicle::Scarab), GuiFocus::GalaxyMap), Some(0.0), KM150), Flight::Route, "and in an SRV");
         assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::SystemMap), Some(1_000.0), KM150), Flight::Planet, "the system map doesn't");
         assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::None), Some(100_000.0), 50_000.0), Flight::System, "the altitude is the setting's");
     }

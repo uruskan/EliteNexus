@@ -18,8 +18,8 @@ release time that section becomes the new version and the release workflow publi
   charging hyperspace jump or a finished system (every body found, every planet worth the high-value threshold
   mapped, every genus analysed) opens Navigation. Exploration opens on the current system and Exobiology on This
   system, whichever tab you left open there. It only ever moves between those three pages: on any other page it
-  leaves you alone; docked, in an SRV or on foot inside it changes nothing, and it reacts only to what happens while
-  the game runs, never to the journals read at start.
+  leaves you alone; docked, in an SRV or on foot inside, only opening the galaxy map changes the page, and it reacts
+  only to what happens while the game runs, never to the journals read at start.
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
