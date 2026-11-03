@@ -103,12 +103,32 @@ pub struct Blueprint {
     pub effects: Vec<Vec<Effect>>,
     /// Engineers offering this blueprint and their highest grade, best first.
     pub engineers: Vec<EngineerGrade>,
+    /// Merc blueprints: Merc Coins per roll for each grade (index 0 is grade 1). Empty otherwise.
+    pub merc_coins: Vec<u32>,
+    /// The MercGear module a Merc blueprint is for, e.g. `"5E Extended Cargo Rack"`; `None` when it
+    /// fits ordinary modules.
+    pub merc_module: Option<String>,
 }
 
 impl Blueprint {
     /// Highest grade that exists for this blueprint (usually 5).
     pub fn max_grade(&self) -> u8 {
         self.grades.len() as u8
+    }
+
+    /// Lowest grade that can be rolled: 2 for blueprints on MercGear modules, which are bought at grade 1.
+    pub fn min_grade(&self) -> u8 {
+        self.grades.iter().position(|g| !g.is_empty()).map_or(1, |i| i as u8 + 1)
+    }
+
+    /// Bought from the engineer with Merc Coins, which each roll costs as well as materials.
+    pub fn is_merc(&self) -> bool {
+        !self.merc_coins.is_empty()
+    }
+
+    /// Merc Coins for one roll at `grade` (1-based); 0 for ordinary blueprints.
+    pub fn merc_coins_for(&self, grade: u8) -> u32 {
+        usize::from(grade).checked_sub(1).and_then(|i| self.merc_coins.get(i)).copied().unwrap_or(0)
     }
 
     /// The recipe for one roll at `grade` (1-based).
@@ -433,17 +453,21 @@ pub const ODYSSEY_ITEMS: &[OdysseyItem] = &[
 // ---------------------------------------------------------------------------------------------
 
 /// Canonical engineerable module types. Blueprints for seeker racks are stored under
-/// `"Missile Rack"`; `"Seeker Missile Rack"` exists to scope experimentals.
+/// `"Missile Rack"`; `"Seeker Missile Rack"` exists to scope experimentals. Abrasion blasters, cargo
+/// racks, enzyme missile racks, mining lasers and module reinforcements only have Merc blueprints.
 pub const MODULE_TYPES: &[&str] = &[
+    "Abrasion Blaster",
     "Armour",
     "Auto Field-Maintenance Unit",
     "Beam Laser",
     "Burst Laser",
     "Cannon",
+    "Cargo Rack",
     "Chaff Launcher",
     "Collector Limpet Controller",
     "Detailed Surface Scanner",
     "Electronic Countermeasure",
+    "Enzyme Missile Rack",
     "Fragment Cannon",
     "Frame Shift Drive",
     "Frame Shift Drive Interdictor",
@@ -457,7 +481,9 @@ pub const MODULE_TYPES: &[&str] = &[
     "Life Support",
     "Manifest Scanner",
     "Mine Launcher",
+    "Mining Laser",
     "Missile Rack",
+    "Module Reinforcement Package",
     "Multi-cannon",
     "Plasma Accelerator",
     "Point Defence",
@@ -496,6 +522,8 @@ const ITEM_PREFIXES: &[(&str, &str)] = &[
     ("int_dronecontrol_fueltransfer", "Fuel Transfer Limpet Controller"),
     ("int_dronecontrol_resourcesiphon", "Hatch Breaker Limpet Controller"),
     ("int_dronecontrol_prospector", "Prospector Limpet Controller"),
+    ("int_cargorack", "Cargo Rack"),
+    ("int_modulereinforcement", "Module Reinforcement Package"),
     ("hpt_shieldbooster", "Shield Booster"),
     ("hpt_chafflauncher", "Chaff Launcher"),
     ("hpt_electroniccountermeasure", "Electronic Countermeasure"),
@@ -516,6 +544,9 @@ const ITEM_PREFIXES: &[(&str, &str)] = &[
     ("hpt_dumbfiremissilerack", "Missile Rack"),
     ("hpt_minelauncher", "Mine Launcher"),
     ("hpt_advancedtorppylon", "Torpedo Pylon"),
+    ("hpt_causticmissile", "Enzyme Missile Rack"),
+    ("hpt_mining_abrblstr", "Abrasion Blaster"),
+    ("hpt_mininglaser", "Mining Laser"),
 ];
 
 /// Short/legacy names (as name keys) → module type.
@@ -1043,8 +1074,11 @@ mod tests {
         assert_eq!(module_type("Surface Scanner"), Some("Detailed Surface Scanner"));
         assert_eq!(module_type("multi-cannon"), Some("Multi-cannon"));
         assert_eq!(module_type("int_guardianfsdbooster_size5"), None);
-        assert_eq!(module_type("hpt_mininglaser_fixed_small"), None);
-        assert_eq!(blueprints_for_module("hpt_mininglaser_fixed_small").len(), 0);
+        assert_eq!(module_type("int_fueltank_size5_class3"), None);
+        assert_eq!(blueprints_for_module("int_fueltank_size5_class3").len(), 0);
+        // Mining lasers only have the Merc blueprint.
+        assert_eq!(module_type("hpt_mininglaser_fixed_small"), Some("Mining Laser"));
+        assert_eq!(blueprints_for_module("hpt_mininglaser_fixed_small").len(), 1);
         // Every blueprint/experimental module is canonical.
         for b in blueprints() {
             assert!(MODULE_TYPES.contains(&b.module.as_str()), "{}", b.module);
@@ -1054,5 +1088,26 @@ mod tests {
                 assert!(MODULE_TYPES.contains(&m.as_str()), "{m}");
             }
         }
+    }
+
+    #[test]
+    fn merc_blueprints() {
+        assert_eq!(blueprints().iter().filter(|b| b.is_merc()).count(), 29);
+        let rack = blueprint_for("int_cargorack_size5_class1", "CargoRackS5C1_Extended").unwrap();
+        assert_eq!((rack.module.as_str(), rack.min_grade(), rack.max_grade()), ("Cargo Rack", 2, 4));
+        assert_eq!(rack.merc_module.as_deref(), Some("5E Extended Cargo Rack"));
+        assert_eq!((rack.merc_coins_for(1), rack.merc_coins_for(2), rack.merc_coins_for(4)), (0, 10, 40));
+        assert!(rack.grade(1).unwrap().is_empty());
+        assert_eq!(ing(rack, 2), vec![("manganese", 1), ("mechanicalscrap", 1), ("vanadium", 1)]);
+        assert!(rack.engineers_for_grade(4).any(|e| e.engineer == "Ram Tah"));
+        // Scoop Rate Enhanced fits any fuel scoop, from grade 1.
+        let scoop = blueprint("fuelscoop_efficiency").unwrap();
+        assert_eq!((scoop.min_grade(), scoop.merc_module.as_deref(), scoop.merc_coins_for(5)), (1, None, 30));
+        // Merc seeker racks are filed with the missile-rack blueprints.
+        let seekers = blueprints_for_module("hpt_basicmissilerack_fixed_large");
+        assert!(seekers.iter().any(|b| b.is("seekermissileracklarge_exposingmissiles")));
+        // Ordinary blueprints cost no coins, and Merc blueprints leave the engineers' module grades alone.
+        assert!(!blueprint("FSD_LongRange").unwrap().is_merc());
+        assert_eq!(engineer_by_name("Juri Ishmaak").unwrap().max_grade_for("Missile Rack"), Some(3));
     }
 }

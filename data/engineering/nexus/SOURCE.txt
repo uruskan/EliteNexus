@@ -26,6 +26,8 @@ Derived from (see the SOURCE.txt / LICENSE files next to each input):
     against material.csv / commodity.csv / rare_commodity.csv / microresources.csv.
     No licence declared upstream (see data/fdevids/SOURCE.txt).
 
+Merc blueprints (bought with Merc Coins) come from the MERC table in the converter.
+
 Corrections applied on top of the sources (docs/research/engineering.md §6.3, wiki-verified):
   * Juri Ishmaak added up to G3 on Kill Warrant, Manifest and Frame Shift Wake Scanner blueprints.
   * Lori Jameson Life Support capped at G4 (EDEngineer says G5).

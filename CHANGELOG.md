@@ -5,6 +5,12 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+### Added
+- **Engineering**: Merc blueprints, bought from engineers with Merc Coins, are in the blueprint planner: Extended cargo
+  racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
+  racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
+  Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
+
 ## [0.7.3-beta.2] - 2026-10-25
 
 A second beta of 0.7.3: the compact view becomes the **overlay**, a small island at the top of the game's screen

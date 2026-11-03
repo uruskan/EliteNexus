@@ -37,13 +37,18 @@ pub struct EngineeringUi {
 }
 
 impl EngineeringUi {
-    /// `--tab` for screenshot runs: materials, engineers, suits or synthesis.
+    /// `--tab` for screenshot runs: materials, engineers, suits, synthesis, or merc (the planner on a
+    /// Merc blueprint).
     pub fn new(tab: Option<&str>) -> Self {
         let tab = match tab {
             Some("materials") => Tab::Materials,
             Some("engineers") => Tab::Engineers,
             Some("suits") => Tab::Odyssey,
             Some("synthesis") => Tab::Synthesis,
+            Some("merc") => {
+                let blueprint = Some("cargoracks5c1_extended".into());
+                return EngineeringUi { module: "Cargo Rack".into(), blueprint, ..Default::default() };
+            }
             _ => Tab::Planner,
         };
         EngineeringUi { tab, ..Default::default() }
@@ -131,8 +136,10 @@ fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut V
             let bps = eng::blueprints_for_module(&st.module);
             ui.horizontal_wrapped(|ui| {
                 for bp in &bps {
-                    if crate::widgets::pill(ui, st.blueprint.as_deref() == Some(bp.symbol.as_str()), &bp.name).clicked() {
+                    let label = if bp.is_merc() { format!("{} {}", icon::COINS, bp.name) } else { bp.name.clone() };
+                    if crate::widgets::pill(ui, st.blueprint.as_deref() == Some(bp.symbol.as_str()), &label).clicked() {
                         st.blueprint = Some(bp.symbol.clone());
+                        (st.from, st.to) = (bp.min_grade(), bp.max_grade());
                     }
                 }
             });
@@ -142,11 +149,15 @@ fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut V
             };
             blueprint_detail(ui, gs, bp, &inv);
             ui.add_space(6.0);
+            // Merc blueprints on MercGear start at G2, and some blueprints stop below G5.
+            let grades = bp.min_grade()..=bp.max_grade();
+            st.from = st.from.clamp(*grades.start(), *grades.end());
+            st.to = st.to.clamp(*grades.start(), *grades.end());
             ui.horizontal(|ui| {
                 ui.label("Grades");
-                ui.add(egui::DragValue::new(&mut st.from).range(1..=5));
+                ui.add(egui::DragValue::new(&mut st.from).range(grades.clone()));
                 ui.label("to");
-                ui.add(egui::DragValue::new(&mut st.to).range(1..=5));
+                ui.add(egui::DragValue::new(&mut st.to).range(grades));
                 ui.label("rolls/grade");
                 ui.add(egui::DragValue::new(&mut st.rolls).range(1..=10));
             });
@@ -181,20 +192,21 @@ fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut V
             let mut any = false;
             for m in &ship.modules {
                 let Some(e) = &m.engineering else { continue };
-                if e.level >= 5 {
+                let Some(bp) = eng::blueprint_for(&m.item, &e.blueprint).or_else(|| eng::blueprint(&e.blueprint)) else { continue };
+                let top = bp.max_grade();
+                if e.level >= u32::from(top) {
                     continue;
                 }
-                let Some(bp) = eng::blueprint_for(&m.item, &e.blueprint).or_else(|| eng::blueprint(&e.blueprint)) else { continue };
                 any = true;
                 ui.horizontal(|ui| {
-                    ui.label(format!("{} — {} G{} → G5", nexus_data::outfitting::display_name(&m.item), bp.name, e.level));
+                    ui.label(format!("{} — {} G{} → G{top}", nexus_data::outfitting::display_name(&m.item), bp.name, e.level));
                     if ui.small_button(icon::PLUS).clicked() {
                         wishlist.push(WishItem {
                             label: format!("{} — {}", nexus_data::outfitting::display_name(&m.item), bp.name),
                             blueprint: bp.symbol.clone(),
                             module: eng::module_type(&m.item).unwrap_or("").to_string(),
-                            from: (e.level + 1).min(5) as u8,
-                            to: 5,
+                            from: (e.level + 1).min(u32::from(top)) as u8,
+                            to: top,
                             rolls: 3,
                             experimental: None,
                         });
@@ -203,7 +215,7 @@ fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut V
                 });
             }
             if !any {
-                ui.label(RichText::new("Every engineered module on this ship is already G5.").color(pal::DIM));
+                ui.label(RichText::new("Every engineered module on this ship is already at its top grade.").color(pal::DIM));
             }
         });
 
@@ -235,9 +247,11 @@ fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut V
         ui.add_space(8.0);
         // Total requirements.
         let mut need: Vec<(String, u32)> = Vec::new();
+        let mut coins = 0u32;
         for w in wishlist.iter() {
             if let Some(bp) = eng::blueprint_for(&w.module, &w.blueprint).or_else(|| eng::blueprint(&w.blueprint)) {
                 need.extend(nexus_data::trader::blueprint_shopping(bp, w.from, w.to, w.rolls));
+                coins = coins.saturating_add(nexus_data::trader::blueprint_merc_coins(bp, w.from, w.to, w.rolls));
             }
             if let Some(x) = w.experimental.as_deref().and_then(eng::experimental) {
                 need.extend(x.cost.iter().map(|i| (i.symbol.clone(), i.count)));
@@ -258,6 +272,18 @@ fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut V
             let total: u32 = merged.iter().map(|(_, n)| *n).sum();
             let have_total: u32 = merged.iter().map(|(s, n)| (*inv.get(s).unwrap_or(&0)).clamp(0, i64::from(*n)) as u32).sum();
             bar(ui, have_total as f32 / total.max(1) as f32, pal::GOOD, 10.0, Some(&format!("{have_total} / {total} materials in hand")));
+            if coins > 0 {
+                ui.horizontal_wrapped(|ui| match merc_coin_balance(gs) {
+                    Some(have) => {
+                        let col = if have >= u64::from(coins) { pal::GOOD } else { pal::WARN };
+                        ui.label(RichText::new(format!("{} {have} / {coins} Merc Coins", icon::COINS)).color(col));
+                        ui.label(RichText::new("(balance at your last login)").small().color(pal::DIM));
+                    }
+                    None => {
+                        ui.label(RichText::new(format!("{} {coins} Merc Coins", icon::COINS)).color(pal::TEXT));
+                    }
+                });
+            }
             Grid::new("shopping").num_columns(4).striped(true).spacing([12.0, 3.0]).show(ui, |ui| {
                 for (sym, n) in &merged {
                     let have = *inv.get(sym).unwrap_or(&0);
@@ -300,15 +326,33 @@ fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut V
     changed
 }
 
+/// Merc Coins at the last login: the journal's Statistics event is the only place the game writes them.
+fn merc_coin_balance(gs: &GameState) -> Option<u64> {
+    gs.cmdr.statistics.as_ref()?.bank_account.get("MercCoins_Current")?.as_u64()
+}
+
 fn blueprint_detail(ui: &mut Ui, gs: &GameState, bp: &Blueprint, inv: &HashMap<String, i64>) {
     ui.label(RichText::new(&bp.name).font(display(18.0)));
-    for (gi, ingredients) in bp.grades.iter().enumerate() {
+    for (grade, ingredients) in (1u8..).zip(&bp.grades).filter(|(_, g)| !g.is_empty()) {
         ui.horizontal_wrapped(|ui| {
-            badge(ui, &format!("G{}", gi + 1), pal::PURPLE);
+            badge(ui, &format!("G{grade}"), pal::PURPLE);
             for ing in ingredients {
                 ingredient_line(ui, ing, *inv.get(&ing.symbol.to_ascii_lowercase()).unwrap_or(&0));
             }
+            let coins = bp.merc_coins_for(grade);
+            if coins > 0 {
+                ui.label(RichText::new(format!("{} {coins} Merc Coins", icon::COINS)).color(pal::TEXT));
+            }
         });
+    }
+    if bp.is_merc() {
+        let text = match &bp.merc_module {
+            Some(m) => format!(
+                "Merc blueprint, only for the {m} bought with Merc Coins in outfitting (it comes at G1). Every roll costs Merc Coins as well as materials."
+            ),
+            None => "Merc blueprint: every roll costs Merc Coins as well as materials.".into(),
+        };
+        crate::widgets::footnote(ui, &text);
     }
     if let Some(effects) = bp.effects.last() {
         ui.horizontal_wrapped(|ui| {

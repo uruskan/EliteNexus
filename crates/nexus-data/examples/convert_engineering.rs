@@ -9,6 +9,7 @@
 //!   engineers (locations, requirements), synthesis, technology broker, Odyssey upgrades/mods,
 //!   ingredient short codes (`MCMRType.cs`).
 //! * `fdevids/engineers.csv` — EDCD/FDevIDs: journal `EngineerID`, system address, market id.
+//! * [`MERC`] below: the Merc blueprints, bought with Merc Coins.
 //!
 //! Output: `engineering/nexus/engineering.json` (one record per line) which the library embeds.
 //!
@@ -665,6 +666,296 @@ fn mod_name(symbol: &str, edd_name: &str) -> String {
     }
 }
 
+/// A Merc blueprint: bought from the engineer, and each roll costs Merc Coins as well as materials.
+/// Those for a MercGear module start at grade 2 (the module is bought at grade 1) and fit only it.
+struct Merc {
+    module: &'static str,
+    /// Journal `BlueprintName`, matched case-insensitively.
+    symbol: &'static str,
+    name: &'static str,
+    /// The MercGear module it is for; `None` = any module of the type.
+    merc_module: Option<&'static str>,
+    first_grade: u8,
+    /// One roll per grade from `first_grade` up: (ingredients as short codes, Merc Coins).
+    grades: &'static [(&'static str, u32)],
+    /// (engineer, highest grade)
+    engineers: &'static [(&'static str, u8)],
+}
+
+const fn merc(
+    module: &'static str,
+    symbol: &'static str,
+    name: &'static str,
+    merc_module: Option<&'static str>,
+    first_grade: u8,
+    grades: &'static [(&'static str, u32)],
+    engineers: &'static [(&'static str, u8)],
+) -> Merc {
+    Merc { module, symbol, name, merc_module, first_grade, grades, engineers }
+}
+
+const MERC_PLASMA: &[(&str, u32)] = &[
+    ("1P,1HCW", 10),
+    ("1As,1HCW,1HDP", 15),
+    ("1As,1HDP,1PA", 20),
+    ("1HDP,1PA,1RFC,1CCom", 25),
+    ("1Tc,1ThA,1MSC,1EFW", 30),
+];
+const MERC_EXTENDED: &[(&str, u32)] = &[("1MS,1V,1Mn", 10), ("1MS,1V,1Nb", 20), ("1ME,1HDC,1Sn,1Nb", 40)];
+const MERC_SCREAMING: &[(&str, u32)] =
+    &[("1C,1MS,1ME", 10), ("1C,1ME,1Sn", 15), ("1V,1CIF,1MC,1SFP", 25), ("1HDC,1MC,1CCom,1EFW", 50)];
+const MERC_LOCKDOWN: &[(&str, u32)] =
+    &[("1MS,1Ni,1V", 10), ("1MS,1ME,1W", 15), ("1MCF,1W,1Mo,1ThA", 25), ("1MC,1Mo,1Tc,1MSC", 45)];
+
+const LASER_ENGINEERS: &[(&str, u8)] = &[("Broo Tarquin", 5), ("Mel Brandon", 5), ("The Dweller", 3)];
+const MINING_ENGINEERS: &[(&str, u8)] = &[("Juri Ishmaak", 5), ("Liz Ryder", 3)];
+const SEEKER_ENGINEERS: &[(&str, u8)] = &[("Juri Ishmaak", 5), ("Petra Olmanova", 5), ("Liz Ryder", 3)];
+const DISTRIBUTOR_ENGINEERS: &[(&str, u8)] =
+    &[("The Dweller", 5), ("Etienne Dorn", 5), ("Hera Tani", 3), ("Marco Qwent", 3)];
+const CARGO_ENGINEERS: &[(&str, u8)] = &[("Bill Turner", 4), ("Ram Tah", 4), ("Tiana Fortune", 4)];
+const FRAGMENT_ENGINEERS: &[(&str, u8)] =
+    &[("Marsha Hicks", 5), ("Zacariah Nemo", 5), ("Tod 'The Blaster' McQuinn", 3)];
+
+const MERC: &[Merc] = &[
+    merc(
+        "Abrasion Blaster",
+        "abrasionblaster_farreaching",
+        "Far-reaching",
+        Some("1D Far-Reaching Abrasion Blaster"),
+        2,
+        &[("1S,1HDP,1MCF", 5), ("1Cr,1MCF,1HE", 5), ("1MCF,1CPo,1Se,1HV", 10), ("1CIF,1ThA,1BiC,1PHR", 20)],
+        MINING_ENGINEERS,
+    ),
+    merc(
+        "Beam Laser",
+        "beamlaser_overloaded",
+        "Overloaded",
+        Some("4A Overloaded Beam Laser"),
+        2,
+        &[("1Cr,1CCo,1Ni", 10), ("1Cr,1CCo,1EA", 15), ("1EA,1HDC,1PCa,1FoC", 25), ("1Zr,1MSC,1EFW,1FoC", 50)],
+        LASER_ENGINEERS,
+    ),
+    merc("Beam Laser", "beamlaser_thermalplasmaconversion", "Plasma conversion", None, 1, MERC_PLASMA, LASER_ENGINEERS),
+    merc(
+        "Burst Laser",
+        "burstlaser_regenerative",
+        "Regenerative",
+        Some("2F Regenerative Burst Laser"),
+        2,
+        &[("1Ni,1MCF,1CCo", 10), ("1Ni,1CCo,1EA", 10), ("1CCe,1EA,1PCa,1RFC", 20), ("1EFW,1CPo,1PCa,1SS", 40)],
+        LASER_ENGINEERS,
+    ),
+    merc("Burst Laser", "burstlaser_thermalplasmaconversion", "Plasma conversion", None, 1, MERC_PLASMA, LASER_ENGINEERS),
+    merc(
+        "Cannon",
+        "cannon_forceimpact",
+        "Force impact",
+        Some("4B Force Impact Cannon"),
+        2,
+        &[("1V,1CCo,1MS", 10), ("1Nb,1CCo,1MS", 15), ("1Nb,1CCe,1HDC,1PCa", 20), ("1EFW,1CPo,1PCa,1FPC", 45)],
+        &[("Marsha Hicks", 5), ("The Sarge", 5), ("Tod 'The Blaster' McQuinn", 2)],
+    ),
+    merc(
+        "Cargo Rack",
+        "cargoracks5c1_extended",
+        "Extended (5E)",
+        Some("5E Extended Cargo Rack"),
+        2,
+        MERC_EXTENDED,
+        CARGO_ENGINEERS,
+    ),
+    merc(
+        "Cargo Rack",
+        "cargoracks6c1_extended",
+        "Extended (6E)",
+        Some("6E Extended Cargo Rack"),
+        2,
+        MERC_EXTENDED,
+        CARGO_ENGINEERS,
+    ),
+    merc(
+        "Detailed Surface Scanner",
+        "detailedsurfacescanner_longrange",
+        "Long range",
+        Some("Long Range Detailed Surface Scanner"),
+        2,
+        &[("1MS,1Ge,1MCF", 5), ("1MS,1Ge,1PA", 5), ("1ME,1Nb,1PA,1PLA", 10), ("1ME,1MC,1Sn,1PRA", 20)],
+        &[("Etienne Dorn", 5)],
+    ),
+    merc(
+        "Enzyme Missile Rack",
+        "enzymemissilerack_highyield",
+        "High-yield",
+        Some("2B High-Yield Enzyme Missile Rack"),
+        2,
+        &[("1MS,1V,1CCo", 10), ("1MS,1V,1EA", 15), ("1ME,1HDC,1Sn,1PCa", 20), ("1MC,1FPC,1EFW,1MSC", 45)],
+        MINING_ENGINEERS,
+    ),
+    merc(
+        "Fragment Cannon",
+        "fragmentcannonsmall_doublescreaming",
+        "Double screaming (1E)",
+        Some("1E Double Screaming Fragment Cannon"),
+        2,
+        MERC_SCREAMING,
+        FRAGMENT_ENGINEERS,
+    ),
+    merc(
+        "Fragment Cannon",
+        "fragmentcannonlarge_doublescreaming",
+        "Double screaming (3C)",
+        Some("3C Double Screaming Fragment Cannon"),
+        2,
+        MERC_SCREAMING,
+        FRAGMENT_ENGINEERS,
+    ),
+    merc(
+        "Fuel Scoop",
+        "fuelscoop_efficiency",
+        "Scoop rate enhanced",
+        None,
+        1,
+        &[("1P,1GR", 10), ("1Cr,1GR,1CP", 15), ("1Cr,1CP,1CCe", 20), ("2CP,1CHD,1PLA", 25), ("1Te,1CM,1PHR,1PRA", 30)],
+        &[("Marsha Hicks", 5), ("Lori Jameson", 4), ("Bill Turner", 3)],
+    ),
+    merc(
+        "Mining Laser",
+        "mininglaser_longrange",
+        "Long range",
+        Some("1D Long Range Mining Laser"),
+        2,
+        &[("1S,1HDP,1MCF", 5), ("1Cr,1MCF,1HE", 5), ("1MCF,1CPo,1Se,1HV", 10), ("1CIF,1ThA,1BiC,1PHR", 25)],
+        MINING_ENGINEERS,
+    ),
+    merc(
+        "Missile Rack",
+        "seekermissilerack_drag",
+        "Drag",
+        Some("2B Drag Seeker Missile Rack"),
+        2,
+        &[("1MS,1V,1HDP", 10), ("1MS,1ME,1PAll", 10), ("1MCF,1MC,1HDC,1ThA", 20), ("1MC,1FPC,1Tc,1MSC", 40)],
+        SEEKER_ENGINEERS,
+    ),
+    merc(
+        "Missile Rack",
+        "seekermissileracklarge_exposingmissiles",
+        "Exposing",
+        Some("3A Exposing Missiles"),
+        2,
+        &[("1V,1HDP,1MS", 10), ("1V,1SLF,1PAll", 15), ("1MCF,1PAll,1ThA", 25), ("1Tc,1CCom,1GR,1ThA", 45)],
+        SEEKER_ENGINEERS,
+    ),
+    merc(
+        "Missile Rack",
+        "seekermissilerack_lightweightthermal",
+        "Lightweight thermal",
+        Some("2B Lightweight Thermal Seeker Missile Rack"),
+        2,
+        &[("1MS,1V,1Mn", 10), ("1MS,1ME,1CCe", 10), ("1MCF,1PA,1PLA,1ThA", 20), ("1MC,1PLA,1PRA,1MSC", 40)],
+        SEEKER_ENGINEERS,
+    ),
+    merc(
+        "Missile Rack",
+        "seekermissilerackmedium_lockdown",
+        "Lockdown (2B)",
+        Some("2B Lockdown Seeker Missile Rack"),
+        2,
+        MERC_LOCKDOWN,
+        SEEKER_ENGINEERS,
+    ),
+    merc(
+        "Missile Rack",
+        "seekermissileracklarge_lockdown",
+        "Lockdown (3A)",
+        Some("3A Lockdown Seeker Missile Rack"),
+        2,
+        MERC_LOCKDOWN,
+        SEEKER_ENGINEERS,
+    ),
+    merc(
+        "Module Reinforcement Package",
+        "modulereinforcement_heavyduty",
+        "Heavy duty",
+        Some("5D Heavy Duty Module Reinforcement Package"),
+        2,
+        &[("1C,1Fe,1SHE", 5), ("1Fe,1SHE,1HDC", 5), ("1SHE,1HDC,1FPC,1W", 10), ("1CoS,1Ru,1PHR,1FCC", 25)],
+        &[("Selene Jean", 5), ("Petra Olmanova", 5)],
+    ),
+    merc(
+        "Multi-cannon",
+        "multicannon_rapid",
+        "Rapid phase",
+        Some("2E Rapid Phase Multi-cannon"),
+        2,
+        &[("1MS,1HDP,1CCo", 10), ("1SLF,1ME,1PAll", 15), ("1MCF,1MC,1CCe,1ThA", 20), ("1PAll,1CCom,1CCe,1Tc", 45)],
+        &[("Tod 'The Blaster' McQuinn", 5), ("Marsha Hicks", 5), ("Zacariah Nemo", 3)],
+    ),
+    merc(
+        "Power Distributor",
+        "powerdistributor_balanced",
+        "Balanced",
+        Some("5A Balanced Power Distributor"),
+        2,
+        &[("1S,1SLF,1CP", 5), ("1SLF,1CP,1HDC", 10), ("1CP,1HDC,1Se,1CM", 15), ("1FPC,1CM,1MSC,1EFC", 25)],
+        DISTRIBUTOR_ENGINEERS,
+    ),
+    merc(
+        "Power Distributor",
+        "powerdistributors3c2_supportfocused",
+        "Support focused (3D)",
+        Some("3D Support Focused Power Distributor"),
+        2,
+        &[("1S,1SLF,1CCo", 5), ("1ABSD,1Cr,1EA", 5), ("1USA,1MCF,1Se,1PCa", 10), ("1CSD,1Cd,1FPC,1MSC", 15)],
+        DISTRIBUTOR_ENGINEERS,
+    ),
+    merc(
+        "Power Distributor",
+        "powerdistributors3c5_supportfocused",
+        "Support focused (3A)",
+        Some("3A Support Focused Power Distributor"),
+        2,
+        &[("1S,1SLF,1CCo", 5), ("1ABSD,1Cr,1EA", 5), ("1USA,1MCF,1Se,1PCa", 10), ("1CSD,1Cd,1FPC,1MSC", 20)],
+        DISTRIBUTOR_ENGINEERS,
+    ),
+    merc(
+        "Power Distributor",
+        "powerdistributors4c2_supportfocused",
+        "Support focused (4D)",
+        Some("4D Support Focused Power Distributor"),
+        2,
+        &[("1S,1SLF,1CCo", 5), ("1ABSD,1Cr,1EA", 5), ("1USA,1MCF,1Se,1PCa", 10), ("1CSD,1Cd,1FPC,1MSC", 20)],
+        DISTRIBUTOR_ENGINEERS,
+    ),
+    merc(
+        "Power Distributor",
+        "powerdistributors4c5_supportfocused",
+        "Support focused (4A)",
+        Some("4A Support Focused Power Distributor"),
+        2,
+        &[("1S,1SLF,1CCo", 5), ("1ABSD,1Cr,1EA", 5), ("1USA,1MCF,1Se,1PCa", 10), ("1CSD,1Cd,1FPC,1MSC", 25)],
+        DISTRIBUTOR_ENGINEERS,
+    ),
+    merc(
+        "Power Distributor",
+        "powerdistributors6c5_supportfocused",
+        "Support focused (6A)",
+        Some("6A Support Focused Power Distributor"),
+        2,
+        &[("1S,1SLF,1CCo", 5), ("1ABSD,1Cr,1EA", 10), ("1USA,1MCF,1Se,1PCa", 15), ("1CSD,1Cd,1FPC,1MSC", 30)],
+        DISTRIBUTOR_ENGINEERS,
+    ),
+    merc("Pulse Laser", "pulselaser_thermalplasmaconversion", "Plasma conversion", None, 1, MERC_PLASMA, LASER_ENGINEERS),
+    merc(
+        "Rail Gun",
+        "railgun_longshot",
+        "Enduring feedback",
+        Some("2B Enduring Feedback Rail Gun"),
+        2,
+        &[("1MS,1S,1MCF", 10), ("1S,1MCF,1Nb", 15), ("1MCF,1Nb,1CPo,1Sn", 25), ("1MC,1ThA,1MSC,1BiC", 50)],
+        &[("Tod 'The Blaster' McQuinn", 5), ("Etienne Dorn", 5), ("The Sarge", 3)],
+    ),
+];
+
 /// EDD writes a couple of system names in capitals ("DERISO") → "Deriso".
 fn tidy_system(s: &str) -> String {
     if s.len() > 3 && s.chars().all(|c| !c.is_ascii_lowercase()) && s.chars().any(|c| c.is_ascii_uppercase()) {
@@ -759,6 +1050,9 @@ fn main() {
         grades: BTreeMap<u8, Vec<(String, u32)>>,
         effects: BTreeMap<u8, Value>,
         engineers: BTreeMap<String, u8>,
+        /// Merc Coins per roll from grade 1 (empty for ordinary blueprints).
+        merc_coins: Vec<u32>,
+        merc_module: Option<&'static str>,
     }
     let mut bps: Vec<Bp> = Vec::new();
     for r in &ed {
@@ -800,6 +1094,8 @@ fn main() {
                     grades: BTreeMap::new(),
                     effects: BTreeMap::new(),
                     engineers: BTreeMap::new(),
+                    merc_coins: Vec::new(),
+                    merc_module: None,
                 });
                 bps.len() - 1
             }
@@ -928,6 +1224,8 @@ fn main() {
                         grades: grades.iter().map(|(g, (i, _))| (*g, i.clone())).collect(),
                         effects: BTreeMap::new(),
                         engineers,
+                        merc_coins: Vec::new(),
+                        merc_module: None,
                     });
                 }
                 _ => rep.add(
@@ -936,6 +1234,34 @@ fn main() {
                 ),
             }
         }
+    }
+    // Merc blueprints; grades below the first one stay as empty recipes, so index 0 is still grade 1.
+    for m in MERC {
+        let mut grades: BTreeMap<u8, Vec<(String, u32)>> = (1..m.first_grade).map(|g| (g, Vec::new())).collect();
+        let mut merc_coins = vec![0; usize::from(m.first_grade - 1)];
+        for (g, (ings, coins)) in (m.first_grade..).zip(m.grades) {
+            grades.insert(g, parse_codes(ings, &codes, &format!("Merc {} G{g}", m.symbol), &mut rep));
+            merc_coins.push(*coins);
+        }
+        let mut engineers = BTreeMap::new();
+        for (e, g) in m.engineers {
+            match canon_engineer(e, &fdev) {
+                Some(e) => {
+                    engineers.insert(e, *g);
+                }
+                None => rep.add("Unknown engineer names", format!("Merc {}: {e}", m.symbol)),
+            }
+        }
+        bps.push(Bp {
+            module: m.module,
+            name: m.name.to_string(),
+            symbol: m.symbol,
+            grades,
+            effects: BTreeMap::new(),
+            engineers,
+            merc_coins,
+            merc_module: m.merc_module,
+        });
     }
     bps.sort_by(|a, b| (a.module, &a.symbol).cmp(&(b.module, &b.symbol)));
 
@@ -1136,9 +1462,10 @@ fn main() {
             .unwrap_or_default();
         unlock_costs.insert(name, list);
     }
-    // Ship engineer specialities from the final blueprint data.
+    // Ship engineer specialities from the final blueprint data. Merc blueprints list their own
+    // engineers and leave the module grades alone (Juri Ishmaak takes Merc seekers to G5, missile racks to G3).
     let mut specialities: BTreeMap<String, BTreeMap<&'static str, u8>> = BTreeMap::new();
-    for bp in &bps {
+    for bp in bps.iter().filter(|b| b.merc_coins.is_empty()) {
         for (e, g) in &bp.engineers {
             let m = specialities.entry(e.clone()).or_default().entry(bp.module).or_insert(0);
             *m = (*m).max(*g);
@@ -1397,14 +1724,19 @@ fn main() {
         .map(|b| {
             let mut engs: Vec<(&String, &u8)> = b.engineers.iter().collect();
             engs.sort_by(|x, y| y.1.cmp(x.1).then(x.0.cmp(y.0)));
-            json!({
+            let mut v = json!({
                 "module": b.module,
                 "symbol": b.symbol,
                 "name": b.name,
                 "grades": b.grades.values().map(|g| ing_json(g)).collect::<Vec<_>>(),
                 "effects": b.effects.values().cloned().collect::<Vec<_>>(),
                 "engineers": engs.into_iter().map(|(e, g)| json!([e, g])).collect::<Vec<_>>(),
-            })
+            });
+            if !b.merc_coins.is_empty() {
+                v["merc_coins"] = json!(b.merc_coins);
+                v["merc_module"] = json!(b.merc_module);
+            }
+            v
         })
         .collect();
     let exp_json: Vec<Value> = exps

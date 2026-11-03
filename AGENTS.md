@@ -97,8 +97,8 @@ a layout changes.
 
 * `-Page`: a sidebar page (`Dashboard`, `Exploration`, `Exobiology`, `Navigation`, `Market`, `Settings`, ...).
 * `-Tab`: `abnormal`, `database`, ... (Market), `galaxy` (whole-galaxy map), `find`, `history`, `unsold`
-  (Exploration), `untouched`, `known` (Exobiology > Find planets), `materials`, `engineers`, `suits`, `synthesis`
-  (Engineering), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from
+  (Exploration), `untouched`, `known` (Exobiology > Find planets), `materials`, `engineers`, `suits`, `synthesis`,
+  `merc` (Engineering), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from
   that theme; add `,options` to open the protection's options; nothing is written). `find`, `untouched` and `known`
   start their search on the first frame: add `-Delay 15` to `-Delay 25` for Spansh to answer.
 * HUD & cockpit with a game folder of your own making: set `ELITE_NEXUS_GAME_DIR` to a folder holding a dummy

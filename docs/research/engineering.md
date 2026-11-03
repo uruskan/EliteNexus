@@ -385,7 +385,7 @@ On-foot engineers have no grades: each modification is a single upgrade. A suit 
 * **Newer module sources:**
   * **Pre-engineered** items from the tech broker, e.g. "Engineered FSD (SCO) V1" classes 2–7 (needs a Titan Drive Component) and the AX/enzyme weapons (Appendix A4 / EDD list).
   * **MercGear** modules (2026, FDevIDs `outfitting.csv` category `mercgear`) bought with **MercCoins**. Journal: `BuyMercCoinsPrice` on Outfitting/ModuleBuy, `Statistics.Bank_Account.MercCoins_*`.
-  * EDD reserves a `MercCoins` field on recipes ("future use"), which suggests MercCoin-priced engineering may follow. Verify in-game before modelling it.
+  * **Merc blueprints** are bought from engineers, and every roll costs Merc Coins as well as materials. Those for a MercGear module start at G2 (the module is bought at G1) and fit only that module; Plasma Conversion (lasers) and Scoop Rate Enhanced (fuel scoops) fit ordinary modules from G1. The planner's data is the `MERC` table in `convert_engineering.rs`.
 
 ### 6.2 Module types covered
 

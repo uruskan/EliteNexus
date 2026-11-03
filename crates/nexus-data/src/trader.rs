@@ -348,6 +348,13 @@ pub fn blueprint_shopping_rolls(blueprint: &Blueprint, rolls: &[(u8, u32)]) -> V
     out
 }
 
+/// Merc Coins for the same rolls as [`blueprint_shopping`] (0 for ordinary blueprints).
+pub fn blueprint_merc_coins(blueprint: &Blueprint, from_grade: u8, to_grade: u8, rolls_per_grade: u32) -> u32 {
+    (from_grade.max(1)..=to_grade.min(blueprint.max_grade()))
+        .map(|g| blueprint.merc_coins_for(g).saturating_mul(rolls_per_grade))
+        .fold(0, u32::saturating_add)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,6 +537,11 @@ mod tests {
         assert_eq!(blueprint_shopping(lr, 6, 9, 3), Vec::<(String, u32)>::new());
         let r = blueprint_shopping_rolls(lr, &[(4, 2), (5, 1)]);
         assert_eq!(r.iter().find(|(s, _)| s == "manganese").map(|(_, n)| *n), Some(2));
+        // Merc Coins: the 5E Extended cargo rack goes from G2 to G4 at 10, 20 and 40 coins a roll.
+        assert_eq!(blueprint_merc_coins(lr, 1, 5, 3), 0);
+        let rack = blueprint("cargoracks5c1_extended").unwrap();
+        assert_eq!(blueprint_merc_coins(rack, 1, 5, 3), (10 + 20 + 40) * 3);
+        assert_eq!(blueprint_shopping(rack, 1, 5, 1).iter().map(|(_, n)| n).sum::<u32>(), 3 + 3 + 4);
         // Plan the G5 list against an inventory.
         let plan = plan_shopping_with(
             &g5,
