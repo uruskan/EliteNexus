@@ -21,6 +21,10 @@ release time that section becomes the new version and the release workflow publi
   Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
   edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always
   fits, and the merits chart no longer slides away from its bars when dragged.
+- **Fleet: long module names stay in their column** (GitHub issue #4, with a screenshot). A name such as "8A Mk II
+  Supercharge Optimised Frame Shift Drive (SCO)" ran over the module's value. The Module column now widens to the
+  longest name when the window has room, and a name that still doesn't fit ends in "…" and shows whole when you hover
+  it.
 
 ## [0.7.3-beta.2] - 2026-10-25
 

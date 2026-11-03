@@ -165,12 +165,22 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) {
     }
     let mut modules: Vec<&ShipModule> = s.modules.iter().filter(|m| !m.item.contains("_cockpit") && !m.slot.eq_ignore_ascii_case("VesselVoice") && !m.slot.contains("Paint") && !m.slot.contains("Decal") && !m.slot.contains("Name") && !m.slot.contains("Bobble") && !m.slot.contains("Livery")).collect();
     modules.sort_by(|a, b| slot_group(&a.slot).0.cmp(&slot_group(&b.slot).0).then(a.slot.cmp(&b.slot)));
+    // Slot and Module are as wide as their longest text, Module only as far as the room two engineering badges need
+    // allows; together they take at least the 370 they always had, so Engineering never starts further right. A name
+    // that still doesn't fit ends in "…" and shows whole on hover ("8A Mk II Supercharge Optimised Frame Shift Drive (SCO)").
+    let slots: Vec<String> = modules.iter().map(|m| nexus_data::outfitting::slot_display(&m.slot)).collect();
+    let names: Vec<String> = modules.iter().map(|m| nexus_data::outfitting::display_name(&m.item)).collect();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let widest = |texts: &[String]| texts.iter().map(|t| ui.painter().layout_no_wrap(t.clone(), font.clone(), pal::TEXT).size().x + 8.0).fold(0.0, f32::max);
+    let slot_w = widest(&slots).clamp(130.0, 180.0);
+    let room = ui.available_width() - slot_w - 80.0 - 360.0 - 3.0 * ui.spacing().item_spacing.x;
+    let module_w = widest(&names).min(room).max(370.0 - slot_w);
     TableBuilder::new(ui)
         .striped(true)
         .resizable(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(130.0))
-        .column(Column::initial(240.0))
+        .column(Column::exact(slot_w).clip(true))
+        .column(Column::exact(module_w).clip(true))
         .column(Column::initial(80.0))
         .column(Column::remainder().at_least(200.0))
         .header(30.0, |mut h| {
@@ -182,13 +192,14 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) {
         })
         .body(|body| {
             body.rows(32.0, modules.len(), |mut row| {
-                let m = modules[row.index()];
+                let i = row.index();
+                let m = modules[i];
                 row.col(|ui| {
-                    ui.label(RichText::new(nexus_data::outfitting::slot_display(&m.slot)).color(pal::DIM));
+                    ui.add(egui::Label::new(RichText::new(&slots[i]).color(pal::DIM)).truncate());
                 });
                 row.col(|ui| {
-                    let t = RichText::new(nexus_data::outfitting::display_name(&m.item));
-                    ui.label(if m.on { t } else { t.color(pal::FAINT) });
+                    let t = RichText::new(&names[i]);
+                    ui.add(egui::Label::new(if m.on { t } else { t.color(pal::FAINT) }).truncate());
                 });
                 row.col(|ui| {
                     if let Some(v) = m.value {
