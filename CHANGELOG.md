@@ -10,6 +10,8 @@ release time that section becomes the new version and the release workflow publi
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
+- **Fleet** shows the landing pad each ship needs (S, M or L), in the ship list and on its Loadout card (asked for by
+  Alvarrune on the Frontier Forums).
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain

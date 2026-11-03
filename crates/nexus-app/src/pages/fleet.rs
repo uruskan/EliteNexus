@@ -75,7 +75,12 @@ fn ship_tile(ui: &mut Ui, gs: &GameState, s: &Ship, selected: bool, st: &mut Fle
                     badge(ui, "Hot", pal::BAD);
                 }
             });
-            ui.label(RichText::new(&s.type_name).color(pal::DIM));
+            // A hull newer than this build's ship list has no pad to show, rather than a wrong one.
+            let kind = match nexus_data::ships::known_pad_size(&s.ship_type) {
+                Some(pad) => format!("{} · {pad} pad", s.type_name),
+                None => s.type_name.clone(),
+            };
+            ui.label(RichText::new(kind).color(pal::DIM));
             ui.horizontal(|ui| {
                 if s.max_jump_range > 0.0 {
                     ui.label(RichText::new(format!("{} {:.1} ly", icon::ARROW_FAT_RIGHT, s.max_jump_range)).color(pal::ACCENT_SOFT));
@@ -154,6 +159,14 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) {
             kv_inline(ui, "Hull", format!("{:.0}%", s.hull_health * 100.0));
             kv_inline(ui, "Loadout seen", if s.loadout_ts.is_zero() { "never".into() } else { s.loadout_ts.to_local_string("%d %b %Y") });
             ui.end_row();
+            if let Some(pad) = nexus_data::ships::known_pad_size(&s.ship_type) {
+                kv_inline(ui, "Landing pad", match pad {
+                    'L' => "Large",
+                    'M' => "Medium",
+                    _ => "Small",
+                }.into());
+                ui.end_row();
+            }
         });
     });
     ui.add_space(8.0);
