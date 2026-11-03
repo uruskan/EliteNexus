@@ -611,44 +611,61 @@ fn surface_mining_from_history_has_no_positions() {
     assert_eq!(gs.mining.spots_rev, 0);
 }
 
-/// A system is done once every body is found, the planets worth mapping are mapped and every biological signal is analysed.
+/// A system is done once every body is found, the planets worth mapping are mapped and every biological signal is
+/// analysed: each of the three is needed, so each is checked as the one still missing.
 #[test]
 fn fully_explored_needs_scan_map_and_bio() {
     const HIGH_VALUE: i64 = 1_000_000;
+    let scans = [
+        r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"AutoScan", "BodyName":"Alpha", "BodyID":0, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":0.0, "StarType":"K", "StellarMass":0.7, "WasDiscovered":true, "WasMapped":false }"#,
+        r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 1", "BodyID":1, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":400.0, "PlanetClass":"Earthlike body", "MassEM":1.0, "TerraformState":"", "Landable":false, "WasDiscovered":false, "WasMapped":false }"#,
+        r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 2", "BodyID":2, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":10.0, "PlanetClass":"Rocky body", "MassEM":0.1, "Landable":true, "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
+        r#"{ "timestamp":"2026-10-01T10:03:10Z", "event":"FSSBodySignals", "BodyName":"Alpha 2", "BodyID":2, "SystemAddress":100, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":1 } ] }"#,
+    ];
+    let organic = |kind: &str, ts: &str| {
+        format!(
+            r#"{{ "timestamp":"{ts}", "event":"ScanOrganic", "ScanType":"{kind}", "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum", "Species":"$Codex_Ent_Stratum_07_Name;", "Species_Localised":"Stratum Tectonicas", "Variant":"$Codex_Ent_Stratum_07_K_Name;", "Variant_Localised":"Stratum Tectonicas - Lime", "WasLogged":false, "SystemAddress":100, "Body":2 }}"#
+        )
+    };
+    let (log, sample, analyse) = (organic("Log", "2026-10-01T10:30:00Z"), organic("Sample", "2026-10-01T10:32:00Z"), organic("Analyse", "2026-10-01T10:34:00Z"));
+    let found = [r#"{ "timestamp":"2026-10-01T10:04:00Z", "event":"FSSAllBodiesFound", "SystemName":"Alpha", "SystemAddress":100, "Count":3 }"#];
+    let mapped = [r#"{ "timestamp":"2026-10-01T10:10:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 1", "SystemAddress":100, "BodyID":1, "ProbesUsed":5, "EfficiencyTarget":7 }"#];
+    let analysed = [
+        r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"SAASignalsFound", "BodyName":"Alpha 2", "SystemAddress":100, "BodyID":2, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":1 } ], "Genuses":[ { "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum" } ] }"#,
+        log.as_str(),
+        sample.as_str(),
+        analyse.as_str(),
+    ];
+    let alpha = |m: &Model| m.active().unwrap().exploration.systems[&100].fully_explored(HIGH_VALUE);
     let mut m = Model::default();
     feed(&mut m, LOGIN);
-    let done = |m: &Model| m.active().unwrap().exploration.systems[&100].fully_explored(HIGH_VALUE);
-    feed(
-        &mut m,
-        &[
-            r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"AutoScan", "BodyName":"Alpha", "BodyID":0, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":0.0, "StarType":"K", "StellarMass":0.7, "WasDiscovered":true, "WasMapped":false }"#,
-            r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 1", "BodyID":1, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":400.0, "PlanetClass":"Earthlike body", "MassEM":1.0, "TerraformState":"", "Landable":false, "WasDiscovered":false, "WasMapped":false }"#,
-            r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 2", "BodyID":2, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":10.0, "PlanetClass":"Rocky body", "MassEM":0.1, "Landable":true, "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
-            r#"{ "timestamp":"2026-10-01T10:03:10Z", "event":"FSSBodySignals", "BodyName":"Alpha 2", "BodyID":2, "SystemAddress":100, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":1 } ] }"#,
-        ],
-    );
+    feed(&mut m, &scans);
     {
         let sys = &m.active().unwrap().exploration.systems[&100];
         assert!(sys.bodies[&1].value.mapped >= HIGH_VALUE, "the ELW is worth mapping");
         assert!(sys.bodies[&2].value.mapped < HIGH_VALUE, "the rocky bio body isn't");
         assert!(!sys.bodies[&2].bio_done());
     }
-    assert!(!done(&m), "the FSS hasn't found every body yet");
-    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:04:00Z", "event":"FSSAllBodiesFound", "SystemName":"Alpha", "SystemAddress":100, "Count":3 }"#]);
-    assert!(!done(&m), "the ELW isn't mapped");
-    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:10:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 1", "SystemAddress":100, "BodyID":1, "ProbesUsed":5, "EfficiencyTarget":7 }"#]);
-    assert!(!done(&m), "biology left on Alpha 2");
-    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"SAASignalsFound", "BodyName":"Alpha 2", "SystemAddress":100, "BodyID":2, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":1 } ], "Genuses":[ { "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum" } ] }"#]);
-    let organic = |kind: &str, ts: &str| {
-        format!(
-            r#"{{ "timestamp":"{ts}", "event":"ScanOrganic", "ScanType":"{kind}", "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum", "Species":"$Codex_Ent_Stratum_07_Name;", "Species_Localised":"Stratum Tectonicas", "Variant":"$Codex_Ent_Stratum_07_K_Name;", "Variant_Localised":"Stratum Tectonicas - Lime", "WasLogged":false, "SystemAddress":100, "Body":2 }}"#
-        )
-    };
-    feed(&mut m, &[&organic("Log", "2026-10-01T10:30:00Z"), &organic("Sample", "2026-10-01T10:32:00Z")]);
-    assert!(!done(&m), "two samples out of three");
-    feed(&mut m, &[&organic("Analyse", "2026-10-01T10:34:00Z")]);
+    feed(&mut m, &analysed[..3]);
+    assert!(!m.active().unwrap().exploration.systems[&100].bodies[&2].bio_done(), "two samples out of three");
+    feed(&mut m, &analysed[3..]);
     assert!(m.active().unwrap().exploration.systems[&100].bodies[&2].bio_done());
-    assert!(done(&m), "found, mapped and analysed");
+
+    // Two of the three done, then the third.
+    let steps: [(&[&str], &str); 3] = [(&found, "the FSS hasn't found every body"), (&mapped, "the ELW isn't mapped"), (&analysed, "biology left on Alpha 2")];
+    for (last, (lines, missing)) in steps.iter().enumerate() {
+        let mut m = Model::default();
+        feed(&mut m, LOGIN);
+        feed(&mut m, &scans);
+        for (i, (other, _)) in steps.iter().enumerate() {
+            if i != last {
+                feed(&mut m, other);
+            }
+        }
+        assert!(!alpha(&m), "{missing}");
+        feed(&mut m, lines);
+        assert!(alpha(&m), "found, mapped and analysed");
+    }
 
     // A star and a worthless icy body: nothing to map, nothing alive, so done as soon as every body is found.
     feed(
