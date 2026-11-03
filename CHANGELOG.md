@@ -31,6 +31,10 @@ release time that section becomes the new version and the release workflow publi
   wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
   game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The
   Missions page and Statistics › Income and spending now say so; the credits still show in your balance.
+- **Missions: the Active missions table fits the window.** Below about 1,450 pixels wide it was wider than the window:
+  Expires and Progress were cut off, and the cards under it ran past the window's edge too. Its columns now fit any
+  window size, and a mission, faction or destination too long for its column ends in "…" and shows whole when you
+  hover it.
 - **Ask can look back through your whole journal** (GitHub issue #4). Its journal search returned only the newest 15
   matching lines (40 at most, fewer when they were long), so a question about last week's jumps saw only the last day
   or two, and nothing said so. It can now search a period you name ("where did I go from 22 to 29 October?") and page

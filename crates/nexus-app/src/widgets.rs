@@ -456,13 +456,19 @@ pub fn bar(ui: &mut Ui, frac: f32, color: Color32, height: f32, text: Option<&st
 /// the next line.
 pub fn badge(ui: &mut Ui, text: &str, color: Color32) -> Response {
     let galley = ui.painter().layout_no_wrap(text.to_owned(), display(size::CAPTION), color);
-    let pad = Vec2::new(8.0, 3.0);
-    let (rect, resp) = ui.allocate_exact_size(galley.size() + pad * 2.0, Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(galley.size() + BADGE_PAD * 2.0, Sense::hover());
     if ui.is_rect_visible(rect) {
         ui.painter().rect_filled(rect, CornerRadius::same(255), color.gamma_multiply(0.18));
-        ui.painter().galley(rect.min + pad, galley, color);
+        ui.painter().galley(rect.min + BADGE_PAD, galley, color);
     }
     resp
+}
+
+const BADGE_PAD: Vec2 = Vec2::new(8.0, 3.0);
+
+/// The size [`badge`] takes for `text`, for sizing a table column before its rows are drawn.
+pub fn badge_size(ui: &Ui, text: &str) -> Vec2 {
+    ui.painter().layout_no_wrap(text.to_owned(), display(size::CAPTION), pal::TEXT).size() + BADGE_PAD * 2.0
 }
 
 // ---------------------------------------------------------------------------------------------
