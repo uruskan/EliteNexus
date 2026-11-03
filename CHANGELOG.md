@@ -10,6 +10,9 @@ release time that section becomes the new version and the release workflow publi
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
+- **Speech engine and voice** (Windows, Settings › Voice and alerts): speak through Windows speech, as before, or
+  through **SAPI**, Windows' classic speech engine, which also has the voices other programs install for it (IVONA,
+  CereProc, …). **Voice** picks one of the engine's voices instead of always the Windows default.
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain

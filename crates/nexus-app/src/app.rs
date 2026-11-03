@@ -149,6 +149,8 @@ impl NexusApp {
         let speaker = Speaker::start();
         speaker.set_rate(settings.tts_rate);
         speaker.set_volume(settings.tts_volume);
+        speaker.set_voice(&settings.tts_voice);
+        speaker.set_engine(settings.tts_engine);
         // Screenshot runs never open it: nothing may pop up over the game.
         let overlay = crate::overlay::window::Overlay::new(ov.overlay_see_through, shot.is_none(), ov.overlay_demo.as_deref().and_then(crate::overlay::demo));
         if let Some(name) = ov.overlay_demo.as_deref()
@@ -592,6 +594,7 @@ impl NexusApp {
                     test_voice: false,
                     restart_core: false,
                     voice: self.speaker.status(),
+                    voices: self.speaker.voices(),
                     overlay_see_through: self.overlay.see_through(),
                 };
                 pages::settings::show(ui, &mut cx);
@@ -681,6 +684,7 @@ impl NexusApp {
             test_voice: false,
             restart_core: false,
             voice: self.speaker.status(),
+            voices: self.speaker.voices(),
             overlay_see_through: self.overlay.see_through(),
         };
         // Scrolls: with the settings banner above it, a short window would otherwise cut off the folder's buttons.
@@ -705,6 +709,8 @@ impl NexusApp {
             self.settings_dirty = Some(Instant::now());
             self.speaker.set_rate(self.settings.tts_rate);
             self.speaker.set_volume(self.settings.tts_volume);
+            self.speaker.set_voice(&self.settings.tts_voice);
+            self.speaker.set_engine(self.settings.tts_engine);
             self.sync.apply(&self.settings.accounts);
             self.market.set_watches(&self.settings.price_watches);
             self.market.set_listen(self.settings.accounts.eddn_listen, self.rt.handle());

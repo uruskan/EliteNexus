@@ -136,8 +136,16 @@ on this computer, through its notification API (UDP port 42069); with XSOverlay 
 
 Alerts are spoken through Windows speech (on Linux through speech-dispatcher's `spd-say`, which most desktop
 distributions include, or `espeak-ng` / `espeak` without it; with none of them alerts are shown, not spoken; on macOS
-through the system's `say`). Settings › **Test voice** says which one spoke, or why none could. Choose the minimum
-priority in Settings:
+through the system's `say`). Settings › **Test voice** says which one spoke, or why none could.
+
+On Windows, Settings › **Speech engine** chooses between **Windows speech** (the default: the voices of Windows
+Settings › Time & language › Speech) and **SAPI** (Windows' classic speech engine: its desktop voices and the voices
+other programs install for it, such as IVONA or CereProc, which Windows speech doesn't list). **Voice** picks one of
+the engine's voices; **Default** follows the voice chosen in Windows. Switching the engine goes back to its default
+voice, since the two engines have different voices. If the chosen voice is uninstalled later, the default voice
+speaks instead and Settings says so.
+
+Choose the minimum priority in Settings:
 * **Critical** — hull critical, ship destroyed.
 * **High** — Earth-like/water/ammonia/terraformable/high-value bodies, motherlodes, analysis complete, massacre
   mission done, fuel low with a non-scoopable star next, interdiction.

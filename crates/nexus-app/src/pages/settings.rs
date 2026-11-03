@@ -6,6 +6,7 @@ use crate::jobs::Job;
 use crate::overlay::draw::Anchor;
 use crate::settings::Settings;
 use crate::theme::{pal, size};
+use crate::tts::{EngineKind, VoiceInfo};
 use crate::widgets::{self, cards, footnote, group, section};
 use egui::{Color32, RichText, Ui};
 use egui_phosphor::regular as icon;
@@ -25,6 +26,8 @@ pub struct SettingsCtx<'a> {
     pub restart_core: bool,
     /// What happened the last time Elite Nexus spoke (shown under Test voice).
     pub voice: crate::tts::VoiceStatus,
+    /// Windows: the voices of the speech engine in use.
+    pub voices: Vec<crate::tts::VoiceInfo>,
     /// The overlay is see-through this run (its switch applies after a restart).
     pub overlay_see_through: bool,
 }
@@ -64,6 +67,27 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                         }
                     });
                 });
+                if cfg!(windows) {
+                    g.row("Speech engine", "SAPI also has the voices other programs install for it.", |ui| {
+                        egui::ComboBox::from_id_salt("ttsengine").selected_text(s.tts_engine.label()).show_ui(ui, |ui| {
+                            for e in EngineKind::ALL {
+                                if ui.selectable_value(&mut s.tts_engine, e, e.label()).changed() {
+                                    // The engines have different voices: start from the new one's default.
+                                    s.tts_voice.clear();
+                                    cx.changed = true;
+                                }
+                            }
+                        });
+                    });
+                    g.row("Voice", "", |ui| {
+                        egui::ComboBox::from_id_salt("ttsvoice").selected_text(voice_name(&s.tts_voice, &cx.voices)).show_ui(ui, |ui| {
+                            cx.changed |= ui.selectable_value(&mut s.tts_voice, String::new(), "Default").changed();
+                            for v in &cx.voices {
+                                cx.changed |= ui.selectable_value(&mut s.tts_voice, v.id.clone(), &v.name).changed();
+                            }
+                        });
+                    });
+                }
                 g.row("Speech rate", "", |ui| cx.changed |= slider(ui, &mut s.tts_rate, 0.5..=2.0, 2, "×"));
                 g.row("Volume", "", |ui| {
                     let mut pct = s.tts_volume * 100.0;
@@ -79,6 +103,10 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                     }
                     if let Some((color, text)) = voice_line(&cx.voice) {
                         ui.add(egui::Label::new(RichText::new(text).size(size::FOOTNOTE).color(color)).wrap());
+                    }
+                    if cfg!(windows) && !s.tts_voice.is_empty() && !cx.voices.is_empty() && !cx.voices.iter().any(|v| v.id == s.tts_voice) {
+                        let text = format!("The chosen voice isn't installed for {}: the default voice speaks instead.", s.tts_engine.label());
+                        ui.add(egui::Label::new(RichText::new(text).size(size::FOOTNOTE).color(pal::WARN)).wrap());
                     }
                 });
             });
@@ -225,6 +253,18 @@ fn voice_line(status: &crate::tts::VoiceStatus) -> Option<(Color32, String)> {
                 format!("{} couldn't speak: {why}.", program_name(engine))
             },
         )),
+    }
+}
+
+/// The chosen voice as the voice list shows it. Before the engine has listed its voices, a voice can't be named yet.
+fn voice_name(id: &str, voices: &[VoiceInfo]) -> String {
+    if id.is_empty() {
+        return "Default".into();
+    }
+    match voices.iter().find(|v| v.id == id) {
+        Some(v) => v.name.clone(),
+        None if voices.is_empty() => "…".into(),
+        None => "Not installed".into(),
     }
 }
 
