@@ -66,6 +66,11 @@ impl PlannedRoute {
         &self.waypoints[self.done.min(self.waypoints.len())..]
     }
 
+    /// Every stop has been reached: the in-game route takes over.
+    pub fn complete(&self) -> bool {
+        self.remaining().is_empty() && !self.waypoints.is_empty()
+    }
+
     /// The carrier a fleet carrier route was planned for.
     pub fn carrier(&self) -> Option<CarrierKind> {
         match self.kind {
@@ -192,7 +197,7 @@ pub(crate) fn from_spansh(w: &nexus_spansh::Waypoint) -> Waypoint {
 /// Remaining waypoints of the active route (planner route if set and not finished, else the in-game route).
 pub fn active_route(gs: &GameState, planned: Option<&PlannedRoute>) -> Vec<Waypoint> {
     if let Some(p) = planned
-        && !planned_complete(p)
+        && !p.complete()
     {
         return p.remaining().to_vec();
     }
@@ -210,11 +215,6 @@ pub fn active_route(gs: &GameState, planned: Option<&PlannedRoute>) -> Vec<Waypo
             note: String::new(),
         })
         .collect()
-}
-
-/// A planned route whose every stop has been reached: the in-game route takes over.
-fn planned_complete(p: &PlannedRoute) -> bool {
-    p.remaining().is_empty() && !p.waypoints.is_empty()
 }
 
 /// Returns true if a setting changed. `carrier` is the carrier the fleet carrier planner uses, for
@@ -514,7 +514,7 @@ fn route_view(ui: &mut Ui, gs: &GameState, st: &NavUi) {
             }
         });
         ui.add_space(8.0);
-        if planned_complete(p) {
+        if p.complete() {
             if route.is_empty() {
                 empty(ui, icon::FLAG_CHECKERED, "Route complete", "You've reached every stop. Go back to the in-game route, or plan another one.");
                 return;

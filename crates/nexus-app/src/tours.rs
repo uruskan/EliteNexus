@@ -192,7 +192,9 @@ mod tests {
         assert_eq!(r.remaining().len(), 3, "a detour changes nothing");
         r.advance("B");
         assert_eq!(r.remaining().len(), 1, "skipping A is fine");
+        assert!(!r.complete());
         r.advance("Home");
         assert!(r.remaining().is_empty());
+        assert!(r.complete(), "the in-game route takes over");
     }
 }

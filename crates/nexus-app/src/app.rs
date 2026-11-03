@@ -1083,7 +1083,8 @@ impl NexusApp {
             // The journal is followed live and the game is running (as the page header's "Live" says).
             let live = phase_live && (fresh || gs.is_some_and(|g| !g.game_closed));
             let src = crate::overlay::Sources {
-                route: self.nav.planned.as_ref(),
+                // A finished tour hands over to the in-game route, as on Navigation and for the clipboard.
+                route: self.nav.planned.as_ref().filter(|p| !p.complete()),
                 pins: &self.settings.market.pins,
                 mining: &self.settings.mining,
                 auto_copy: self.settings.auto_copy_next_system,

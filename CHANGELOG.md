@@ -28,8 +28,8 @@ release time that section becomes the new version and the release workflow publi
 
 ### Fixed
 - Navigation: once every stop of a planned route was reached, the page kept showing "Route complete" and hid the
-  route plotted in the game afterwards (so did "Copy the next system" and the auto-copy after a jump). The game's
-  route now takes over, under the finished tour's summary.
+  route plotted in the game afterwards (so did "Copy the next system", the auto-copy after a jump and the overlay's
+  next jump). The game's route now takes over, under the finished tour's summary.
 
 ## [0.7.3-beta.2] - 2026-10-25
 
