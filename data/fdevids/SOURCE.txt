@@ -1,6 +1,9 @@
 Source:    https://github.com/EDCD/FDevIDs  (branch master)
-Commit:    c35612952dd6a547d1a7ac4cffab9c7051e86579  (last upstream push 2026-09-05)
-Retrieved: 2026-10-12 via https://codeload.github.com/EDCD/FDevIDs/zip/refs/heads/master
+Commit:    c7c29f7a13df543d4bc8b947eab29f88e06100fa  (last upstream push 2026-10-30)
+Retrieved: 2026-11-04 via https://codeload.github.com/EDCD/FDevIDs/zip/c7c29f7a13df543d4bc8b947eab29f88e06100fa
+           (first copied 2026-10-12 from c35612952dd6a547d1a7ac4cffab9c7051e86579; the 2026-11-04
+           refresh changed outfitting.csv, shipyard.csv and sku.csv: the Anaconda Mk II and its
+           bulkheads, the size 6 Mk II cargo rack. git keeps the files with LF line endings.)
 Files:     all *.csv from the repo root, plus "How to determine MatTrader and Broker type"
            (copied unmodified); upstream README.md saved as UPSTREAM-README.md.
 

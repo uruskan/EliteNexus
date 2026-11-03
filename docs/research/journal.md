@@ -798,7 +798,7 @@ GuiFocus disappears in some landed states; treat a missing value as 0.
 
 The journal uses **lower-case** FD symbols in `Loadout.Ship`, `ShipyardSwap.ShipType` and similar fields. FDevIDs `shipyard.csv` uses mixed case; compare case-insensitively.
 
-### 8.1 Ships (FDevIDs `shipyard.csv`, 48 rows) — 2023–2026 additions first
+### 8.1 Ships (FDevIDs `shipyard.csv`, 49 rows) — 2023–2026 additions first
 
 | Journal symbol | FDevIDs id | Name | Size | Released (approx.) | Entitlement SKU |
 |---|---|---|---|---|---|
@@ -812,6 +812,7 @@ The journal uses **lower-case** FD symbols in `Loadout.Ship`, `ShipyardSwap.Ship
 | `explorer_nx` | 129036569 | **Caspian Explorer** | L | Dec 2025 (FDevIDs 2025-12-02); credits-only from Apr 2026 | ELITE_V_EXPLORER_NX |
 | `smallcombat01_nx` | 129039241 | **Kestrel Mk II** | S | Feb 2026 (FDevIDs 2026-02-25) | ELITE_V_SMALL_COMBAT_01 |
 | `mediumtransport01` | 129041442 | **Lynx Highliner** (passenger liner, up to 225 passengers) | M | 28 Apr 2026, credits from day one | ELITE_V_MEDIUM_TRANSPORT_01 |
+| `anacondamkii` | 129046025 | **Anaconda Mk II** | L (elitedangerous.com: "Landing Pad Requirement Large") | Oct 2026 ARX early access (in FDevIDs by 2026-10-30; Spansh lists it with no credit price) | ELITE_V_ANACONDA_MKII |
 
 The original 38 hulls and their journal symbols:
 

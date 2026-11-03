@@ -469,7 +469,7 @@ mod tests {
 
     #[test]
     fn loads_all_rows() {
-        assert_eq!(all().len(), 1236);
+        assert_eq!(all().len(), 1243);
         assert_eq!(all().iter().filter(|m| m.category == ModuleCategory::MercGear).count(), 25);
     }
 
@@ -500,6 +500,10 @@ mod tests {
         assert_eq!(display_name("krait_mkii_armour_grade3_somevariant"), "Military Grade Composite (Krait Mk II)");
         assert_eq!(display_name("smallcombat01_nx_armour_grade3"), "Military Grade Composite (Kestrel Mk II)");
         assert_eq!(display_name("mediumtransport01_armour_grade1"), "Lightweight Alloy (Lynx Highliner)");
+        // The Anaconda Mk II (Oct 2026): ablative bulkheads, and the default ones it comes with.
+        assert_eq!(display_name("anacondamkii_armour_grade3"), "Mk II Ablative Military Grade Composite (Anaconda Mk II)");
+        assert_eq!(display_name("AnacondaMkII_Armour_Grade1_Default"), "Lightweight Alloy (Anaconda Mk II)");
+        assert_eq!(display_name("int_largecargorack_size6_class1"), "6D Mk II Cargo Rack");
         assert_eq!(display_name("lakonminer_armour_reactive"), "Reactive Surface Composite (Type-11 Prospector)");
         assert_eq!(
             display_name("int_hyperdrive_overcharge_size8_class5_overchargebooster_mkii"),

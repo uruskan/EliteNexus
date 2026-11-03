@@ -89,6 +89,8 @@ release time that section becomes the new version and the release workflow publi
 - **Navigation**: once every stop of a planned route was reached, the page kept showing "Route complete" and hid the
   route plotted in the game afterwards (so did "Copy the next system", the auto-copy after a jump and the overlay's
   next jump). The game's route now takes over, under the finished tour's summary.
+- The **Anaconda Mk II** is known by name, with its bulkheads, and as a large ship: until now the Fleet page showed
+  its raw game name and market searches offered it stations with only small and medium pads.
 
 ## [0.7.3-beta.2] - 2026-10-25
 

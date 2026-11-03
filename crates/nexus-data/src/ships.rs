@@ -14,6 +14,7 @@ const SHIPYARD_CSV: &str = include_str!("../../../data/fdevids/shipyard.csv");
 const SHIPS: &[(&str, &str)] = &[
     ("adder", "Adder"),
     ("anaconda", "Anaconda"),
+    ("anacondamkii", "Anaconda Mk II"),
     ("asp", "Asp Explorer"),
     ("asp_scout", "Asp Scout"),
     ("belugaliner", "Beluga Liner"),
@@ -188,6 +189,7 @@ pub fn pad_size(symbol: &str) -> char {
 pub fn known_pad_size(symbol: &str) -> Option<char> {
     Some(match symbol.trim().to_ascii_lowercase().as_str() {
         "anaconda"
+        | "anacondamkii"
         | "belugaliner"
         | "cutter"
         | "empire_trader"
@@ -252,7 +254,7 @@ mod tests {
 
     #[test]
     fn shipyard_names_are_normalised() {
-        assert_eq!(all().len(), 48);
+        assert_eq!(all().len(), 49);
         assert_eq!(ship_name("krait_mkii"), "Krait Mk II");
         assert_eq!(ship_name("Viper"), "Viper Mk III");
         assert_eq!(ship_name("cobramkv"), "Cobra Mk V");
@@ -273,6 +275,7 @@ mod tests {
             ("explorer_nx", "Caspian Explorer"),
             ("smallcombat01_nx", "Kestrel Mk II"),
             ("mediumtransport01", "Lynx Highliner"),
+            ("anacondamkii", "Anaconda Mk II"),
             ("corsair", "Corsair"),
             ("mandalay", "Mandalay"),
             ("type8", "Type-8 Transporter"),
@@ -317,7 +320,7 @@ mod tests {
             assert_eq!(pad_size(s), 'M', "{s}");
         }
         for s in
-            ["anaconda", "cutter", "empire_trader", "orca", "type7", "type9_military", "panthermkii", "explorer_nx"]
+            ["anaconda", "anacondamkii", "cutter", "empire_trader", "orca", "type7", "type9_military", "panthermkii", "explorer_nx"]
         {
             assert_eq!(pad_size(s), 'L', "{s}");
         }
