@@ -516,7 +516,7 @@ fn route_view(ui: &mut Ui, gs: &GameState, st: &NavUi) {
         ui.add_space(8.0);
         if p.complete() {
             if route.is_empty() {
-                empty(ui, icon::FLAG_CHECKERED, "Route complete", "You've reached every stop. Go back to the in-game route, or plan another one.");
+                empty(ui, icon::FLAG_CHECKERED, "Route complete", "You've reached every stop. Plot a route in the galaxy map and it shows here, or plan another one above.");
                 return;
             }
             ui.add(egui::Label::new(RichText::new(format!("{} Tour complete, showing the route plotted in the game.", icon::FLAG_CHECKERED)).size(size::FOOTNOTE).color(pal::DIM)).wrap());
