@@ -523,28 +523,87 @@ impl NexusTools {
         Ok(json!({ "system": sys.name, "bio_bodies": bodies, "unsold_exobiology_data_cr": gs.exobio.unsold_value() }))
     }
 
+    /// Journal lines holding a text, newest first, in a period if one is given. It returns at most `limit` of them, and
+    /// only as many as fit what the model is passed (`MAX_RESULT_CHARS`), says when older matches were left out, and
+    /// `skip` pages past them, so any stretch of the history can be read.
     fn journal_search(&self, a: &Value) -> Result<Value, String> {
+        use nexus_journal::Timestamp;
         let needle = arg_str(a, "query").ok_or("query is required")?.to_lowercase();
         let limit = arg_f64(a, "limit").map(|v| v as usize).unwrap_or(15).clamp(1, 40);
-        let files = self.index.read().files.clone();
-        let mut hits = Vec::new();
-        'files: for path in files.iter().rev() {
-            let Ok(text) = std::fs::read_to_string(path) else { continue };
-            for line in text.lines().rev() {
-                if line.to_lowercase().contains(&needle) {
-                    let v: Value = serde_json::from_str(line).unwrap_or(Value::Null);
-                    let mut snippet: String = line.chars().take(400).collect();
-                    if line.len() > snippet.len() {
-                        snippet.push('…');
-                    }
-                    hits.push(json!({ "time": v["timestamp"], "event": v["event"], "line": snippet }));
-                    if hits.len() >= limit {
-                        break 'files;
+        let skip = arg_f64(a, "skip").map(|v| v.max(0.0) as usize).unwrap_or(0);
+        // The period: a date is the commander's local day (`to` includes it); a journal time is taken as it is.
+        let bound = |key: &str, end: bool| -> Result<Option<i64>, String> {
+            let Some(s) = arg_str(a, key) else { return Ok(None) };
+            if let Some(t) = Timestamp::parse(&s) {
+                return Ok(Some(t.0 + i64::from(end)));
+            }
+            let (start, next) = Timestamp::local_day(&s).ok_or_else(|| format!("{key} \"{s}\" is not a date (YYYY-MM-DD)"))?;
+            Ok(Some(if end { next.0 } else { start.0 }))
+        };
+        let (from, to) = (bound("from", false)?, bound("to", true)?);
+        let dated = from.is_some() || to.is_some();
+        let in_period = |ts: i64| from.is_none_or(|f| ts >= f) && to.is_none_or(|t| ts < t);
+        // Only the files with events in the period: the index knows every event's time.
+        let (files, first) = {
+            let idx = self.index.read();
+            let mut wanted = vec![!dated; idx.files.len()];
+            if dated {
+                for e in idx.entries.iter().filter(|e| in_period(e.ts)) {
+                    if let Some(w) = wanted.get_mut(e.file as usize) {
+                        *w = true;
                     }
                 }
             }
+            let files: Vec<_> = idx.files.iter().zip(wanted).filter(|(_, w)| *w).map(|(p, _)| p.clone()).collect();
+            (files, idx.entries.first().map(|e| e.ts))
+        };
+        // Room for the rest of the answer under the cut the agent makes.
+        let budget = nexus_ai::agent::MAX_RESULT_CHARS - 1_000;
+        let (mut hits, mut size, mut skipped, mut more) = (Vec::new(), 0, 0, false);
+        'files: for path in files.iter().rev() {
+            let Ok(text) = std::fs::read_to_string(path) else { continue };
+            for line in text.lines().rev() {
+                if !line.to_lowercase().contains(&needle) {
+                    continue;
+                }
+                let v: Value = serde_json::from_str(line).unwrap_or(Value::Null);
+                let ts = v["timestamp"].as_str().and_then(Timestamp::parse);
+                if dated {
+                    let Some(ts) = ts else { continue };
+                    if from.is_some_and(|f| ts.0 < f) {
+                        break 'files; // everything further on is older still
+                    }
+                    if !in_period(ts.0) {
+                        continue;
+                    }
+                }
+                if skipped < skip {
+                    skipped += 1;
+                    continue;
+                }
+                let mut snippet: String = line.chars().take(400).collect();
+                if line.len() > snippet.len() {
+                    snippet.push('…');
+                }
+                let hit = json!({ "time": ts.map(|t| t.to_local_string("%Y-%m-%d %H:%M")), "event": v["event"], "line": snippet });
+                let len = hit.to_string().len() + 1;
+                if hits.len() >= limit || size + len > budget {
+                    more = true;
+                    break 'files;
+                }
+                size += len;
+                hits.push(hit);
+            }
         }
-        Ok(json!({ "query": needle, "matches_newest_first": hits }))
+        let shown = hits.len();
+        let mut out = json!({ "query": needle, "matches_newest_first": hits });
+        if let Some(t) = first {
+            out["journal_starts"] = json!(Timestamp(t).to_local_string("%Y-%m-%d"));
+        }
+        if more {
+            out["more_matches"] = json!(format!("Older matches were left out: call again with skip {} (same query and period) for the next ones.", skip + shown));
+        }
+        Ok(out)
     }
 
     /// Planets and moons of a system: physics and signals (Spansh, local), discovery and footfall
@@ -1604,8 +1663,17 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "journal_search",
-            description: "Searches the commander's own game journal history (every event since they started playing), newest first. Use for questions about past trips, sales, missions, ships, places visited.",
-            parameters: schema(json!({ "query": { "type": "string", "description": "Text to find, e.g. a system, station, ship, commodity or event name." }, "limit": { "type": "integer" } }), &["query"]),
+            description: "Searches the commander's own game journal (every journal file in their journal folder; journal_starts is the first day it holds) for lines with a text, newest first, each with its local time. One call returns up to limit matches, fewer when the lines are long; more_matches says when older ones were left out and how to get them. For a period, such as a week of travel, pass from and to. Event names work as text: FSDJump (jumps), Docked, MarketSell, MissionCompleted. Use for questions about past trips, sales, missions, ships, places visited.",
+            parameters: schema(
+                json!({
+                    "query": { "type": "string", "description": "Text to find, e.g. a system, station, ship, commodity or event name." },
+                    "from": { "type": "string", "description": "First day to search, YYYY-MM-DD (the commander's local date)." },
+                    "to": { "type": "string", "description": "Last day to search, YYYY-MM-DD, included." },
+                    "skip": { "type": "integer", "description": "Leave out this many of the newest matches: the next page." },
+                    "limit": { "type": "integer", "description": "Default 15, at most 40." }
+                }),
+                &["query"],
+            ),
         },
         ToolSpec {
             name: "knowledge",
@@ -1733,6 +1801,74 @@ mod tests {
         let ans = nexus_ai::ask(&script, nexus_ai::SYSTEM_PROMPT, &tools, &mut conv, "Where should I sell my cargo?".into(), |_| {}).unwrap();
         assert!(ans.text.contains("Beta Hub"));
         assert_eq!(ans.tools_used, vec!["sell_my_cargo"]);
+    }
+
+    /// "Which systems did I pass through from 22 to 29 October?" (GitHub issue #4): any period of the journal, page by
+    /// page, never more than the model is passed.
+    #[test]
+    fn journal_search_reads_any_period_and_says_what_it_left_out() {
+        let dir = std::env::temp_dir().join(format!("nexus-journal-search-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // Ten days of 30 jumps (12:00 to 12:29 UTC), a journal file a day, indexed as the app does; the last day's
+        // lines are long.
+        let mut index = JournalIndex::default();
+        for day in 20..30 {
+            let path = dir.join(format!("Journal.2026-10-{day}T000000.01.log"));
+            let file = index.add_file(path.clone());
+            let note = if day == 29 { "x".repeat(400) } else { String::new() };
+            let mut text = String::new();
+            for j in 0..30 {
+                let ts = nexus_journal::Timestamp::parse(&format!("2026-10-{day}T12:{j:02}:00Z")).unwrap();
+                let line = format!(r#"{{ "timestamp":"{}", "event":"FSDJump", "StarSystem":"Sys {day}-{j}", "Note":"{note}" }}"#, ts.to_iso());
+                index.push(ts, file, text.len() as u64, line.len(), "FSDJump");
+                text.push_str(&line);
+                text.push('\n');
+            }
+            std::fs::write(&path, text).unwrap();
+        }
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = NexusTools {
+            model: Arc::new(RwLock::new(Model::default())),
+            db: None,
+            index: Arc::new(RwLock::new(index)),
+            spansh: Spansh::new(),
+            rt: rt.handle().clone(),
+            routes: Arc::new(Mutex::new(None)),
+        };
+        let search = |args: Value| tools.call("journal_search", &args).unwrap();
+        let systems = |v: &Value| -> Vec<String> {
+            let hits = v["matches_newest_first"].as_array().unwrap();
+            hits.iter().map(|m| m["line"].as_str().unwrap().split("\"StarSystem\":\"").nth(1).and_then(|s| s.split('"').next()).unwrap().to_string()).collect()
+        };
+
+        // Newest first, 15 by default, saying that older ones were left out.
+        let v = search(json!({ "query": "fsdjump" }));
+        assert_eq!(systems(&v).len(), 15);
+        assert_eq!(systems(&v)[0], "Sys 29-29");
+        assert!(v["more_matches"].as_str().unwrap().contains("skip 15"), "{v}");
+        assert!(v["journal_starts"].is_string());
+
+        // A period in journal time, paged with skip: the 22nd's 30 jumps, then nothing more.
+        let page = |skip: usize| search(json!({ "query": "FSDJump", "from": "2026-10-22T00:00:00Z", "to": "2026-10-22T23:59:59Z", "limit": 10, "skip": skip }));
+        let pages: Vec<Value> = [0, 10, 20].into_iter().map(page).collect();
+        assert_eq!(systems(&pages[0])[0], "Sys 22-29");
+        assert!(pages[1]["more_matches"].as_str().unwrap().contains("skip 20"));
+        assert_eq!(systems(&pages[2]).last().map(String::as_str), Some("Sys 22-0"));
+        assert!(pages[2].get("more_matches").is_none(), "the last page: {}", pages[2]);
+
+        // A date is the commander's local day: one day's 30 jumps, whatever the time zone.
+        let v = search(json!({ "query": "FSDJump", "from": "2026-10-24", "to": "2026-10-24", "limit": 40 }));
+        let times: Vec<&str> = v["matches_newest_first"].as_array().unwrap().iter().filter_map(|m| m["time"].as_str()).collect();
+        assert_eq!(times.len(), 30, "{v}");
+        assert!(times.iter().all(|t| t.starts_with("2026-10-24")), "{times:?}");
+
+        // Long lines: fewer than the limit, so the agent never cuts the answer, which says more are left.
+        let v = search(json!({ "query": "FSDJump", "from": "2026-10-29T00:00:00Z", "limit": 40 }));
+        assert!(systems(&v).len() < 30 && v["more_matches"].is_string(), "{v}");
+        assert!(v.to_string().len() < nexus_ai::agent::MAX_RESULT_CHARS);
+
+        assert!(tools.call("journal_search", &json!({ "query": "FSDJump", "from": "22/10" })).is_err());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// "Where did I mine Iridium?": the Rhino's mining locations, from the journal.

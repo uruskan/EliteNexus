@@ -59,6 +59,18 @@ impl Timestamp {
         self.to_chrono().with_timezone(&chrono::Local).format(fmt_str).to_string()
     }
 
+    /// A calendar day in local time from `YYYY-MM-DD` (a date as the commander reads it): its start and the next
+    /// day's start.
+    pub fn local_day(date: &str) -> Option<(Self, Self)> {
+        let day = chrono::NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d").ok()?;
+        let start = |d: chrono::NaiveDate| {
+            let at = |h| d.and_hms_opt(h, 0, 0).and_then(|t| t.and_local_timezone(chrono::Local).earliest());
+            // Midnight can fall in a daylight-saving gap; that day then starts an hour later.
+            at(0).or_else(|| at(1)).map(|t| Timestamp(t.timestamp()))
+        };
+        Some((start(day)?, start(day.succ_opt()?)?))
+    }
+
     pub fn secs_since(self, earlier: Timestamp) -> i64 {
         self.0 - earlier.0
     }
@@ -126,5 +138,14 @@ mod tests {
         assert_eq!(Timestamp::parse("2024-02-29T12:34:56.789Z").unwrap().to_iso(), "2024-02-29T12:34:56Z");
         assert!(Timestamp::parse("garbage").is_none());
         assert!(Timestamp::parse("2026-13-05T00:01:46Z").is_none());
+    }
+
+    #[test]
+    fn local_days() {
+        let (start, end) = Timestamp::local_day("2026-10-22").unwrap();
+        assert_eq!(start.to_local_string("%Y-%m-%d %H:%M"), "2026-10-22 00:00");
+        assert_eq!(end.to_local_string("%Y-%m-%d %H:%M"), "2026-10-23 00:00");
+        assert!((82_800..=90_000).contains(&(end.0 - start.0)), "a day, give or take a daylight-saving hour");
+        assert!(Timestamp::local_day("22/10/2026").is_none());
     }
 }

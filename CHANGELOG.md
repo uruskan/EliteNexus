@@ -31,6 +31,11 @@ release time that section becomes the new version and the release workflow publi
   wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
   game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The
   Missions page and Statistics › Income and spending now say so; the credits still show in your balance.
+- **Ask can look back through your whole journal** (GitHub issue #4). Its journal search returned only the newest 15
+  matching lines (40 at most, fewer when they were long), so a question about last week's jumps saw only the last day
+  or two, and nothing said so. It can now search a period you name ("where did I go from 22 to 29 October?") and page
+  back through it, says when it left older matches out and from which day your journal folder starts, and gives times
+  in your local time.
 
 ## [0.7.3-beta.2] - 2026-10-25
 
