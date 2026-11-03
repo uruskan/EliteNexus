@@ -11,7 +11,7 @@ use crate::fleet::Fleet;
 use crate::history::{DeathRecord, DockRecord, History, JumpRecord, LedgerCategory};
 use crate::inventory::{Inventory, MaterialCategory};
 use crate::location::{ArrivalKind, Location};
-use crate::mining::Mining;
+use crate::mining::{Mining, SiteKey};
 use crate::missions::{MissionOutcome, Missions};
 use crate::session::Session;
 use nexus_data::names::{clean_station_name, compact_credits, group_digits};
@@ -428,10 +428,17 @@ impl GameState {
             Event::LaunchSRV(v) => {
                 self.location.in_srv = true;
                 self.location.srv_type = v.srv_type.clone();
+                // Dropped from a hovering ship, the Rhino has no landing to name its mining location.
+                if crate::context::Vehicle::from_srv_type(v.srv_type.as_deref()) == crate::context::Vehicle::Rhino
+                    && let Some(body_id) = self.location.body_id
+                {
+                    self.mining.on_launch(ts, self.location.system_address, body_id);
+                }
             }
             Event::DockSRV(_) | Event::SRVDestroyed(_) => {
                 self.location.in_srv = false;
                 self.location.srv_type = None;
+                self.mining.on_srv_gone();
             }
             Event::LaunchFighter(f) if f.player_controlled.unwrap_or(false) => self.location.in_fighter = true,
             Event::DockFighter(_) | Event::FighterDestroyed(_) => self.location.in_fighter = false,
@@ -1198,6 +1205,13 @@ impl GameState {
             return;
         }
         self.location.on_status(st);
+        // A planetary mining location targeted on the body you're at: a Rhino dropped from a hovering ship takes it.
+        if let Some(d) = st.destination.as_ref() {
+            let here = d.system == self.location.system_address && Some(d.body) == self.location.body_id;
+            let mines = self.exploration.systems.get(&d.system).and_then(|s| s.bodies.get(&d.body)).is_some_and(|b| b.mining_locations > 0);
+            let n = crate::mining::targeted_location(&d.name, mines).filter(|_| here);
+            self.mining.on_target(n.map(|n| SiteKey { system_address: d.system, body_id: d.body, location: Some(n) }));
+        }
         if let Some(f) = st.fuel {
             self.fleet.fuel_main = f.main;
             self.fleet.fuel_reservoir = f.reservoir;
@@ -1288,9 +1302,17 @@ pub struct Model {
     pending_header: Option<ev::Fileheader>,
     pub events_applied: u64,
     pub last_event: Timestamp,
+    /// Rhino drops recorded on earlier runs ([`Mining::drops`]), set before the journal is read: every commander's
+    /// state starts with them.
+    pub mining_drops: BTreeMap<Timestamp, SiteKey>,
 }
 
 impl Model {
+    /// A model that gives every commander the Rhino drops recorded on earlier runs.
+    pub fn with_mining_drops(drops: BTreeMap<Timestamp, SiteKey>) -> Model {
+        Model { mining_drops: drops, ..Default::default() }
+    }
+
     pub fn active(&self) -> Option<&GameState> {
         self.active.as_ref().and_then(|k| self.commanders.get(k))
     }
@@ -1304,7 +1326,8 @@ impl Model {
         if key.is_empty() {
             return;
         }
-        let gs = self.commanders.entry(key.clone()).or_default();
+        let drops = &self.mining_drops;
+        let gs = self.commanders.entry(key.clone()).or_insert_with(|| GameState { mining: Mining { drops: drops.clone(), ..Default::default() }, ..Default::default() });
         if let Some(h) = self.pending_header.take() {
             gs.apply_header(&h);
         }

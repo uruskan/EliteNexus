@@ -22,6 +22,24 @@ pub struct MiningPrefs {
     pub notes: Vec<SiteNote>,
     /// Surface mining sites: only those that gave this commodity ("" = all).
     pub commodity: String,
+    /// Rhinos dropped from a hovering ship, with the mining location targeted then. The journal names no location
+    /// for those runs, so they're taken live, kept here and given back each time the journal is read.
+    pub drops: Vec<HoverDrop>,
+}
+
+/// A Rhino dropped from a hovering ship: its launch's journal time and the planetary mining location targeted then.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HoverDrop {
+    pub at: Timestamp,
+    pub system_address: u64,
+    pub body_id: u32,
+    pub location: u32,
+}
+
+/// The drops to give the model before it reads the journal ([`crate::core::Core::start`]).
+pub fn drops(prefs: &MiningPrefs) -> crate::core::Drops {
+    prefs.drops.iter().map(|d| (d.at, key(d.system_address, d.body_id, Some(d.location)))).collect()
 }
 
 /// A deposit: where the Rhino refined on a body, and what came out there.
@@ -87,11 +105,19 @@ impl MiningPrefs {
     }
 }
 
-/// Copies the deposits recorded this run (positions exist only live) into `prefs` and numbers new ones; true when
+/// Copies the deposits and hover drops recorded this run (live only) into `prefs` and numbers new deposits; true when
 /// anything changed. A deposit is matched by its place on the body, so it keeps its number and note on later runs,
 /// and one first kept under "location not named" takes the location's number when a later landing names it.
 pub fn remember(gs: &GameState, prefs: &mut MiningPrefs) -> bool {
     let mut changed = false;
+    for (&at, k) in &gs.mining.drops {
+        if let Some(location) = k.location
+            && !prefs.drops.iter().any(|d| d.at == at)
+        {
+            prefs.drops.push(HoverDrop { at, system_address: k.system_address, body_id: k.body_id, location });
+            changed = true;
+        }
+    }
     for site in gs.mining.sites.values() {
         for spot in &site.spots {
             let k = site.key;
@@ -229,7 +255,7 @@ fn session(ui: &mut Ui, gs: &GameState, s: &MiningSession, live: bool) {
     });
 }
 
-const NOT_NAMED: &str = "The game names a mining location only when your ship touches down or lifts off within 50 km of one. This time it named none: the Rhino was dropped while the ship hovered, or the ship set down further from every location. Touch down by the location before you deploy the Rhino and its number is recorded; if you know it, your note can keep it.";
+const NOT_NAMED: &str = "The game names a mining location only when your ship touches down or lifts off within 50 km of one. This time it named none: the Rhino was dropped while the ship hovered with no mining location targeted (or before Elite Nexus was running), or the ship set down further from every location. Target the location, or touch down by it, before you deploy the Rhino and its number is recorded; if you know it, your note can keep it.";
 
 /// "Body 1 · Mining location 4": the body, then the number to pick in the navigation panel.
 fn site_title(site: &SurfaceSite) -> String {
@@ -277,7 +303,8 @@ fn sites(ui: &mut Ui, gs: &GameState, prefs: &mut MiningPrefs, action: &mut Opti
         footnote(
             ui,
             "To go back: jump to the system, target the body, then pick the Planetary Mining Location with that number in the navigation panel. \
-             The number is the location the game named nearest to where your ship landed or lifted off. Tonnes are what the Rhino's refinery made there, by-products included.",
+             The number is the location the game named nearest to where your ship landed or lifted off; for a Rhino dropped from a hovering ship, \
+             the one you had targeted (taken while Elite Nexus was running). Tonnes are what the Rhino's refinery made there, by-products included.",
         );
     });
     changed
@@ -609,6 +636,19 @@ mod tests {
         deposits.push(deposit(5));
         number_deposits(&mut deposits);
         assert_eq!(deposits[3].number, 4, "after the highest, though found earlier");
+    }
+
+    /// A Rhino dropped from a hover gets its location only live: it's kept once and given back to the next start.
+    #[test]
+    fn hover_drops_are_kept_and_given_back() {
+        let mut gs = GameState::default();
+        let mut prefs = MiningPrefs::default();
+        let k = SiteKey { system_address: 100, body_id: 1, location: Some(6) };
+        gs.mining.drops.insert(Timestamp(50), k);
+        assert!(remember(&gs, &mut prefs));
+        assert!(!remember(&gs, &mut prefs), "kept once");
+        assert_eq!(prefs.drops, [HoverDrop { at: Timestamp(50), system_address: 100, body_id: 1, location: 6 }]);
+        assert_eq!(drops(&prefs), [(Timestamp(50), k)].into());
     }
 
     /// Chequers2's A 1 (discussion 5): worked, but the game named no location, so "you've worked 0" was wrong.

@@ -134,6 +134,9 @@ pub struct Here {
     pub key: SiteKey,
     /// Where the ship set down (the last Touchdown), until it lifts off.
     pub ship: Option<(f64, f64)>,
+    /// The location is the one targeted when the Rhino was dropped from a hovering ship. It lasts until the Rhino is
+    /// back aboard: the hovering ship can then fly anywhere without a word in the journal.
+    pub dropped: bool,
 }
 
 /// Where the commander is when the Rhino refines.
@@ -165,6 +168,17 @@ pub fn mining_location(name: &str) -> Option<u32> {
     digits.parse().ok()
 }
 
+/// The number of a planetary mining location targeted in Status.json: written as in a landing ([`mining_location`]),
+/// or bare, `$SAA_Unknown_Signal:#index=15;`, as other tools have seen it there. The bare form names no kind of
+/// signal, so it counts only on a body known to have mining locations (`bare_ok`).
+pub fn targeted_location(name: &str, bare_ok: bool) -> Option<u32> {
+    mining_location(name).or_else(|| {
+        let lower = name.to_ascii_lowercase();
+        let n = lower.strip_prefix("$saa_unknown_signal:#index=")?.strip_suffix(';')?.parse().ok()?;
+        bare_ok.then_some(n)
+    })
+}
+
 fn refined_name(r: &ev::MiningRefined) -> String {
     r.kind_localised.clone().unwrap_or_else(|| nexus_data::names::humanize_symbol(&r.kind))
 }
@@ -178,6 +192,14 @@ pub struct Mining {
     pub here: Option<Here>,
     /// Goes up when a deposit is added or gives a new commodity: the app saves the deposits then.
     pub spots_rev: u64,
+    /// The planetary mining location last targeted on the body you're at (Status.json, so live only).
+    pub targeted: Option<SiteKey>,
+    /// Rhino launches no landing named a location for (dropped from a hovering ship), by the launch's journal time:
+    /// the location targeted then. Recorded live; the app keeps them and gives them back before the journal is read
+    /// again, so those runs keep their number.
+    pub drops: BTreeMap<Timestamp, SiteKey>,
+    /// Goes up when a drop is recorded: the app saves the drops then.
+    pub drops_rev: u64,
 }
 
 impl Mining {
@@ -273,15 +295,16 @@ impl Mining {
     /// commander is still there, so those keep the location already named on this body unless they name one.
     pub fn on_landing(&mut self, l: &ev::Landing, touchdown: bool) {
         let named = l.nearest_destination.as_deref().and_then(mining_location);
-        let kept = self.here.as_ref().filter(|h| h.key.system_address == l.system_address && h.key.body_id == l.body_id).and_then(|h| h.key.location);
+        let before = self.here.as_ref().filter(|h| h.key.system_address == l.system_address && h.key.body_id == l.body_id);
         let location = match (touchdown, l.player_controlled != Some(false)) {
             (true, true) => named,
             (false, true) => None,
-            (_, false) => named.or(kept),
+            (_, false) => named.or(before.and_then(|h| h.key.location)),
         };
+        let dropped = named.is_none() && location.is_some() && before.is_some_and(|h| h.dropped);
         let key = SiteKey { system_address: l.system_address, body_id: l.body_id, location };
         let ship = if touchdown { l.latitude.zip(l.longitude) } else { None };
-        self.here = Some(Here { key, ship });
+        self.here = Some(Here { key, ship, dropped });
     }
 
     /// The location the ship just set down by, when the Rhino refined there in an earlier session.
@@ -293,15 +316,55 @@ impl Mining {
         (Some(site.session) != now).then_some(site)
     }
 
+    /// Status.json's destination: a planetary mining location targeted on the body you're at, or anything else (None).
+    /// With no destination at all it isn't called, so the location stays targeted when deselected (the game may do
+    /// that on arrival), until you target something else or leave the body.
+    pub fn on_target(&mut self, key: Option<SiteKey>) {
+        self.targeted = key;
+    }
+
+    /// LaunchSRV of the Rhino. A landing that named a location says where, and so does one flown down far from every
+    /// location (none). Otherwise the ship hovered, or landed by itself without a word: the launch takes the location
+    /// recorded for it before (a journal read again), or else the one targeted on this body, and records it.
+    pub fn on_launch(&mut self, ts: Timestamp, system_address: u64, body_id: u32) {
+        let on_body = |k: &SiteKey| k.system_address == system_address && k.body_id == body_id;
+        if self.here.as_ref().is_some_and(|h| on_body(&h.key) && (h.key.location.is_some() || h.ship.is_some())) {
+            return;
+        }
+        let key = match self.drops.get(&ts).copied().filter(|k| on_body(k)) {
+            Some(k) => k,
+            None => {
+                let Some(k) = self.targeted.filter(|k| on_body(k)) else { return };
+                self.drops.insert(ts, k);
+                self.drops_rev += 1;
+                k
+            }
+        };
+        self.here = Some(Here { key, ship: None, dropped: true });
+    }
+
+    /// DockSRV, or the SRV destroyed: a location taken from a target at a hover drop ends with the run, since the ship
+    /// still hovering can take the Rhino anywhere unseen. One a landing named holds while the ship stays down.
+    pub fn on_srv_gone(&mut self) {
+        if self.here.as_ref().is_some_and(|h| h.dropped) {
+            self.here = None;
+        }
+    }
+
     /// Supercruise, a jump, leaving the body: the next landing names the location again.
     pub fn leave_body(&mut self) {
         self.here = None;
+        self.targeted = None;
     }
 
     /// Location (login, respawn) and ApproachBody: the named location holds only while still at the same body.
     pub fn at_body(&mut self, system_address: u64, body_id: Option<u32>) {
-        if self.here.as_ref().is_some_and(|h| h.key.system_address != system_address || Some(h.key.body_id) != body_id) {
+        let elsewhere = |k: &SiteKey| k.system_address != system_address || Some(k.body_id) != body_id;
+        if self.here.as_ref().is_some_and(|h| elsewhere(&h.key)) {
             self.here = None;
+        }
+        if self.targeted.as_ref().is_some_and(elsewhere) {
+            self.targeted = None;
         }
     }
 
@@ -343,5 +406,16 @@ mod tests {
         assert_eq!(mining_location("Uutoni Extraction Platform"), None);
         assert_eq!(mining_location(""), None);
         assert_eq!(mining_location("$SAA_Unknown_Signal:#type=$PlanetaryMiningLocation_Name;:#index=;"), None);
+    }
+
+    #[test]
+    fn targeted_location_number() {
+        assert_eq!(targeted_location("$SAA_Unknown_Signal:#type=$PlanetaryMiningLocation_Name;:#index=3;", false), Some(3));
+        // Bare, as Status.json has also been seen to write it: only on a body with mining locations.
+        assert_eq!(targeted_location("$SAA_Unknown_Signal:#index=15;", true), Some(15));
+        assert_eq!(targeted_location("$SAA_Unknown_Signal:#index=15;", false), None);
+        assert_eq!(targeted_location("$SAA_Unknown_Signal:#type=$SAA_SignalType_Geological;:#index=9;", true), None);
+        assert_eq!(targeted_location("$SAA_Unknown_Signal:#index=;", true), None);
+        assert_eq!(targeted_location("TCG BARBAROS KFK-L3V", true), None);
     }
 }

@@ -346,7 +346,7 @@ impl NexusTools {
                 "system": s.system, "body": s.body, "mining_location": s.key.location,
                 "refined_t": s.refined, "visits": s.visits, "last_visit": s.last.to_iso(),
             })).collect::<Vec<_>>(),
-            "note": "mining_location is the number the game's navigation panel shows (Planetary Mining Location N): the location the game named nearest to where the ship landed or lifted off; null when it named none. To go back: jump to the system, target the body, then pick that location in the navigation panel; the Mining page's radar shows the deposits. Rigs and deposit sizes aren't in the journal.",
+            "note": "mining_location is the number the game's navigation panel shows (Planetary Mining Location N): the location the game named nearest to where the ship landed or lifted off, or for a Rhino dropped from a hovering ship the one targeted then (recorded only while Elite Nexus ran); null when none is known. To go back: jump to the system, target the body, then pick that location in the navigation panel; the Mining page's radar shows the deposits. Rigs and deposit sizes aren't in the journal.",
         }))
     }
 

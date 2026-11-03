@@ -14,6 +14,9 @@ release time that section becomes the new version and the release workflow publi
   Rhino records them, kept between runs, beside each deposit on the radar, in the list under it and on the overlay's
   radar. Each deposit in the list takes a note of your own, such as how many rigs fit, so two deposits of the same
   commodity can be told apart. Deposits kept by 0.7.3-beta.1 are numbered too, oldest first.
+- **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
+  the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
+  for later starts.
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
@@ -25,10 +28,11 @@ release time that section becomes the new version and the release workflow publi
   the mining location your landing named. When the ship lifted off or landed by itself without naming a location,
   Elite Nexus took that for a landing far from every location and listed the run as "location not named". The list
   is read from the journal, so earlier runs move to their location too. The game names a location only when the ship
-  touches down or lifts off within 50 km of one, so a Rhino dropped from a hovering ship still can't be placed; an
-  unnamed site now says so, and that touching down by the location first records its number. Such a run after you
-  lifted off is no longer credited to the location you left. A body you mined where the game named no location no
-  longer says "you've worked 0": it says "at least 1". Reported by Chequers2.
+  touches down or lifts off within 50 km of one, so a Rhino dropped from a hovering ship gets no number from the
+  journal (it takes your target instead, see Added). An unnamed site now says so: target the location, or touch down
+  by it, before you deploy. A drop after you lifted off is no longer credited to the location you left. A body you
+  mined where the game named no location no longer says "you've worked 0": it says "at least 1". Reported by
+  Chequers2.
 
 ## [0.7.3-beta.2] - 2026-10-25
 
