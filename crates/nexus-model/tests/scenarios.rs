@@ -613,7 +613,7 @@ fn surface_mining_keeps_the_location_when_the_ship_is_dismissed() {
     assert_eq!((m.active().unwrap().mining.sites[&unnamed].total(), m.active().unwrap().mining.sites.len()), (2, 2));
 }
 
-/// A Rhino dropped from a hovering ship (EDSMT's guide: out of glide and under 30 m) has no Touchdown, so the game names
+/// A Rhino dropped from a hovering ship (out of glide and under 30 m) has no Touchdown, so the game names
 /// no location: the run takes the planetary mining location targeted then (Status.json, live) and records it. Read
 /// again on a later start with the recorded drops, the journal names the run the same; without them (runs from before),
 /// it isn't named. A ship flown down far from every location takes nothing from a target.
