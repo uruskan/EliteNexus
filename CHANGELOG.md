@@ -23,6 +23,10 @@ release time that section becomes the new version and the release workflow publi
   Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
   edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always
   fits, and the merits chart no longer slides away from its bars when dragged.
+- **Statistics: the Credits chart's axis reads right when your balance stays put.** When your balance didn't change
+  over the period, every label up its side was the same ("1.23 B" eleven times): the chart spanned a tenth of a
+  credit. A flat or nearly flat balance now sits in a band of a tenth of its value above and below it, with labels
+  that differ.
 - **Fleet: long module names stay in their column** (GitHub issue #4, with a screenshot). A name such as "8A Mk II
   Supercharge Optimised Frame Shift Drive (SCO)" ran over the module's value. The Module column now widens to the
   longest name when the window has room, and a name that still doesn't fit ends in "…" and shows whole when you hover
