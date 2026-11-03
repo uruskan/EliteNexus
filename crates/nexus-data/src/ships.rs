@@ -86,6 +86,8 @@ pub struct Ship {
     pub symbol: String,
     /// Display name, e.g. `"Krait Mk II"`.
     pub name: String,
+    /// The name as FDevIDs spells it (`"Krait MkII"`), which is what Spansh's shipyard lists use.
+    pub fdev_name: String,
     /// Store entitlement SKU needed to buy it (FDevIDs `sku.csv`), if any.
     pub entitlement: Option<String>,
 }
@@ -109,6 +111,7 @@ static SHIPYARD: LazyLock<Table> = LazyLock::new(|| {
             id: id.parse().unwrap_or(0),
             symbol: sym.to_ascii_lowercase(),
             name: normalise_mark(name),
+            fdev_name: name.to_string(),
             entitlement: rec.get(3).filter(|s| !s.is_empty()).map(str::to_string),
         });
     }
@@ -262,6 +265,7 @@ mod tests {
         assert_eq!(ship_name("python_nx"), "Python Mk II");
         let k = ship("SmallCombat01_NX").unwrap();
         assert_eq!((k.id, k.name.as_str()), (129039241, "Kestrel Mk II"));
+        assert_eq!(ship("krait_mkii").map(|s| s.fdev_name.as_str()), Some("Krait MkII"));
         assert_eq!(k.entitlement.as_deref(), Some("ELITE_V_SMALL_COMBAT_01"));
         assert_eq!(ship_by_id(129036130).map(|s| s.name.as_str()), Some("Type-11 Prospector"));
     }

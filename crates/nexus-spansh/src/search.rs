@@ -2,9 +2,10 @@
 //! `{"filters":{…},"sort":[…],"size":n,"page":p,"reference_system":"Sol"}`.
 //!
 //! [`SearchRequest`] builds the body; [`filter`] and [`sort`] build the per-field shapes (see
-//! the field catalogue, [`Spansh::searchable_fields`]). [`MarketQuery`], [`ServiceQuery`] and
-//! [`HotspotQuery`] cover the common questions ("who sells Tritium near X", "nearest raw
-//! material trader", "Low Temperature Diamond hotspots ×2 near X").
+//! the field catalogue, [`Spansh::searchable_fields`]). [`MarketQuery`], [`OutfittingQuery`],
+//! [`ServiceQuery`] and [`HotspotQuery`] cover the common questions ("who sells Tritium near X",
+//! "who sells all of these modules", "nearest raw material trader", "Low Temperature Diamond
+//! hotspots ×2 near X").
 
 use std::fmt;
 use std::time::Duration;
@@ -683,6 +684,158 @@ impl HotspotQuery {
     }
 }
 
+/// One module to look for in station outfitting, as Spansh spells it (the FDevIDs `name`:
+/// `Multi-Cannon`, `Frame Shift Drive`, `Military Grade Composite`), with its class and rating.
+///
+/// A station's module goes by one name, and MercGear rows share their base module's symbol:
+/// Spansh lists most 5A power distributors as `Balanced Power Distributor`, so give every name
+/// the symbol has (any of them matches). Spansh can't filter on the mount or on the ship a set
+/// of bulkheads is for either: `Multi-Cannon` 4A matches fixed and gimballed huge multi-cannons
+/// alike. Check each result with [`StationRecord::module`] for the exact symbol.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ModuleFilter {
+    /// Any of these names.
+    pub names: Vec<String>,
+    /// 0 for utilities, 1–4 for hardpoints, 1–8 for internals.
+    pub class: Option<u8>,
+    /// `A`…`I`.
+    pub rating: Option<char>,
+}
+
+impl ModuleFilter {
+    pub fn new(names: Vec<String>, class: Option<u8>, rating: Option<char>) -> Self {
+        Self {
+            names,
+            class,
+            rating,
+        }
+    }
+
+    /// One `modules` item: `{"name": {"value": [..]}, "class": {"value": ["5"]}, "rating": {"value": ["A"]}}`.
+    pub fn to_json(&self) -> Value {
+        let mut item = Map::new();
+        item.insert("name".into(), filter::any_of(self.names.iter().map(String::as_str)));
+        if let Some(c) = self.class {
+            item.insert("class".into(), filter::any_of([c.to_string()]));
+        }
+        if let Some(r) = self.rating {
+            item.insert("rating".into(), filter::any_of([r.to_string()]));
+        }
+        Value::Object(item)
+    }
+}
+
+/// "Stations that sell all of these modules (and these ships) near X": a stations search on
+/// `modules` and `ships`. Several items must all match (tested live 2026-11-02: within 25 ly of
+/// Sol, 130 stations sold a 6A FSD, 108 a 7A shield generator, 56 both). With no modules, any
+/// station with outfitting.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OutfittingQuery {
+    pub modules: Vec<ModuleFilter>,
+    /// Ship names as Spansh spells them (the FDevIDs `name`: `Anaconda`, `Krait MkII`).
+    pub ships: Vec<String>,
+    pub near: Reference,
+    pub max_distance: Option<f64>,
+    /// Ignore stations whose outfitting wasn't updated within this window.
+    pub max_age: Option<Duration>,
+    pub large_pad: bool,
+    pub include_carriers: bool,
+    pub size: u32,
+    pub page: u32,
+}
+
+impl OutfittingQuery {
+    /// Stations that sell every one of `modules`, nearest first.
+    pub fn new(modules: Vec<ModuleFilter>, near: impl Into<Reference>) -> Self {
+        Self {
+            modules,
+            ships: Vec::new(),
+            near: near.into(),
+            max_distance: None,
+            max_age: None,
+            large_pad: false,
+            include_carriers: true,
+            size: 10,
+            page: 0,
+        }
+    }
+
+    /// The shipyard must sell these ships too.
+    pub fn ships(mut self, names: Vec<String>) -> Self {
+        self.ships = names;
+        self
+    }
+
+    pub fn within(mut self, ly: f64) -> Self {
+        self.max_distance = Some(ly);
+        self
+    }
+
+    pub fn max_age(mut self, age: Duration) -> Self {
+        self.max_age = Some(age);
+        self
+    }
+
+    pub fn large_pad(mut self, required: bool) -> Self {
+        self.large_pad = required;
+        self
+    }
+
+    pub fn include_carriers(mut self, on: bool) -> Self {
+        self.include_carriers = on;
+        self
+    }
+
+    pub fn size(mut self, rows: u32) -> Self {
+        self.size = rows;
+        self
+    }
+
+    pub fn page(mut self, page: u32) -> Self {
+        self.page = page;
+        self
+    }
+
+    pub fn to_request(&self) -> SearchRequest {
+        let mut req = SearchRequest::new()
+            .near(self.near.clone())
+            .size(self.size)
+            .page(self.page);
+        if self.modules.is_empty() {
+            req = req.filter("has_outfitting", filter::eq(true));
+        } else {
+            req = req.filter(
+                "modules",
+                Value::Array(self.modules.iter().map(ModuleFilter::to_json).collect()),
+            );
+        }
+        if !self.ships.is_empty() {
+            req = req.filter(
+                "ships",
+                Value::Array(
+                    self.ships
+                        .iter()
+                        .map(|s| filter::combined_names([s.as_str()]))
+                        .collect(),
+                ),
+            );
+        }
+        if self.large_pad {
+            req = req.filter("has_large_pad", filter::eq(true));
+        }
+        if !self.include_carriers {
+            req = req.filter("type", filter::none_of(CARRIER_TYPES));
+        }
+        if let Some(age) = self.max_age {
+            req = req.filter("outfitting_updated_at", filter::updated_within(age));
+        }
+        if let Some(ly) = self.max_distance {
+            req = req.within(ly);
+        }
+        req.sort_by("distance", SortDir::Asc)
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // client methods
 
@@ -742,6 +895,21 @@ impl Spansh {
         &self,
         query: &ServiceQuery,
     ) -> Result<SearchResponse<StationRecord>> {
+        self.search_stations(&query.to_request()).await
+    }
+
+    /// Stations that sell all of a list of modules (and ships), nearest first.
+    pub async fn outfitting_search(
+        &self,
+        query: &OutfittingQuery,
+    ) -> Result<SearchResponse<StationRecord>> {
+        if query
+            .modules
+            .iter()
+            .any(|m| m.names.is_empty() || m.names.iter().any(|n| n.trim().is_empty()))
+        {
+            return Err(Error::InvalidRequest("module names must not be empty".into()));
+        }
         self.search_stations(&query.to_request()).await
     }
 
@@ -825,6 +993,55 @@ mod tests {
             broker["filters"]["technology_broker"],
             json!({"value": ["Guardian"]})
         );
+    }
+
+    #[test]
+    fn outfitting_queries() {
+        let body = OutfittingQuery::new(
+            vec![
+                ModuleFilter::new(vec!["Frame Shift Drive".into()], Some(6), Some('A')),
+                ModuleFilter::new(vec!["Shield Booster".into()], Some(0), Some('A')),
+                ModuleFilter::new(
+                    vec!["Power Distributor".into(), "Balanced Power Distributor".into()],
+                    None,
+                    None,
+                ),
+            ],
+            "Sol",
+        )
+        .ships(vec!["Anaconda".into()])
+        .large_pad(true)
+        .include_carriers(false)
+        .max_age(Duration::from_secs(30 * 86_400))
+        .size(20)
+        .page(1)
+        .to_request()
+        .to_json();
+        let f = &body["filters"];
+        assert_eq!(
+            f["modules"],
+            json!([
+                {"name": {"value": ["Frame Shift Drive"]}, "class": {"value": ["6"]}, "rating": {"value": ["A"]}},
+                {"name": {"value": ["Shield Booster"]}, "class": {"value": ["0"]}, "rating": {"value": ["A"]}},
+                {"name": {"value": ["Power Distributor", "Balanced Power Distributor"]}}
+            ])
+        );
+        assert_eq!(f["ships"], json!([{"name": {"value": ["Anaconda"]}}]));
+        assert_eq!(f["has_large_pad"], json!({"value": true}));
+        assert_eq!(
+            f["type"],
+            json!({"value": ["Drake-Class Carrier"], "logic": "NOT"})
+        );
+        assert_eq!(
+            f["outfitting_updated_at"],
+            json!({"comparison": "<=>", "value": ["now-30d", "now"]})
+        );
+        assert_eq!(body["sort"][0], json!({"distance": {"direction": "asc"}}));
+        assert_eq!((body["size"].clone(), body["page"].clone()), (json!(20), json!(1)));
+        // No modules: any station with outfitting.
+        let any = OutfittingQuery::new(Vec::new(), "Sol").to_request().to_json();
+        assert_eq!(any["filters"]["has_outfitting"], json!({"value": true}));
+        assert!(any["filters"].get("modules").is_none());
     }
 
     #[test]

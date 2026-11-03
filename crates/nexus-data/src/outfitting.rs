@@ -66,6 +66,8 @@ pub struct Module {
     pub symbol: String,
     /// Base display name, e.g. `"Frame Shift Drive (SCO)"`, `"Multi-cannon"`, `"Lightweight Alloy"`.
     pub name: String,
+    /// The name as FDevIDs spells it (`"Multi-Cannon"`), which is what Spansh and other tools use.
+    pub fdev_name: String,
     pub category: ModuleCategory,
     pub mount: Option<Mount>,
     pub guidance: Option<Guidance>,
@@ -194,6 +196,7 @@ fn load() -> Table {
         list.push(Module {
             id: field(0).parse().unwrap_or(0),
             name: normalise_name(field(3)),
+            fdev_name: field(3).to_string(),
             category,
             mount,
             guidance,
@@ -245,6 +248,21 @@ pub fn module_by_id(id: u64) -> Option<&'static Module> {
 pub fn variants(symbol: &str) -> Vec<&'static Module> {
     let sym = normalise_symbol(symbol);
     all().iter().filter(|m| m.symbol == sym).collect()
+}
+
+/// Every FDevIDs name a symbol goes by, the regular module's first. Spansh lists a station's module
+/// under one of them: for the symbols MercGear shares, mostly the MercGear name (most stations
+/// selling a 5A power distributor list it as "Balanced Power Distributor").
+pub fn fdev_names(symbol: &str) -> Vec<&'static str> {
+    let mut rows = variants(symbol);
+    rows.sort_by_key(|m| m.category == ModuleCategory::MercGear);
+    let mut names: Vec<&'static str> = Vec::new();
+    for m in rows {
+        if !names.contains(&m.fdev_name.as_str()) {
+            names.push(&m.fdev_name);
+        }
+    }
+    names
 }
 
 /// Display name for a journal module symbol, e.g. `"5A Frame Shift Drive (SCO)"`,
@@ -532,6 +550,11 @@ mod tests {
         );
         assert_eq!(merc.display_name(), "2B Fixed Enduring Feedback Rail Gun");
         assert_eq!(variants("Hpt_BasicMissileRack_Fixed_Medium").len(), 4);
+        // Spansh's spellings: FDevIDs' own, regular module first.
+        assert_eq!(fdev_names("int_powerdistributor_size5_class5"), ["Power Distributor", "Balanced Power Distributor"]);
+        assert_eq!(fdev_names("Hpt_MultiCannon_Gimbal_Huge"), ["Multi-Cannon"]);
+        assert_eq!(module("hpt_multicannon_gimbal_huge").map(|m| (m.name.as_str(), m.fdev_name.as_str())), Some(("Multi-cannon", "Multi-Cannon")));
+        assert!(fdev_names("no_such_module").is_empty());
         // Cosmetics and unknowns.
         assert_eq!(display_name("krait_mkii_cockpit"), "Cockpit");
         assert_eq!(display_name("modularcargobaydoorfdl"), "Cargo Hatch");

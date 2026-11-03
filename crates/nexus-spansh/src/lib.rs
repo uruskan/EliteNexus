@@ -7,8 +7,9 @@
 //!   into typed routes ([`Plotted`]). Every route also converts to the common [`Waypoint`] list
 //!   ([`RouteWaypoints`]). Cancel with a [`CancellationToken`] or by dropping the future.
 //! * **Search & lookup** — autocomplete, system by id64/name, full system dumps, nearest system,
-//!   stations/bodies/systems search with typed helpers for commodities, services and ring
-//!   hotspots, the global search box, and [`Spansh::search_raw`] as an escape hatch.
+//!   stations/bodies/systems search with typed helpers for commodities, outfitting (several
+//!   modules and ships at once), services and ring hotspots, the global search box, and
+//!   [`Spansh::search_raw`] as an escape hatch.
 //!
 //! All response types are `#[serde(default)]` and lenient (Spansh echoes numbers as strings,
 //! uses `null` freely and adds fields over time); ids are `u64` throughout.
@@ -60,9 +61,9 @@ pub use routes::trade::{
 };
 pub use routes::{RouteWaypoints, SystemRef, Waypoint};
 pub use search::{
-    HotspotQuery, MarketBounds, MarketQuery, MarketSide, MarketSort, MaterialTrader, Reference,
-    SearchKind, SearchRequest, SearchResponse, ServiceQuery, SortDir, StationService,
-    TechnologyBroker, filter, search_url, sort,
+    HotspotQuery, MarketBounds, MarketQuery, MarketSide, MarketSort, MaterialTrader, ModuleFilter,
+    OutfittingQuery, Reference, SearchKind, SearchRequest, SearchResponse, ServiceQuery, SortDir,
+    StationService, TechnologyBroker, filter, search_url, sort,
 };
 pub use ship::{FsdSpec, LoadoutError, ShipProfile, fsd_spec, guardian_booster_range};
 pub use tokio_util::sync::CancellationToken;

@@ -176,6 +176,20 @@ fn stations_search_sample() {
     assert_eq!(galileo.modules[1].price, Some(35_120));
     assert_eq!(galileo.ships[1].symbol.as_deref(), Some("BelugaLiner"));
     assert_eq!(galileo.market_updated_unix(), Some(1_791_789_343));
+    // Exact symbols, any case: what an outfitting search checks its results against.
+    assert_eq!(
+        galileo.module("adder_armour_grade2").and_then(|m| m.price),
+        Some(35_120)
+    );
+    assert!(galileo.module("anaconda_armour_grade2").is_none());
+    assert!(galileo.ship("belugaliner").is_some());
+    assert!(galileo.ship("anaconda").is_none());
+    assert_eq!(
+        galileo.outfitting_updated_at.as_deref(),
+        Some("2026-10-12T07:16:09Z")
+    );
+    assert!(galileo.outfitting_updated_unix().is_some());
+    assert!(galileo.shipyard_updated_unix() < galileo.outfitting_updated_unix());
     assert_eq!(resp.results[1].prohibited_commodities[0], "Narcotics");
 }
 

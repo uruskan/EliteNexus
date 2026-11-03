@@ -285,6 +285,35 @@ impl StationRecord {
     pub fn market_updated_unix(&self) -> Option<i64> {
         self.market_updated_at.as_deref().and_then(parse_timestamp)
     }
+
+    /// The outfitting entry for a module symbol, any case (`Hpt_MultiCannon_Gimbal_Huge`). Its
+    /// name may be a MercGear one: those share their base module's symbol.
+    pub fn module(&self, symbol: &str) -> Option<&OutfittingEntry> {
+        self.modules.iter().find(|m| {
+            m.ed_symbol
+                .as_deref()
+                .is_some_and(|s| s.eq_ignore_ascii_case(symbol))
+        })
+    }
+
+    /// The shipyard entry for a ship symbol, any case (`Anaconda`, `krait_mkii`).
+    pub fn ship(&self, symbol: &str) -> Option<&ShipyardEntry> {
+        self.ships.iter().find(|s| {
+            s.symbol
+                .as_deref()
+                .is_some_and(|x| x.eq_ignore_ascii_case(symbol))
+        })
+    }
+
+    /// Outfitting data timestamp as unix seconds.
+    pub fn outfitting_updated_unix(&self) -> Option<i64> {
+        self.outfitting_updated_at.as_deref().and_then(parse_timestamp)
+    }
+
+    /// Shipyard data timestamp as unix seconds.
+    pub fn shipyard_updated_unix(&self) -> Option<i64> {
+        self.shipyard_updated_at.as_deref().and_then(parse_timestamp)
+    }
 }
 
 // =============================================================================================

@@ -523,14 +523,27 @@ The response was `count` 3029: Barnard's Star 5 (A ring Painite ×2), WISE 0855-
   ```
 - **Nearest Guardian technology broker**: replace the filter with `"technology_broker":{"value":["Guardian"]}`.
 - **Interstellar Factors**: `"services":[{"name":{"value":["Interstellar Factors Contact"]}}]`.
-- **Outfitting, 5A FSD**: `"modules":[{"name":{"value":["Frame Shift Drive"]},"class":{"value":["5"]},"rating":{"value":["A"]}}]`.
-- **Ship for sale**: `"ships":[{"name":{"value":["Mandalay"]}}]`.
-- **Exclude fleet carriers**: `"type":{"value":["Coriolis Starport","Orbis Starport","Ocellus Starport","Outpost","Planetary Port","Planetary Outpost","Asteroid base","Mega ship","Dodec Starport","Dockable Planet Station","Settlement"]}`, or `{"value":["Drake-Class Carrier"],"logic":"NOT"}` (UNVERIFIED).
+- **Outfitting, 5A FSD**: `"modules":[{"name":{"value":["Frame Shift Drive"]},"class":{"value":["5"]},"rating":{"value":["A"]}}]` (since tested, with several modules at once: §4.8).
+- **Ship for sale**: `"ships":[{"name":{"value":["Mandalay"]}}]` (tested with `Anaconda` and `Anaconda Mk II`, §4.8).
+- **Exclude fleet carriers**: `"type":{"value":["Coriolis Starport","Orbis Starport","Ocellus Starport","Outpost","Planetary Port","Planetary Outpost","Asteroid base","Mega ship","Dodec Starport","Dockable Planet Station","Settlement"]}`, or `{"value":["Drake-Class Carrier"],"logic":"NOT"}` (the second form tested, §4.8).
 - **Fresh markets only**: `"market_updated_at":{"comparison":"<=>","value":["now-2d","now"]}`.
 - **Powerplay system search**: `{"filters":{"controlling_power":{"value":["Jerome Archer"]},"power_state":{"value":["Fortified","Stronghold"]}}}` on `/api/systems/search`.
 - **Biological signals ≥ 3**: `"signals":[{"name":"Biological","count":[3,99],"comparison":"<=>"}]` on bodies. Search results name signals `Human`, `Biological` and so on.
 
 **Enum strings** for station `type` and `services` are listed in §7.3, and the EDD mapping is in `SpanshClassConvertEnums.cs`. Older dumps include `"Asteroid base"` and newer data includes `"Dodec Starport"`, `"Space Construction Depot"`, `"Planetary Construction Depot"` and `"Dockable Planet Station"`.
+
+### 4.8 Outfitting: stations that sell a whole build [TESTED 2026-11-02 and 2026-11-04]
+
+What Elite Nexus's outfitting search relies on (`nexus_spansh::OutfittingQuery`, with names from `nexus_data::outfitting::fdev_names` and `ships::Ship::fdev_name`):
+
+- **Several `modules` items must all match** (AND). Within 25 ly of Sol: 6A FSD 130 stations, 7A shield generator 108, both in one array 56. A 15-module Anaconda-style list plus `"ships":[{"name":{"value":["Anaconda"]}}]` answers in about 1.2–1.7 s; the nearest station selling all 15 was 32.8 ly from Sol.
+- **Within one item, several `name` values match any of them.** That matters because **MercGear rows share their base module's symbol, and Spansh lists the module under one name, mostly the MercGear one**: within 50 ly of Sol, `Power Distributor` 5A matched 113 stations, `Balanced Power Distributor` 5A 1,082, either name 1,195. Galileo lists `Int_PowerDistributor_Size5_Class5` only as "Balanced Power Distributor" (category `mercgear`), with no regular row. So send every FDevIDs name of the symbol (`nexus_data::outfitting::fdev_names`). The affected symbols are the 25 MercGear rows of FDevIDs `outfitting.csv` (power distributors, module reinforcements, cargo racks, seeker racks, fragment cannons, a medium fixed multi-cannon, a huge fixed beam laser and cannon, …).
+- **Names, classes and ratings are FDevIDs' own**: over 1,190 distinct modules at Jameson Memorial, Galileo, Ray Gateway and Abraham Lincoln, Spansh's `name`/`class`/`rating` equalled FDevIDs `outfitting.csv` for every symbol it knew (spelling `Multi-Cannon`, not the app's display `Multi-cannon`; utilities class 0). Ship names equal FDevIDs `shipyard.csv` (`Krait MkII`, `Python MkII`).
+- **The filter can't say the mount or whose bulkheads**: `Multi-Cannon` 4A matches `Hpt_MultiCannon_Fixed_Huge` and `_Gimbal_Huge`; every hull's `Military Grade Composite` is class 1 rating I. Every result carries its whole `modules[]` with `ed_symbol` (mixed case, e.g. `Anaconda_Armour_Grade3`) and `price` (sometimes missing), and `ships[]` with `symbol` and `price`, so check the exact symbols on the results.
+- **`carrier_docking_access`** values (`/api/stations/field_values/carrier_docking_access`): `All`, `Friends`, `None`, `Squadron`, `Squadron Friends`; often empty. Many carriers with `has_outfitting` list no modules at all, or data years old.
+- **Data age**: `outfitting_updated_at` on the nearest full matches was 7–12 months old (Understrand 2026-03-24, Kyriazi Survey 2025-11-04); big stations are refreshed daily. Show it.
+- `"type":{"value":["Drake-Class Carrier"],"logic":"NOT"}` excludes carriers (a 15-module search went from 4,970 to 4,969 hits).
+- The Anaconda Mk II (`AnacondaMkII`, ARX early access) was sold at 2,319 stations on 2026-11-04, all without a credit price.
 
 ---
 
