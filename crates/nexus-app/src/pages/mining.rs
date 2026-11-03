@@ -210,7 +210,7 @@ fn session(ui: &mut Ui, gs: &GameState, s: &MiningSession, live: bool) {
     });
 }
 
-const NOT_NAMED: &str = "The game names the mining location nearest to where your ship lands or lifts off. This time it named none: the ship set down far from every location.";
+const NOT_NAMED: &str = "The game names a mining location only when your ship touches down or lifts off within 50 km of one. This time it named none: the Rhino was dropped while the ship hovered, or the ship set down further from every location. Touch down by the location before you deploy the Rhino and its number is recorded; if you know it, your note can keep it.";
 
 /// "Body 1 · Mining location 4": the body, then the number to pick in the navigation panel.
 fn site_title(site: &SurfaceSite) -> String {
@@ -289,7 +289,8 @@ fn site_row(ui: &mut Ui, gs: &GameState, site: &SurfaceSite, prefs: &mut MiningP
         }
     });
     if let Some(line) = locations_line(gs, site) {
-        ui.label(RichText::new(line).size(size::CAPTION).color(pal::DIM)).on_hover_text("From your FSS or DSS scan of the body");
+        ui.label(RichText::new(line).size(size::CAPTION).color(pal::DIM))
+            .on_hover_text("From your FSS or DSS scan of the body. \"At least\" when the game didn't name a location you worked here: it may be one of those it named.");
     }
     let mut text = prefs.note(site.key).to_string();
     let edit = egui::TextEdit::singleline(&mut text)
@@ -303,13 +304,16 @@ fn site_row(ui: &mut Ui, gs: &GameState, site: &SurfaceSite, prefs: &mut MiningP
     false
 }
 
-/// "13 mining locations on this body; you've worked 2", from the commander's own scans of it.
+/// "13 mining locations on this body; you've worked 2", from the commander's own scans of it. A location the game
+/// didn't name may be one of the named ones, so with one the count is "at least".
 fn locations_line(gs: &GameState, site: &SurfaceSite) -> Option<String> {
     let total = gs.exploration.systems.get(&site.key.system_address)?.bodies.get(&site.key.body_id)?.mining_locations;
     if total == 0 {
         return None;
     }
-    let worked = gs.mining.sites.keys().filter(|k| k.system_address == site.key.system_address && k.body_id == site.key.body_id && k.location.is_some()).count();
+    let on_body = gs.mining.sites.keys().filter(|k| k.system_address == site.key.system_address && k.body_id == site.key.body_id);
+    let (named, unnamed) = on_body.fold((0, false), |(n, u), k| if k.location.is_some() { (n + 1, u) } else { (n, true) });
+    let worked = if unnamed { format!("at least {}", named.max(1)) } else { named.to_string() };
     Some(format!("{total} mining location{} on this body; you've worked {worked}", if total == 1 { "" } else { "s" }))
 }
 
@@ -514,6 +518,22 @@ mod tests {
         site_with_spot(&mut gs, 10.0001, "Iridium");
         assert!(remember(&gs, &mut prefs));
         assert_eq!((prefs.deposits.len(), prefs.deposits[0].location), (1, Some(4)), "one deposit, now with its number");
+    }
+
+    /// Chequers2's A 1 (discussion 5): worked, but the game named no location, so "you've worked 0" was wrong.
+    #[test]
+    fn worked_counts_a_location_the_game_did_not_name() {
+        let mut gs = GameState::default();
+        gs.exploration.system_mut(100, "Alpha", Timestamp(1)).body_mut(1, "Alpha 1").mining_locations = 17;
+        let unnamed = SiteKey { system_address: 100, body_id: 1, location: None };
+        gs.mining.sites.insert(unnamed, SurfaceSite::new(unnamed, "Alpha", "Alpha 1"));
+        let line = |gs: &GameState, k: SiteKey| locations_line(gs, &gs.mining.sites[&k]).unwrap();
+        assert_eq!(line(&gs, unnamed), "17 mining locations on this body; you've worked at least 1");
+        let named = SiteKey { location: Some(9), ..unnamed };
+        gs.mining.sites.insert(named, SurfaceSite::new(named, "Alpha", "Alpha 1"));
+        assert_eq!(line(&gs, named), "17 mining locations on this body; you've worked at least 1", "the unnamed one may be location 9");
+        gs.mining.sites.remove(&unnamed);
+        assert_eq!(line(&gs, named), "17 mining locations on this body; you've worked 1");
     }
 
     #[test]

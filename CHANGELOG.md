@@ -16,6 +16,16 @@ release time that section becomes the new version and the release workflow publi
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
 
+### Fixed
+- **Mining** › Surface mining sites: a Rhino run in which you sent your ship away (or called it back) is credited to
+  the mining location your landing named. When the ship lifted off or landed by itself without naming a location,
+  Elite Nexus took that for a landing far from every location and listed the run as "location not named". The list
+  is read from the journal, so earlier runs move to their location too. The game names a location only when the ship
+  touches down or lifts off within 50 km of one, so a Rhino dropped from a hovering ship still can't be placed; an
+  unnamed site now says so, and that touching down by the location first records its number. Such a run after you
+  lifted off is no longer credited to the location you left. A body you mined where the game named no location no
+  longer says "you've worked 0": it says "at least 1". Reported by Chequers2.
+
 ## [0.7.3-beta.2] - 2026-10-25
 
 A second beta of 0.7.3: the compact view becomes the **overlay**, a small island at the top of the game's screen

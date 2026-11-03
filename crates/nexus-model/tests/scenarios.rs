@@ -577,6 +577,42 @@ fn surface_mining_remembers_the_location() {
     assert!(alerts.is_empty(), "the ship landing itself (recalled), in the session that worked it");
 }
 
+/// One way Chequers2's runs (discussion 5) could have come out "location not named". Dismissed from the Rhino, the
+/// ship lifts off with no position and, recalled, lands with none: the location the landing named holds for the whole
+/// run. Lifting off yourself leaves it: a Rhino dropped later from the hovering ship, or after landing far from every
+/// location, isn't named.
+#[test]
+fn surface_mining_keeps_the_location_when_the_ship_is_dismissed() {
+    use nexus_model::mining::SiteKey;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let unpiloted = |event: &str, ts: &str, nearest: Option<&str>| {
+        let nearest = nearest.map(|n| format!(r#", "NearestDestination":"{n}""#)).unwrap_or_default();
+        format!(r#"{{ "timestamp":"{ts}", "event":"{event}", "PlayerControlled":false, "Taxi":false, "Multicrew":false, "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 1", "BodyID":1, "OnStation":false, "OnPlanet":true{nearest} }}"#)
+    };
+    let touchdown = landing("Touchdown", "2026-10-01T10:03:00Z", 9, 10.0, 20.0, true);
+    let dismissed = unpiloted("Liftoff", "2026-10-01T10:05:00Z", None);
+    let recalled = unpiloted("Touchdown", "2026-10-01T10:40:00Z", Some(""));
+    let (first, second) = (refined("2026-10-01T10:10:00Z", "iridium", "Iridium"), refined("2026-10-01T10:45:00Z", "iridium", "Iridium"));
+    feed(&mut m, &[touchdown.as_str(), RHINO_OUT, dismissed.as_str(), first.as_str(), recalled.as_str(), second.as_str()]);
+    let named = SiteKey { system_address: 100, body_id: 1, location: Some(9) };
+    let sites: Vec<SiteKey> = m.active().unwrap().mining.sites.keys().copied().collect();
+    assert_eq!(sites, [named], "both tonnes at mining location 9");
+    assert_eq!(m.active().unwrap().mining.sites[&named].total(), 2);
+
+    // Lifted off and flew on: the Rhino dropped from the hovering ship (no landing at all) isn't credited to location 9.
+    let liftoff = landing("Liftoff", "2026-10-01T11:00:00Z", 9, 10.0, 20.0, true);
+    let third = refined("2026-10-01T11:20:00Z", "iridium", "Iridium");
+    feed(&mut m, &[RHINO_IN, liftoff.as_str(), RHINO_OUT, third.as_str()]);
+    let unnamed = SiteKey { location: None, ..named };
+    assert_eq!(m.active().unwrap().mining.sites.keys().copied().collect::<Vec<_>>(), [unnamed, named]);
+    // Nor is a run after setting down somewhere the game names no location.
+    let far = r#"{ "timestamp":"2026-10-01T11:40:00Z", "event":"Touchdown", "PlayerControlled":true, "Taxi":false, "Multicrew":false, "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 1", "BodyID":1, "OnStation":false, "OnPlanet":true, "Latitude":-30.0, "Longitude":100.0, "NearestDestination":"" }"#;
+    let fourth = refined("2026-10-01T11:50:00Z", "iridium", "Iridium");
+    feed(&mut m, &[RHINO_IN, far, RHINO_OUT, fourth.as_str()]);
+    assert_eq!((m.active().unwrap().mining.sites[&unnamed].total(), m.active().unwrap().mining.sites.len()), (2, 2));
+}
+
 /// Logging out in the Rhino and back in keeps the location the landing named; logging in on another body drops it.
 #[test]
 fn surface_mining_location_survives_a_relog_on_the_same_body() {

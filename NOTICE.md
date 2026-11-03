@@ -13,6 +13,7 @@ Each source's licence text and exact commit are kept next to the data in `data/*
 | EDRefCard by Richard Buckle | cross-check for binding action groupings/names (`crates/nexus-binds`) | MIT | Licence reproduced in `crates/nexus-binds/README.md`. |
 | Community exobiology research (Canonn, EDMC-BioScan, SrvSurvey, EDAstro, Fandom wiki) | species values, colony ranges, prediction conditions (`data/exobiology`) | facts only | No GPL code is copied; entries cite their sources. |
 | MattG's exploration value formulae (Frontier forums) | cartographic value estimates | facts only | |
+| Community Rhino research (EDSMT, EDRhinoSpotter, ED-Outrider) | how the journal names planetary mining locations around landings, a ship sent away and a Rhino dropped from a hover (`docs/research/journal.md` §5.7) | facts only | No code is copied. |
 | Spansh, EDSM, Inara, EDDN, EDAstro | live services the app talks to (uploads opt-in) | their own terms | See `docs/research/` for each API's usage rules. The optional Spansh station import streams Spansh's public daily dump into the local database. |
 | EDDN JSON schemas + READMEs (EDCD/EDDN, `docs/research/eddn-schemas`) | validating every upload in tests | BSD-3-Clause | Test-only; not in the binary. Add EDDN's `LICENSE` file there before sharing the source. |
 | Inter by Rasmus Andersson (`data/fonts/inter`) | interface typeface, compiled into the exe | SIL Open Font License 1.1 | Licence text in `data/fonts/inter/LICENSE.txt`; ship it with binaries (the release zip includes this NOTICE). |

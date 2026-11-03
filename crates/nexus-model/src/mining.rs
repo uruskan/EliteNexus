@@ -266,14 +266,20 @@ impl Mining {
         }
     }
 
-    /// Touchdown or Liftoff: the game names the mining location nearest the ship. A landing that names none leaves
-    /// the location unknown, rather than keeping one from before.
+    /// Touchdown or Liftoff: the game names the mining location nearest the ship (within 50 km). A landing the
+    /// commander flies names the location, or none, rather than keeping one from before; lifting off leaves it, so a
+    /// Rhino dropped later from a hovering ship isn't credited to the location left behind. The ship sent away from
+    /// the Rhino (an unpiloted lift-off) or called back to it (an unpiloted landing) comes with no position, and the
+    /// commander is still there, so those keep the location already named on this body unless they name one.
     pub fn on_landing(&mut self, l: &ev::Landing, touchdown: bool) {
-        let key = SiteKey {
-            system_address: l.system_address,
-            body_id: l.body_id,
-            location: l.nearest_destination.as_deref().and_then(mining_location),
+        let named = l.nearest_destination.as_deref().and_then(mining_location);
+        let kept = self.here.as_ref().filter(|h| h.key.system_address == l.system_address && h.key.body_id == l.body_id).and_then(|h| h.key.location);
+        let location = match (touchdown, l.player_controlled != Some(false)) {
+            (true, true) => named,
+            (false, true) => None,
+            (_, false) => named.or(kept),
         };
+        let key = SiteKey { system_address: l.system_address, body_id: l.body_id, location };
         let ship = if touchdown { l.latitude.zip(l.longitude) } else { None };
         self.here = Some(Here { key, ship });
     }
