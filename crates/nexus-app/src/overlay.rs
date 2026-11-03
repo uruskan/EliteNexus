@@ -222,7 +222,8 @@ pub struct DialMark {
 pub enum DialKind {
     /// An earlier sample and its colony range (hundredths of the radius); `close` while you're inside it.
     Sample { range: u8, close: bool },
-    Deposit { nearest: bool },
+    /// A deposit, with its number on the body (shown beside it).
+    Deposit { nearest: bool, number: Option<u32> },
     Ship,
     Landing,
 }
@@ -343,9 +344,10 @@ pub struct Sampling {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mining {
-    /// The nearest deposit, what came out there, and its mining location's number.
+    /// The nearest deposit, what came out there, its own number and its mining location's number.
     pub deposit: Option<Target>,
     pub commodity: String,
+    pub number: Option<u32>,
     pub location: Option<u32>,
     pub ship: Option<Target>,
     pub landing: Option<Target>,
@@ -648,7 +650,7 @@ fn read_mining(gs: &GameState, prefs: &MiningPrefs) -> Option<Mining> {
         .map(|m| {
             let a = (m.bearing - v.heading).to_radians();
             let kind = match m.kind {
-                MarkKind::Deposit => DialKind::Deposit { nearest: deposit.is_some_and(|d| std::ptr::eq(d, m)) },
+                MarkKind::Deposit => DialKind::Deposit { nearest: deposit.is_some_and(|d| std::ptr::eq(d, m)), number: m.number },
                 MarkKind::Ship => DialKind::Ship,
                 MarkKind::Landing => DialKind::Landing,
             };
@@ -658,6 +660,7 @@ fn read_mining(gs: &GameState, prefs: &MiningPrefs) -> Option<Mining> {
     Some(Mining {
         deposit: deposit.map(|d| as_target(d, &d.tag)),
         commodity: deposit.map(|d| d.tag.clone()).unwrap_or_default(),
+        number: deposit.and_then(|d| d.number),
         location: deposit.and_then(|d| d.location),
         ship: nearest(MarkKind::Ship).map(|m| as_target(m, "Ship")),
         landing: nearest(MarkKind::Landing).map(|m| as_target(m, "Landed")),
@@ -1169,9 +1172,10 @@ fn mining_card(m: &Mining) -> Card {
     let compact = Compact { lead: vec![Piece::Glyph(icon(glyph::DIAMOND, Tint::Orange, 20)), text(word.clone(), Style::Label, Tint::White)], trail };
     let mut lines = Vec::new();
     if let Some(g) = goal {
+        let deposit = m.number.map_or_else(|| format!("{word} deposit"), |n| format!("{word} deposit {n}"));
         let what = match (m.deposit.is_some(), m.location) {
-            (true, Some(n)) => format!("{word} deposit · location {n}"),
-            (true, None) => format!("{word} deposit"),
+            (true, Some(n)) => format!("{deposit} · location {n}"),
+            (true, None) => deposit,
             (false, _) => "Your ship".to_string(),
         };
         lines.push(vec![text(what, Style::Value, Tint::White)]);
@@ -1383,6 +1387,7 @@ pub fn demo(name: &str) -> Option<(IslandView, IslandView)> {
         "mining" => mining_card(&Mining {
             deposit: Some(Target { label: "Bauxite".into(), dist_m: 1_200, bearing: 237, turn: 30 }),
             commodity: "Bauxite".into(),
+            number: Some(2),
             location: Some(4),
             ship: Some(Target { label: "Ship".into(), dist_m: 3_400, bearing: 84, turn: -153 }),
             landing: Some(Target { label: "Landed".into(), dist_m: 2_100, bearing: 192, turn: -45 }),
@@ -1390,8 +1395,8 @@ pub fn demo(name: &str) -> Option<(IslandView, IslandView)> {
                 rings: 3,
                 north: 153,
                 marks: vec![
-                    DialMark { x: 16, y: 31, kind: DialKind::Deposit { nearest: true } },
-                    DialMark { x: -57, y: -18, kind: DialKind::Deposit { nearest: false } },
+                    DialMark { x: 16, y: 31, kind: DialKind::Deposit { nearest: true, number: Some(2) } },
+                    DialMark { x: -57, y: -18, kind: DialKind::Deposit { nearest: false, number: Some(1) } },
                     DialMark { x: -65, y: -45, kind: DialKind::Ship },
                     DialMark { x: -14, y: 53, kind: DialKind::Landing },
                 ],
@@ -1583,6 +1588,7 @@ mod tests {
         let mining = |d: u32| Mining {
             deposit: Some(Target { label: "Bauxite".into(), dist_m: d, bearing: 237, turn: 30 }),
             commodity: "Bauxite".into(),
+            number: Some(2),
             location: Some(4),
             ship: None,
             landing: None,
@@ -1593,7 +1599,10 @@ mod tests {
         assert_eq!((v.moment, v.size), (Some(Moment::Mining), Size::Compact));
         assert_eq!(compact_words(&v), ("Bauxite".into(), "1.2 km".into()));
         i.mining = Some(mining(120));
-        assert_eq!(r.view(&i, false, 30.0).size, Size::Expanded, "reached the deposit");
+        let v = r.view(&i, false, 30.0);
+        assert_eq!(v.size, Size::Expanded, "reached the deposit");
+        let Some(Row::Dial { lines, .. }) = v.expanded.as_ref().and_then(|e| e.rows.first()) else { panic!("the radar") };
+        assert_eq!(words(&lines[0]), "Bauxite deposit 2 · location 4", "its number tells two of a kind apart");
         assert_eq!(r.view(&i, false, 35.0).size, Size::Compact);
         i.context.activity = Activity::Srv(Vehicle::Scarab);
         assert_eq!(r.view(&i, false, 36.0).moment, None, "deposits are the Rhino's");

@@ -10,6 +10,10 @@ release time that section becomes the new version and the release workflow publi
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
+- **Mining** › Surface radar numbers the deposits (an idea from Chequers2): 1, 2, 3… on each body in the order the
+  Rhino records them, kept between runs, beside each deposit on the radar, in the list under it and on the overlay's
+  radar. Each deposit in the list takes a note of your own, such as how many rigs fit, so two deposits of the same
+  commodity can be told apart. Deposits kept by 0.7.3-beta.1 are numbered too, oldest first.
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain

@@ -1056,10 +1056,13 @@ pub mod island {
                     p.circle_stroke(at, rr, Stroke::new(k, col.gamma_multiply(0.75)));
                     p.circle_filled(at, 2.6 * k, col);
                 }
-                DialKind::Deposit { nearest } => {
+                DialKind::Deposit { nearest, number } => {
                     let col = if nearest { pal::ACCENT } else { pal::ACCENT.gamma_multiply(0.65) };
                     let s = 4.2 * k;
                     p.add(Shape::convex_polygon(vec![at + Vec2::new(0.0, -s), at + Vec2::new(s, 0.0), at + Vec2::new(0.0, s), at + Vec2::new(-s, 0.0)], col, Stroke::NONE));
+                    if let Some(n) = number {
+                        p.text(at - Vec2::new(s + 2.0 * k, 0.0), Align2::RIGHT_CENTER, n.to_string(), bold(12.0 * k), col);
+                    }
                 }
                 DialKind::Ship => {
                     p.circle_filled(at, 3.4 * k, pal::CYAN);

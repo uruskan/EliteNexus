@@ -36,6 +36,11 @@ pub struct Deposit {
     pub lon: f64,
     pub commodities: Vec<String>,
     pub found: Timestamp,
+    /// Its number on the body, in the order the deposits there were found (1, 2, 3…), shown beside it on the radar.
+    /// 0: not numbered yet (kept before deposits had numbers).
+    pub number: u32,
+    /// The commander's note: how many rigs fit, say.
+    pub note: String,
 }
 
 impl Deposit {
@@ -82,9 +87,9 @@ impl MiningPrefs {
     }
 }
 
-/// Copies the deposits recorded this run (positions exist only live) into `prefs`; true when anything was added. A
-/// deposit is matched by its place on the body, so one first kept under "location not named" takes the number when
-/// a later landing names it.
+/// Copies the deposits recorded this run (positions exist only live) into `prefs` and numbers new ones; true when
+/// anything changed. A deposit is matched by its place on the body, so it keeps its number and note on later runs,
+/// and one first kept under "location not named" takes the location's number when a later landing names it.
 pub fn remember(gs: &GameState, prefs: &mut MiningPrefs) -> bool {
     let mut changed = false;
     for site in gs.mining.sites.values() {
@@ -113,13 +118,27 @@ pub fn remember(gs: &GameState, prefs: &mut MiningPrefs) -> bool {
                         lon: spot.lon,
                         commodities: spot.refined.keys().cloned().collect(),
                         found: spot.found,
+                        ..Default::default()
                     });
                     changed = true;
                 }
             }
         }
     }
-    changed
+    number_deposits(&mut prefs.deposits) || changed
+}
+
+/// Numbers the deposits that have no number yet, on each body in the order they were found, after the highest
+/// number there: new ones, and those kept before deposits were numbered. True when any got one.
+fn number_deposits(deposits: &mut [Deposit]) -> bool {
+    let mut new: Vec<usize> = (0..deposits.len()).filter(|&i| deposits[i].number == 0).collect();
+    new.sort_by_key(|&i| (deposits[i].found, i));
+    for &i in &new {
+        let body = (deposits[i].system_address, deposits[i].body_id);
+        let top = deposits.iter().filter(|d| (d.system_address, d.body_id) == body).map(|d| d.number).max().unwrap_or(0);
+        deposits[i].number = top + 1;
+    }
+    !new.is_empty()
 }
 
 fn same_place(d: &Deposit, spot: &Spot, radius_m: Option<f64>) -> bool {
@@ -144,7 +163,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, prefs: &mut MiningPrefs) -> (bool, Opti
     }
     if let Some(v) = radar_view(gs, prefs) {
         ui.add_space(10.0);
-        card_tinted(ui, icon::CROSSHAIR, "Surface radar", pal::ACCENT, |ui| surface_radar(ui, &v));
+        changed |= card_tinted(ui, icon::CROSSHAIR, "Surface radar", pal::ACCENT, |ui| surface_radar(ui, &v, prefs));
     }
     if !gs.mining.sites.is_empty() {
         ui.add_space(10.0);
@@ -337,6 +356,10 @@ pub(crate) struct Mark {
     pub(crate) bearing: f64,
     /// The mining location's number (deposits and landings), when the game named one.
     pub(crate) location: Option<u32>,
+    /// A deposit's own number on the body.
+    pub(crate) number: Option<u32>,
+    /// Which of the saved deposits it is ([`MiningPrefs::deposits`]), for its note.
+    pub(crate) deposit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,36 +381,40 @@ pub fn radar_view(gs: &GameState, prefs: &MiningPrefs) -> Option<RadarView> {
     }
     let on_body = |k: SiteKey| k.system_address == loc.system_address && k.body_id == body_id;
     let at_location = |n: Option<u32>| n.map(|n| format!(" (mining location {n})")).unwrap_or_default();
-    let mut marks = Vec::new();
-    let mut mark = |kind: MarkKind, pos: (f64, f64), tag: String, label: String, location: Option<u32>| {
-        marks.push(Mark { kind, tag, label, dist_m: surface_distance(me, pos, radius_m), bearing: surface_bearing(me, pos), location });
+    let mark = |kind: MarkKind, pos: (f64, f64), tag: String, label: String, location: Option<u32>| {
+        Mark { kind, tag, label, dist_m: surface_distance(me, pos, radius_m), bearing: surface_bearing(me, pos), location, number: None, deposit: None }
     };
-    for d in prefs.deposits.iter().filter(|d| on_body(d.key())) {
+    let mut marks = Vec::new();
+    for (i, d) in prefs.deposits.iter().enumerate().filter(|(_, d)| on_body(d.key())) {
         let tag = d.commodities.first().cloned().unwrap_or_default();
-        mark(MarkKind::Deposit, (d.lat, d.lon), tag, format!("{} deposit{}", d.commodities.join(", "), at_location(d.location)), d.location);
+        let label = format!("{} deposit{}", d.commodities.join(", "), at_location(d.location));
+        marks.push(Mark { number: Some(d.number).filter(|n| *n > 0), deposit: Some(i), ..mark(MarkKind::Deposit, (d.lat, d.lon), tag, label, d.location) });
     }
     let ship = gs.mining.here.as_ref().filter(|h| on_body(h.key)).and_then(|h| h.ship);
     if let Some(p) = ship {
-        mark(MarkKind::Ship, p, "Ship".into(), "Your ship".into(), None);
+        marks.push(mark(MarkKind::Ship, p, "Ship".into(), "Your ship".into(), None));
     }
     for site in gs.mining.sites.values().filter(|s| on_body(s.key)) {
         if let Some(&p) = site.landings.last() && Some(p) != ship {
-            mark(MarkKind::Landing, p, "Landed".into(), format!("Where your ship landed last time{}", at_location(site.key.location)), site.key.location);
+            marks.push(mark(MarkKind::Landing, p, "Landed".into(), format!("Where your ship landed last time{}", at_location(site.key.location)), site.key.location));
         }
     }
     (!marks.is_empty()).then(|| RadarView { heading: st.heading.unwrap_or(0.0), marks })
 }
 
-/// The radar and the distances and bearings under it (Mining page).
-pub fn surface_radar(ui: &mut Ui, v: &RadarView) {
+/// The radar and the distances and bearings under it, with a note on each deposit (Mining page). True when a note
+/// changed.
+pub fn surface_radar(ui: &mut Ui, v: &RadarView, prefs: &mut MiningPrefs) -> bool {
     radar(ui, v, 320.0);
     ui.add_space(6.0);
-    radar_list(ui, v, 8);
+    let changed = radar_list(ui, v, 8, prefs);
     footnote(
         ui,
         "Up is the way you're facing; turn until your heading shows the bearing. Deposits are where the Rhino refined while Elite Nexus was running \
-         (the journal records no positions). Rigs aren't in the journal, so they can't be shown.",
+         (the journal records no positions), numbered on each body in the order they were found; numbers and notes are kept between runs. \
+         Rigs aren't in the journal, so they can't be shown.",
     );
+    changed
 }
 
 /// Top-down radar centred on you, "up" = the way you're facing (like the exobiology radar), at most `max_side` wide.
@@ -420,6 +447,9 @@ fn radar(ui: &mut Ui, v: &RadarView, max_side: f32) {
             MarkKind::Deposit => {
                 let diamond = [sp + Vec2::new(0.0, -7.0), sp + Vec2::new(6.0, 0.0), sp + Vec2::new(0.0, 7.0), sp + Vec2::new(-6.0, 0.0)];
                 p.add(egui::Shape::convex_polygon(diamond.to_vec(), pal::ACCENT, Stroke::NONE));
+                if let Some(n) = m.number {
+                    p.text(sp + Vec2::new(-9.0, 0.0), Align2::RIGHT_CENTER, n.to_string(), display(size::CAPTION), pal::TEXT);
+                }
             }
             MarkKind::Ship => {
                 p.circle_filled(sp, 6.0, pal::CYAN);
@@ -441,23 +471,44 @@ fn radar(ui: &mut Ui, v: &RadarView, max_side: f32) {
     );
 }
 
-/// Nearest first, at most `rows`: what each mark is, how far, and the compass bearing to drive or fly.
-fn radar_list(ui: &mut Ui, v: &RadarView, rows: usize) {
+/// Nearest first, at most `rows`: what each mark is, how far, and the compass bearing to drive or fly; a deposit also
+/// its number and the commander's note on it. True when a note changed.
+fn radar_list(ui: &mut Ui, v: &RadarView, rows: usize, prefs: &mut MiningPrefs) -> bool {
+    let mut changed = false;
     let mut marks: Vec<&Mark> = v.marks.iter().collect();
     marks.sort_by(|a, b| a.dist_m.total_cmp(&b.dist_m));
-    for m in marks.iter().take(rows) {
-        let (glyph, col) = match m.kind {
-            MarkKind::Deposit => (icon::DIAMOND, pal::ACCENT),
-            MarkKind::Ship => (icon::ROCKET, pal::CYAN),
-            MarkKind::Landing => (icon::MAP_PIN, pal::DIM),
-        };
-        let bearing = (m.bearing.round() as i64).rem_euclid(360);
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(glyph).color(col));
+    Grid::new("radar-list").num_columns(4).spacing(Vec2::new(10.0, 4.0)).max_col_width(ui.available_width()).show(ui, |ui| {
+        for m in marks.iter().take(rows) {
+            let (glyph, col) = match m.kind {
+                MarkKind::Deposit => (icon::DIAMOND, pal::ACCENT),
+                MarkKind::Ship => (icon::ROCKET, pal::CYAN),
+                MarkKind::Landing => (icon::MAP_PIN, pal::DIM),
+            };
+            let bearing = (m.bearing.round() as i64).rem_euclid(360);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(glyph).color(col));
+                if let Some(n) = m.number {
+                    ui.label(RichText::new(n.to_string()).font(display(size::BODY)).color(pal::TEXT));
+                }
+            });
             ui.label(RichText::new(&m.label).color(pal::TEXT));
             ui.label(RichText::new(format!("{} · bearing {bearing:03}°", distance_text(m.dist_m))).color(pal::DIM));
-        });
-    }
+            match m.deposit.and_then(|i| prefs.deposits.get_mut(i).map(|d| (i, d))) {
+                Some((i, d)) => {
+                    let edit = egui::TextEdit::singleline(&mut d.note)
+                        .hint_text("Note: rigs that fit, density…")
+                        .desired_width(ui.available_width().clamp(140.0, 260.0))
+                        .id(egui::Id::new(("deposit-note", i)));
+                    changed |= ui.add(edit).changed();
+                }
+                None => {
+                    ui.label("");
+                }
+            }
+            ui.end_row();
+        }
+    });
+    changed
 }
 
 /// A round ring spacing that puts at most four rings inside `max_d` metres.
@@ -518,6 +569,46 @@ mod tests {
         site_with_spot(&mut gs, 10.0001, "Iridium");
         assert!(remember(&gs, &mut prefs));
         assert_eq!((prefs.deposits.len(), prefs.deposits[0].location), (1, Some(4)), "one deposit, now with its number");
+    }
+
+    /// Chequers2's idea (discussion 5): two Iridium deposits on one body, told apart by their numbers and notes.
+    #[test]
+    fn deposits_are_numbered_on_each_body_and_keep_their_numbers() {
+        let mut gs = GameState::default();
+        let mut prefs = MiningPrefs::default();
+        let numbers = |p: &MiningPrefs| p.deposits.iter().map(|d| d.number).collect::<Vec<_>>();
+        site_with_spot(&mut gs, 10.0, "Iridium");
+        site_with_spot(&mut gs, 10.12, "Iridium");
+        remember(&gs, &mut prefs);
+        assert_eq!(numbers(&prefs), [1, 2]);
+        prefs.deposits[1].note = "1 rig".into();
+        // A later run: the second deposit again (a few metres off) and a new one.
+        gs.mining.sites.values_mut().for_each(|s| s.spots.clear());
+        site_with_spot(&mut gs, 10.1202, "Iridium");
+        site_with_spot(&mut gs, 10.3, "Ruby");
+        assert!(remember(&gs, &mut prefs));
+        assert_eq!(numbers(&prefs), [1, 2, 3]);
+        assert_eq!(prefs.deposits[1].note, "1 rig");
+        // Another body starts from 1.
+        let other = SiteKey { system_address: 100, body_id: 2, location: None };
+        let site = gs.mining.sites.entry(other).or_insert_with(|| SurfaceSite::new(other, "Alpha", "Alpha 2"));
+        site.radius_m = Some(1_000_000.0);
+        site.spots.push(Spot { lat: 0.0, lon: 0.0, refined: [("Iridium".to_string(), 1)].into(), found: Timestamp(5) });
+        remember(&gs, &mut prefs);
+        assert_eq!(numbers(&prefs), [1, 2, 3, 1]);
+    }
+
+    /// Deposits kept by 0.7.3-beta.1 have no number: they get one, oldest first, and later ones follow.
+    #[test]
+    fn deposits_kept_before_numbers_get_them_in_the_order_found() {
+        let deposit = |found: i64| Deposit { system_address: 100, body_id: 1, found: Timestamp(found), ..Default::default() };
+        let mut deposits = vec![deposit(30), deposit(10), deposit(20)];
+        assert!(number_deposits(&mut deposits));
+        assert_eq!(deposits.iter().map(|d| d.number).collect::<Vec<_>>(), [3, 1, 2]);
+        assert!(!number_deposits(&mut deposits), "nothing new to number");
+        deposits.push(deposit(5));
+        number_deposits(&mut deposits);
+        assert_eq!(deposits[3].number, 4, "after the highest, though found earlier");
     }
 
     /// Chequers2's A 1 (discussion 5): worked, but the game named no location, so "you've worked 0" was wrong.
