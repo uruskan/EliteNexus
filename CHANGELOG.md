@@ -10,6 +10,12 @@ release time that section becomes the new version and the release workflow publi
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
+- **Market** › Find commodity: a **Category** field beside the search, and a ▾ on both that opens the whole list. A
+  category's rare goods are one item, **Rare Goods**, and the category **Rare Goods** holds them all: one page lists
+  every place selling or buying any of them, each row naming its rare good and comparing it with that good's own
+  average. Rare goods are marked ★ in yellow, and the lists name the commodity in their first column. Clicking into
+  either field selects its text; Tab takes the highlighted entry. The retired event rares (Classified Experimental
+  Equipment, Galactic Travel Guide) are left out.
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
