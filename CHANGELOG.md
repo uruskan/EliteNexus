@@ -16,7 +16,8 @@ release time that section becomes the new version and the release workflow publi
   planet, landing, or stepping outside on foot opens Exobiology when the planet has biological signals you haven't
   finished analysing (Exploration otherwise); climbing back above it returns to Exploration; the galaxy map, a
   charging hyperspace jump or a finished system (every body found, every planet worth the high-value threshold
-  mapped, every genus analysed) opens Navigation. It only ever moves between those three pages: on any other page it
+  mapped, every genus analysed) opens Navigation. Exploration opens on the current system and Exobiology on This
+  system, whichever tab you left open there. It only ever moves between those three pages: on any other page it
   leaves you alone; docked, in an SRV or on foot inside it changes nothing, and it reacts only to what happens while
   the game runs, never to the journals read at start.
 
