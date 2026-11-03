@@ -548,6 +548,12 @@ EDD also synthesises its own `EDD*` events; ignore them.
 * **`MissionFailed`** (when the mission fails, v37+) and **`MissionAbandoned`** — MissionID, Name, Fine?.
 * **`Missions`** at startup — `Active/Failed/Complete[MissionID, Name, PassengerMission, Expires (seconds remaining)]`. Use it to reconcile your mission store after offline time. The journal does **not** replay the original `MissionAccepted` details, so persist them yourself.
 * **`CargoDepot`** — wing-mission delivery progress.
+* **Shared wing missions:** your own wing missions (`MissionAccepted` with `Wing: true`) write `MissionCompleted` like any
+  other. When a wingmate hands in a mission they shared with you, your journal gets no line for it: no
+  `MissionCompleted`, no reward line (the credits and materials arrive anyway; `Status.json`'s `Balance` and the next
+  login's `Materials` show them). Reported by edda-app's author, watching the journal live over three shared hand-ins
+  (github.com/terakilobyte/edda-app/pull/192, 2026-10-06), and on Frontier's forums in 2018 (`MissionCompleted` written
+  for the wing leader but not the members). Not checked against our own journals: none here has a shared mission.
 * **`Passengers`** — manifest at startup.
 
 ### 5.7 Mining

@@ -285,7 +285,10 @@ fn ledger_rows(ui: &mut Ui, totals: &[(LedgerCategory, i64, i64)], earned: i64, 
         let what = if moved < 0 { format!("{} moved to your fleet carrier", short_credits(-moved)) } else { format!("{} taken from your fleet carrier", short_credits(moved)) };
         ui.label(RichText::new(format!("{what} (not counted: it stays yours)")).size(size::FOOTNOTE).color(pal::DIM));
     }
-    crate::widgets::footnote(ui, "From the journal: sales, rewards, purchases and fees, while Elite Nexus has read them.");
+    crate::widgets::footnote(
+        ui,
+        "From the journal: sales, rewards, purchases and fees, while Elite Nexus has read them. A mission a wingmate shared and handed in isn't among them (the game writes no journal line for it), but its credits are in your balance.",
+    );
 }
 
 #[cfg(test)]

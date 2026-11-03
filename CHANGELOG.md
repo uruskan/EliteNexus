@@ -27,6 +27,10 @@ release time that section becomes the new version and the release workflow publi
   Supercharge Optimised Frame Shift Drive (SCO)" ran over the module's value. The Module column now widens to the
   longest name when the window has room, and a name that still doesn't fit ends in "…" and shows whole when you hover
   it.
+- **Missions and Statistics say why a wingmate's shared mission isn't counted** (GitHub issue #4). Your own missions,
+  wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
+  game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The
+  Missions page and Statistics › Income and spending now say so; the credits still show in your balance.
 
 ## [0.7.3-beta.2] - 2026-10-25
 
