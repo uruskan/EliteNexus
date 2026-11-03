@@ -163,8 +163,8 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
             ui.label(RichText::new("No jumps in this period.").color(pal::DIM));
             return;
         }
-        let bars: Vec<Bar> = per_day.iter().map(|(d, (n, ly))| Bar::new(*d as f64 + 0.5, f64::from(*n)).width(0.8).fill(pal::CYAN).name(format!("{n} jumps, {ly:.0} ly"))).collect();
-        Plot::new(("jumpsday", days))
+        let bars: Vec<Bar> = per_day.iter().map(|(d, (n, _))| Bar::new(*d as f64 + 0.5, f64::from(*n)).width(0.8).fill(pal::CYAN)).collect();
+        let plot = Plot::new(("jumpsday", days))
             .show_background(false)
             .show_grid([false, true])
             .height(200.0)
@@ -176,11 +176,14 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
             .include_y(0.0)
             .x_axis_formatter(|m, _| Timestamp((m.value * DAY) as i64).to_local_string("%d %b"))
             .y_axis_formatter(|m, _| if m.value.fract() == 0.0 && m.value >= 0.0 { format!("{}", m.value as i64) } else { String::new() })
-            .label_formatter(|h| {
-                let (x, _) = crate::widgets::hover_xy(h);
-                Some(Timestamp((x.floor() * DAY) as i64).to_local_string("%d %b"))
+            .show(ui, |p| p.bar_chart(BarChart::new("Jumps", bars).element_formatter(Box::new(|_, _| String::new()))));
+        crate::widgets::bar_tooltip(&plot, |day| {
+            let date = Timestamp(day * 86_400).to_local_string("%d %b");
+            Some(match per_day.get(&day) {
+                Some((n, ly)) => format!("{date}\n{n} {} · {ly:.0} ly", if *n == 1 { "jump" } else { "jumps" }),
+                None => format!("{date}\nno jumps"),
             })
-            .show(ui, |p| p.bar_chart(BarChart::new("Jumps", bars)));
+        });
     });
     if let Some(stats) = &gs.cmdr.statistics {
         ui.add_space(10.0);

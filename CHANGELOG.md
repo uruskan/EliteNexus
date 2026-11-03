@@ -16,6 +16,12 @@ release time that section becomes the new version and the release workflow publi
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
 
+### Fixed
+- **Statistics and BGS & Powerplay: a bar's number is no longer cut off** (GitHub issue #4, with a screenshot).
+  Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
+  edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always
+  fits, and the merits chart no longer slides away from its bars when dragged.
+
 ## [0.7.3-beta.2] - 2026-10-25
 
 A second beta of 0.7.3: the compact view becomes the **overlay**, a small island at the top of the game's screen
