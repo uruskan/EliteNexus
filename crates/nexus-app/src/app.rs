@@ -744,6 +744,8 @@ impl NexusApp {
             self.core = start_core(ctx, self.overrides.journal_dir.as_ref().or(self.settings.journal_dir.as_ref()), self.market.history_sink());
             self.sync.attach(&self.core);
             self.market.attach(&self.core);
+            // A new model: Follow my flight starts afresh instead of comparing it with the old one.
+            self.flight = Default::default();
         }
     }
 

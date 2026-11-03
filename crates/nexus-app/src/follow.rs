@@ -42,6 +42,8 @@ impl Flight {
 
 /// What Follow my flight compares from one Status.json update or journal event to the next.
 struct Snapshot {
+    /// The commander it was taken for (`cmdr.fid`).
+    fid: String,
     /// The Status.json the model held when this was taken, compared by pointer (`Arc::ptr_eq`): the model makes a
     /// new `Arc` for every update, while the timestamp inside has one-second resolution and could miss one.
     status: Option<Arc<Status>>,
@@ -64,25 +66,26 @@ impl Follower {
     /// names the page that fits: Navigation in the galaxy map, while a hyperspace jump charges and in hyperspace;
     /// Exploration while flying the system; Exobiology under the "Planet view below" altitude (`planet_m`), landed or
     /// on foot outside, when the body has life still to analyse (Exploration otherwise); Navigation too once the
-    /// system is done (`high_value`: Settings' "High-value body"). The first look only takes the snapshot. Works
-    /// only when a Status.json update or a journal event arrived: on every other frame it costs one counter
-    /// comparison and one pointer comparison, no allocation.
+    /// system is done (`high_value`: Settings' "High-value body"). The first look at a commander only takes the
+    /// snapshot, after a switch to another commander too. Works only when a Status.json update or a journal event
+    /// arrived: on every other frame it compares a counter, a pointer and the commander's id, and allocates nothing.
     pub fn step(&mut self, gs: &GameState, planet_m: f64, high_value: i64) -> Option<Page> {
         let same_status = |p: &Snapshot| match (&p.status, &gs.status) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
             (None, None) => true,
             _ => false,
         };
-        if self.last.as_ref().is_some_and(|p| p.events == gs.events_applied && same_status(p)) {
+        if self.last.as_ref().is_some_and(|p| p.events == gs.events_applied && same_status(p) && p.fid == gs.cmdr.fid) {
             return None;
         }
         let cx = Context::of(gs);
         let flight = Flight::of(&cx, gs.status.as_ref().and_then(|s| s.altitude), planet_m);
         let system = gs.exploration.current_system();
         let done = system.is_some_and(|s| s.fully_explored(high_value));
-        let prev = self.last.replace(Snapshot { status: gs.status.clone(), events: gs.events_applied, flight, done });
-        // The first look only takes the snapshot.
-        let prev = prev?;
+        let prev = self.last.replace(Snapshot { fid: gs.cmdr.fid.clone(), status: gs.status.clone(), events: gs.events_applied, flight, done });
+        // The first look at a commander only takes the snapshot: another commander's says nothing about this one (an
+        // alt loaded in a finished system didn't just finish it).
+        let prev = prev.filter(|p| p.fid == gs.cmdr.fid)?;
         if flight != prev.flight {
             match flight {
                 Flight::Route => Some(Page::Navigation),
