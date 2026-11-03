@@ -349,7 +349,7 @@ pub fn empty(ui: &mut Ui, icon: &str, title: &str, hint: &str) {
         ui.label(RichText::new(title).font(display(size::TITLE3)).color(pal::TEXT));
         ui.add_space(2.0);
         ui.scope(|ui| {
-            ui.set_max_width(460.0);
+            ui.set_max_width(ui.available_width().min(460.0));
             ui.add(egui::Label::new(RichText::new(hint).size(size::CALLOUT).color(pal::DIM)).wrap().halign(Align::Center));
         });
     });
@@ -582,6 +582,54 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         resp
     })
     .inner
+}
+
+/// A − n + stepper on a glass capsule (macOS 26). Returns true when the value changed.
+pub fn stepper(ui: &mut Ui, value: &mut u32, range: std::ops::RangeInclusive<u32>) -> bool {
+    const H: f32 = 28.0;
+    const SIDE: f32 = 30.0;
+    let (lo, hi) = (*range.start(), *range.end());
+    let before = *value;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(SIDE * 2.0 + 34.0, H), Sense::hover());
+    let minus = Rect::from_min_size(rect.min, Vec2::new(SIDE, H));
+    let plus = Rect::from_min_size(Pos2::new(rect.right() - SIDE, rect.top()), Vec2::new(SIDE, H));
+    let m = ui.interact(minus, resp.id.with("minus"), Sense::click());
+    let p = ui.interact(plus, resp.id.with("plus"), Sense::click());
+    if m.clicked() && *value > lo {
+        *value -= 1;
+    }
+    if p.clicked() && *value < hi {
+        *value += 1;
+    }
+    *value = (*value).clamp(lo, hi);
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        control_glass(painter, rect);
+        let r = CornerRadius::same((H / 2.0) as u8);
+        for (half, sense, enabled, glyph) in [(minus, &m, *value > lo, egui_phosphor::regular::MINUS), (plus, &p, *value < hi, egui_phosphor::regular::PLUS)] {
+            if enabled && sense.hovered() {
+                let wash = if sense.is_pointer_button_down_on() { 30 } else { 14 };
+                painter.with_clip_rect(half).rect_filled(rect, r, Color32::from_white_alpha(wash));
+            }
+            painter.text(half.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(size::CALLOUT), if enabled { pal::TEXT } else { pal::FAINT });
+        }
+        for x in [minus.right(), plus.left()] {
+            painter.vline(x, rect.y_range().shrink(7.0), Stroke::new(1.0, Color32::from_white_alpha(22)));
+        }
+        painter.text(rect.center(), Align2::CENTER_CENTER, value.to_string(), display(size::CALLOUT), pal::TEXT);
+    }
+    *value != before
+}
+
+/// The glass of a control (macOS 26): a light translucent fill, a hairline rim that brightens along
+/// the top edge, and a small contact shadow. [`glass`] is the floating version.
+fn control_glass(p: &egui::Painter, rect: Rect) {
+    let r = CornerRadius::same((rect.height() / 2.0).min(255.0) as u8);
+    p.add(Shadow { offset: [0, 1], blur: 4, spread: 0, color: Color32::from_black_alpha(70) }.as_shape(rect, r));
+    p.rect_filled(rect, r, Color32::from_white_alpha(16));
+    p.rect_stroke(rect, r, Stroke::new(1.0, Color32::from_white_alpha(14)), egui::StrokeKind::Inside);
+    let top = Rect::from_min_max(rect.min, Pos2::new(rect.max.x, rect.center().y));
+    p.with_clip_rect(top).rect_stroke(rect, r, Stroke::new(1.0, Color32::from_white_alpha(34)), egui::StrokeKind::Inside);
 }
 
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {

@@ -85,8 +85,8 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
 * Design system (macOS 26 dark, Liquid-Glass sidebar and toolbar): `theme.rs` holds the palette (`pal`), the type scale
   (`size`, nothing below 12 pt) and the egui style; `widgets.rs` the components: `card`/`card_tinted` (Health-style
   headers), `cards` (responsive grid with equal-height rows), `split`, `group` rows with switches (System Settings
-  style), `tabs`/`segmented` (falls back to pills when too narrow), `switch`/`toggle`, `pill`, capsule `button`s,
-  `search_field`, `badge`, `th` table headings. Pages use these instead of raw egui widgets so the look stays uniform
+  style), `tabs`/`segmented` (falls back to pills when too narrow), `switch`/`toggle`, `stepper` (a − n + glass
+  capsule), `pill`, capsule `button`s, `search_field`, `badge`, `th` table headings. Pages use these instead of raw egui widgets so the look stays uniform
   and every layout adapts to the window width (the sidebar becomes an icon rail below 1180 px).
 * History is folded with alerts **disabled**; only live events raise alerts or get uploaded. Never upload history.
   Test runs (`--journal-dir`, `--screenshot`) never upload at all.

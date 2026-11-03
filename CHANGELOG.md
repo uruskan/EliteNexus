@@ -11,6 +11,11 @@ release time that section becomes the new version and the release workflow publi
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
 
+### Changed
+- **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
+  controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
+  recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
+
 ## [0.7.3-beta.2] - 2026-10-25
 
 A second beta of 0.7.3: the compact view becomes the **overlay**, a small island at the top of the game's screen

@@ -2,9 +2,9 @@
 //! Odyssey upgrades, synthesis.
 
 use crate::settings::WishItem;
-use crate::theme::{display, pal};
+use crate::theme::{display, pal, size};
 use crate::widgets::{badge, bar, card, empty};
-use egui::{Grid, RichText, Ui};
+use egui::{Align, Color32, Grid, Layout, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
 use nexus_data::engineering::{self as eng, Blueprint, EngineerKind, Ingredient, OdysseyKind};
@@ -34,6 +34,14 @@ pub struct EngineeringUi {
     pub rolls: u32,
     pub experimental: Option<String>,
     pub cross_category: bool,
+    /// Disclosures: the blueprint's options, what you already have, the recipes, the other
+    /// engineers; the shopping list's "already have" and options.
+    pub show_options: bool,
+    pub show_have: bool,
+    pub show_recipes: bool,
+    pub show_engineers: bool,
+    pub show_list_have: bool,
+    pub show_list_options: bool,
 }
 
 impl EngineeringUi {
@@ -67,6 +75,12 @@ impl Default for EngineeringUi {
             rolls: 3,
             experimental: None,
             cross_category: true,
+            show_options: false,
+            show_have: false,
+            show_recipes: false,
+            show_engineers: false,
+            show_list_have: false,
+            show_list_options: false,
         }
     }
 }
@@ -109,280 +123,473 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut 
     changed
 }
 
+/// Grade labels for segmented controls.
+const GRADE_LABELS: [&str; 5] = ["G1", "G2", "G3", "G4", "G5"];
+
+fn grade_options(grades: std::ops::RangeInclusive<u8>) -> Vec<(u8, &'static str)> {
+    grades.filter_map(|g| GRADE_LABELS.get(usize::from(g).checked_sub(1)?).map(|l| (g, *l))).collect()
+}
+
 fn ingredient_line(ui: &mut Ui, ing: &Ingredient, have: i64) {
     let ok = have >= i64::from(ing.count);
     ui.label(RichText::new(format!("{}× {}", ing.count, ing.name())).color(if ok { pal::TEXT } else { pal::WARN }));
     ui.label(RichText::new(format!("({have})")).small().color(if ok { pal::GOOD } else { pal::BAD }));
 }
 
+/// English name of a material, micro-resource or commodity symbol.
+fn item_name(symbol: &str) -> String {
+    Ingredient { symbol: symbol.to_string(), count: 0 }.name()
+}
+
+fn rolls_text(n: u32) -> String {
+    if n == 1 { "1 roll".into() } else { format!("{n} rolls") }
+}
+
+/// Adds `(symbol, count)` pairs to `into`, summing duplicates.
+fn merge_into(into: &mut Vec<(String, u32)>, items: impl IntoIterator<Item = (String, u32)>) {
+    for (s, n) in items {
+        match into.iter_mut().find(|(k, _)| *k == s) {
+            Some((_, c)) => *c = c.saturating_add(n),
+            None => into.push((s, n)),
+        }
+    }
+}
+
 fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut Vec<WishItem>) -> bool {
     let mut changed = false;
     let inv = inventory_map(gs);
     crate::widgets::cards(ui, 2, 380.0, |c| {
-        // ---------------- left: browse blueprints
         c.add(|ui| {
-        card(ui, "Blueprints", |ui| {
-            ui.horizontal(|ui| {
-                egui::ComboBox::from_id_salt("modtype").width(220.0).selected_text(nexus_data::names::split_camel(&st.module)).show_ui(ui, |ui| {
-                    for m in eng::module_types() {
-                        if ui.selectable_label(st.module == *m, nexus_data::names::split_camel(m)).clicked() {
-                            st.module = (*m).to_string();
-                            st.blueprint = None;
-                            st.experimental = None;
-                        }
-                    }
-                });
-            });
-            let bps = eng::blueprints_for_module(&st.module);
-            ui.horizontal_wrapped(|ui| {
-                for bp in &bps {
-                    let label = if bp.is_merc() { format!("{} {}", icon::COINS, bp.name) } else { bp.name.clone() };
-                    if crate::widgets::pill(ui, st.blueprint.as_deref() == Some(bp.symbol.as_str()), &label).clicked() {
-                        st.blueprint = Some(bp.symbol.clone());
-                        (st.from, st.to) = (bp.min_grade(), bp.max_grade());
-                    }
-                }
-            });
-            let Some(bp) = st.blueprint.as_deref().and_then(|s| bps.iter().find(|b| b.symbol == s).copied()) else {
-                ui.label(RichText::new("Pick a blueprint.").color(pal::DIM));
-                return;
-            };
-            blueprint_detail(ui, gs, bp, &inv);
-            ui.add_space(6.0);
-            // Merc blueprints on MercGear start at G2, and some blueprints stop below G5.
-            let grades = bp.min_grade()..=bp.max_grade();
-            st.from = st.from.clamp(*grades.start(), *grades.end());
-            st.to = st.to.clamp(*grades.start(), *grades.end());
-            ui.horizontal(|ui| {
-                ui.label("Grades");
-                ui.add(egui::DragValue::new(&mut st.from).range(grades.clone()));
-                ui.label("to");
-                ui.add(egui::DragValue::new(&mut st.to).range(grades));
-                ui.label("rolls/grade");
-                ui.add(egui::DragValue::new(&mut st.rolls).range(1..=10));
-            });
-            let exps = eng::experimentals_for(&st.module);
-            if !exps.is_empty() {
-                egui::ComboBox::from_id_salt("exp").width(260.0).selected_text(st.experimental.as_deref().and_then(eng::experimental).map(|e| e.name.clone()).unwrap_or_else(|| "No experimental".into())).show_ui(ui, |ui| {
-                    ui.selectable_value(&mut st.experimental, None, "No experimental");
-                    for e in exps {
-                        ui.selectable_value(&mut st.experimental, Some(e.symbol.clone()), &e.name);
-                    }
-                });
-            }
-            if crate::widgets::primary_button(ui, &format!("{} Add to wishlist", icon::PLUS)).clicked() {
-                wishlist.push(WishItem {
-                    label: format!("{} — {}", nexus_data::names::split_camel(&st.module), bp.name),
-                    blueprint: bp.symbol.clone(),
-                    module: st.module.clone(),
-                    from: st.from.min(st.to),
-                    to: st.to.max(st.from),
-                    rolls: st.rolls,
-                    experimental: st.experimental.clone(),
-                });
-                changed = true;
-            }
+            card(ui, "Blueprints", |ui| changed |= blueprint_card(ui, gs, st, &inv, wishlist));
+            ui.add_space(8.0);
+            card(ui, "From your ship", |ui| changed |= from_your_ship(ui, gs, wishlist));
         });
-        ui.add_space(8.0);
-        card(ui, "Quick add from your ship", |ui| {
-            let Some(ship) = gs.fleet.current() else {
-                ui.label(RichText::new("No ship loadout yet.").color(pal::DIM));
-                return;
-            };
-            let mut any = false;
-            for m in &ship.modules {
-                let Some(e) = &m.engineering else { continue };
-                let Some(bp) = eng::blueprint_for(&m.item, &e.blueprint).or_else(|| eng::blueprint(&e.blueprint)) else { continue };
-                let top = bp.max_grade();
-                if e.level >= u32::from(top) {
-                    continue;
-                }
-                any = true;
-                ui.horizontal(|ui| {
-                    ui.label(format!("{} — {} G{} → G{top}", nexus_data::outfitting::display_name(&m.item), bp.name, e.level));
-                    if ui.small_button(icon::PLUS).clicked() {
-                        wishlist.push(WishItem {
-                            label: format!("{} — {}", nexus_data::outfitting::display_name(&m.item), bp.name),
-                            blueprint: bp.symbol.clone(),
-                            module: eng::module_type(&m.item).unwrap_or("").to_string(),
-                            from: (e.level + 1).min(u32::from(top)) as u8,
-                            to: top,
-                            rolls: 3,
-                            experimental: None,
-                        });
-                        changed = true;
-                    }
-                });
-            }
-            if !any {
-                ui.label(RichText::new("Every engineered module on this ship is already at its top grade.").color(pal::DIM));
-            }
-        });
-
-        // ---------------- right: wishlist + shopping
-        });
+        // One card for the plan, so what the items need sits right under them.
         c.add(|ui| {
-        card(ui, &format!("Wishlist ({})", wishlist.len()), |ui| {
-            if wishlist.is_empty() {
-                ui.label(RichText::new("Add blueprints on the left — the shopping list below adds everything up.").color(pal::DIM));
-            }
-            let mut remove = None;
-            for (i, w) in wishlist.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    if ui.small_button(icon::TRASH).clicked() {
-                        remove = Some(i);
-                    }
-                    ui.label(RichText::new(&w.label).color(pal::TEXT));
-                    badge(ui, &format!("G{}–G{} ×{}", w.from, w.to, w.rolls), pal::PURPLE);
-                    if let Some(x) = w.experimental.as_deref().and_then(eng::experimental) {
-                        badge(ui, &x.name, pal::ACCENT);
-                    }
-                });
-            }
-            if let Some(i) = remove {
-                wishlist.remove(i);
-                changed = true;
-            }
-        });
-        ui.add_space(8.0);
-        // Total requirements.
-        let mut need: Vec<(String, u32)> = Vec::new();
-        let mut coins = 0u32;
-        for w in wishlist.iter() {
-            if let Some(bp) = eng::blueprint_for(&w.module, &w.blueprint).or_else(|| eng::blueprint(&w.blueprint)) {
-                need.extend(nexus_data::trader::blueprint_shopping(bp, w.from, w.to, w.rolls));
-                coins = coins.saturating_add(nexus_data::trader::blueprint_merc_coins(bp, w.from, w.to, w.rolls));
-            }
-            if let Some(x) = w.experimental.as_deref().and_then(eng::experimental) {
-                need.extend(x.cost.iter().map(|i| (i.symbol.clone(), i.count)));
-            }
-        }
-        let mut merged: Vec<(String, u32)> = Vec::new();
-        for (s, n) in need {
-            match merged.iter_mut().find(|(k, _)| *k == s) {
-                Some((_, c)) => *c += n,
-                None => merged.push((s, n)),
-            }
-        }
-        card(ui, "Shopping list", |ui| {
-            if merged.is_empty() {
-                ui.label(RichText::new("Nothing needed yet.").color(pal::DIM));
-                return;
-            }
-            let total: u32 = merged.iter().map(|(_, n)| *n).sum();
-            let have_total: u32 = merged.iter().map(|(s, n)| (*inv.get(s).unwrap_or(&0)).clamp(0, i64::from(*n)) as u32).sum();
-            bar(ui, have_total as f32 / total.max(1) as f32, pal::GOOD, 10.0, Some(&format!("{have_total} / {total} materials in hand")));
-            if coins > 0 {
-                ui.horizontal_wrapped(|ui| match merc_coin_balance(gs) {
-                    Some(have) => {
-                        let col = if have >= u64::from(coins) { pal::GOOD } else { pal::WARN };
-                        ui.label(RichText::new(format!("{} {have} / {coins} Merc Coins", icon::COINS)).color(col));
-                        ui.label(RichText::new("(balance at your last login)").small().color(pal::DIM));
-                    }
-                    None => {
-                        ui.label(RichText::new(format!("{} {coins} Merc Coins", icon::COINS)).color(pal::TEXT));
-                    }
-                });
-            }
-            Grid::new("shopping").num_columns(4).striped(true).spacing([12.0, 3.0]).show(ui, |ui| {
-                for (sym, n) in &merged {
-                    let have = *inv.get(sym).unwrap_or(&0);
-                    let mat = nexus_data::materials::material(sym);
-                    let name = mat.map(|m| m.name.clone()).unwrap_or_else(|| nexus_data::names::split_camel(sym));
-                    ui.label(RichText::new(name).color(pal::TEXT));
-                    ui.label(RichText::new(mat.map(|m| format!("G{} {:?}", m.grade, m.kind)).unwrap_or_default()).small().color(pal::DIM));
-                    ui.label(RichText::new(format!("{have} / {n}")).color(if have >= i64::from(*n) { pal::GOOD } else { pal::WARN }));
-                    let missing = i64::from(*n) - have;
-                    ui.label(RichText::new(if missing > 0 { format!("need {missing}") } else { "✓".into() }).color(if missing > 0 { pal::BAD } else { pal::GOOD }));
-                    ui.end_row();
+            card(ui, &format!("Wishlist ({})", wishlist.len()), |ui| {
+                changed |= wishlist_rows(ui, wishlist);
+                if !wishlist.is_empty() {
+                    ui.add_space(6.0);
+                    crate::widgets::section(ui, "Shopping list");
+                    shopping_list(ui, gs, st, &inv, wishlist);
                 }
             });
-            ui.add_space(6.0);
-            crate::widgets::toggle(ui, &mut st.cross_category, "Allow cross-category trades (costs 6× more)");
-            let plan = plan_shopping_with(&merged, &inv, &ShoppingOptions { cross_category: st.cross_category, ..Default::default() });
-            if !plan.trades.is_empty() {
-                ui.label(RichText::new("MATERIAL TRADER PLAN").small().color(pal::ACCENT));
-                for t in &plan.trades {
-                    let trader = match t.trader {
-                        MaterialKind::Raw => "raw",
-                        MaterialKind::Manufactured => "manufactured",
-                        MaterialKind::Encoded => "encoded",
-                    };
-                    let give = nexus_data::materials::material(&t.give).map(|m| m.name.clone()).unwrap_or_else(|| t.give.clone());
-                    let recv = nexus_data::materials::material(&t.receive).map(|m| m.name.clone()).unwrap_or_else(|| t.receive.clone());
-                    ui.label(format!("{} {}× {} → {}× {}  ({trader} trader)", icon::ARROWS_LEFT_RIGHT, t.give_qty, give, t.receive_qty, recv));
-                }
-            }
-            if !plan.unresolved.is_empty() {
-                ui.label(RichText::new("STILL TO COLLECT").small().color(pal::WARN));
-                for u in &plan.unresolved {
-                    let name = nexus_data::materials::material(&u.symbol).map(|m| m.name.clone()).unwrap_or_else(|| u.symbol.clone());
-                    ui.label(RichText::new(format!("{}× {}", u.qty, name)).color(pal::WARN));
-                }
-            }
         });
-            });
     });
     changed
+}
+
+/// Pick a module and blueprint, choose the grade to reach, and see what you're short of. The recipes
+/// and the engineers sit one click deeper. Returns true when the wishlist changed.
+fn blueprint_card(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &HashMap<String, i64>, wishlist: &mut Vec<WishItem>) -> bool {
+    egui::ComboBox::from_id_salt("modtype").width(240.0).selected_text(nexus_data::names::split_camel(&st.module)).show_ui(ui, |ui| {
+        for m in eng::module_types() {
+            if ui.selectable_label(st.module == *m, nexus_data::names::split_camel(m)).clicked() {
+                st.module = (*m).to_string();
+                st.blueprint = None;
+                st.experimental = None;
+            }
+        }
+    });
+    ui.add_space(6.0);
+    let bps = eng::blueprints_for_module(&st.module);
+    ui.horizontal_wrapped(|ui| {
+        for bp in &bps {
+            let label = if bp.is_merc() { format!("{} {}", icon::COINS, bp.name) } else { bp.name.clone() };
+            if crate::widgets::pill(ui, st.blueprint.as_deref() == Some(bp.symbol.as_str()), &label).clicked() {
+                st.blueprint = Some(bp.symbol.clone());
+                (st.from, st.to) = (bp.min_grade(), bp.max_grade());
+            }
+        }
+    });
+    let Some(bp) = st.blueprint.as_deref().and_then(|s| bps.iter().find(|b| b.symbol == s).copied()) else {
+        crate::widgets::footnote(ui, "Pick a blueprint to see what it needs and who can do it.");
+        return false;
+    };
+    // MercGear blueprints start at G2, and a few blueprints stop below G5.
+    let (lo, hi) = (bp.min_grade(), bp.max_grade());
+    st.to = st.to.clamp(lo, hi);
+    st.from = st.from.clamp(lo, st.to);
+
+    // What it is.
+    ui.add_space(12.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(&bp.name).font(display(20.0)).color(pal::TEXT));
+        if bp.is_merc() {
+            badge(ui, &format!("{} Merc", icon::COINS), pal::GOLD);
+        }
+    });
+    match &bp.merc_module {
+        Some(m) => {
+            ui.label(RichText::new(format!("For the {m} you buy with Merc Coins. It comes at G1.")).color(pal::DIM));
+        }
+        None if bp.is_merc() => {
+            ui.label(RichText::new("Each roll costs Merc Coins as well as materials.").color(pal::DIM));
+        }
+        None => {}
+    }
+    if let Some(effects) = bp.effects.get(usize::from(st.to) - 1).filter(|e| !e.is_empty()) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new(format!("At G{}:", st.to)).size(size::FOOTNOTE).color(pal::DIM));
+            for e in effects {
+                ui.label(RichText::new(format!("{} {}", e.property, e.value)).size(size::FOOTNOTE).color(if e.good { pal::GOOD } else { pal::BAD }));
+            }
+        });
+    }
+
+    // The grade to reach, and how many rolls to plan for.
+    ui.add_space(12.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 28.0;
+        ui.vertical(|ui| {
+            ui.label(RichText::new("Upgrade to").size(size::FOOTNOTE).color(pal::DIM));
+            if crate::widgets::segmented(ui, &mut st.to, &grade_options(lo..=hi)) {
+                st.from = st.from.min(st.to);
+            }
+        });
+        ui.vertical(|ui| {
+            ui.label(RichText::new(format!("Rolls per grade {}", icon::INFO)).size(size::FOOTNOTE).color(pal::DIM)).on_hover_text(
+                "A roll is one craft at the engineer: it uses one set of materials and fills part of the grade. Most grades take 2 to 4 rolls.",
+            );
+            crate::widgets::stepper(ui, &mut st.rolls, 1..=10);
+        });
+    });
+    let exps = eng::experimentals_for(&st.module);
+    if !exps.is_empty() {
+        ui.add_space(10.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Experimental effect").color(pal::TEXT));
+            let selected = st.experimental.as_deref().and_then(eng::experimental).map(|e| e.name.clone()).unwrap_or_else(|| "None".into());
+            egui::ComboBox::from_id_salt("exp").width(220.0).selected_text(selected).show_ui(ui, |ui| {
+                ui.selectable_value(&mut st.experimental, None, "None");
+                for e in exps {
+                    ui.selectable_value(&mut st.experimental, Some(e.symbol.clone()), &e.name);
+                }
+            });
+        });
+    }
+    if lo < st.to {
+        ui.add_space(4.0);
+        if crate::widgets::disclosure(ui, &mut st.show_options, "Options") {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Start at").color(pal::TEXT));
+                crate::widgets::segmented(ui, &mut st.from, &grade_options(lo..=st.to));
+            });
+            crate::widgets::footnote(ui, "For a module that already has some grades of this blueprint.");
+        }
+    }
+
+    // What it needs, against what you have.
+    let mut need = nexus_data::trader::blueprint_shopping(bp, st.from, st.to, st.rolls);
+    if let Some(x) = st.experimental.as_deref().and_then(eng::experimental) {
+        merge_into(&mut need, x.cost.iter().map(|i| (i.symbol.clone(), i.count)));
+    }
+    let coins = nexus_data::trader::blueprint_merc_coins(bp, st.from, st.to, st.rolls);
+    ui.add_space(14.0);
+    needs(ui, gs, inv, &need, coins, &mut st.show_have);
+
+    ui.add_space(12.0);
+    let mut changed = false;
+    if crate::widgets::primary_button(ui, &format!("{} Add to wishlist", icon::PLUS)).clicked() {
+        wishlist.push(WishItem {
+            label: format!("{} — {}", nexus_data::names::split_camel(&st.module), bp.name),
+            blueprint: bp.symbol.clone(),
+            module: st.module.clone(),
+            from: st.from,
+            to: st.to,
+            rolls: st.rolls,
+            experimental: st.experimental.clone(),
+        });
+        changed = true;
+    }
+
+    // One click deeper: the recipes, and who can do it.
+    ui.add_space(10.0);
+    if crate::widgets::disclosure(ui, &mut st.show_recipes, "Recipe for each grade") {
+        recipes(ui, bp);
+    }
+    where_to_engineer(ui, gs, bp, st.to, &mut st.show_engineers);
+    changed
+}
+
+/// What a plan needs against what you have: a status line and a bar, a row for each thing you're
+/// short of, and one row that opens what you already have enough of.
+fn needs(ui: &mut Ui, gs: &GameState, inv: &HashMap<String, i64>, need: &[(String, u32)], coins: u32, show_have: &mut bool) {
+    let have = |s: &str| u64::try_from(*inv.get(&s.to_ascii_lowercase()).unwrap_or(&0)).unwrap_or(0);
+    let (short, enough): (Vec<_>, Vec<_>) = need.iter().partition(|(s, n)| have(s) < u64::from(*n));
+    let balance = merc_coin_balance(gs);
+    let coins_short = balance.map_or(0, |b| u64::from(coins).saturating_sub(b));
+
+    let mut gaps = Vec::new();
+    match short.len() {
+        0 => {}
+        1 => gaps.push("1 material".to_string()),
+        n => gaps.push(format!("{n} materials")),
+    }
+    if coins_short > 0 {
+        gaps.push(format!("{coins_short} Merc Coins"));
+    }
+    let (glyph, text, tint) = if !gaps.is_empty() {
+        (icon::WARNING, format!("Short of {}", gaps.join(" and ")), pal::WARN)
+    } else if coins > 0 && balance.is_none() {
+        (icon::INFO, format!("You have the materials; it also takes {coins} Merc Coins"), pal::DIM)
+    } else {
+        (icon::CHECK_CIRCLE, "You have everything it needs".to_string(), pal::GOOD)
+    };
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(glyph).size(size::HEADLINE).color(tint));
+        ui.label(RichText::new(text).font(display(size::HEADLINE)).color(pal::TEXT));
+    });
+    let total: u64 = need.iter().map(|(_, n)| u64::from(*n)).sum();
+    if total > 0 {
+        let in_hand: u64 = need.iter().map(|(s, n)| have(s).min(u64::from(*n))).sum();
+        ui.add_space(4.0);
+        bar(ui, in_hand as f32 / total as f32, pal::GOOD, 6.0, None);
+        crate::widgets::footnote(ui, &format!("{in_hand} of {total} materials in hand"));
+    }
+    ui.add_space(6.0);
+    crate::widgets::group(ui, |g| {
+        if coins > 0 {
+            let note = balance.is_none().then_some("Your balance shows after you next log in.");
+            g.content(|ui| need_row(ui, icon::COINS, pal::GOLD, "Merc Coins", balance, u64::from(coins), note));
+        }
+        for (s, n) in &short {
+            g.content(|ui| need_row(ui, icon::CIRCLE_DASHED, pal::WARN, &item_name(s), Some(have(s)), u64::from(*n), None));
+        }
+        if !enough.is_empty() {
+            g.content(|ui| {
+                let label = match (enough.len(), short.is_empty()) {
+                    (1, false) => "1 more you already have".to_string(),
+                    (n, false) => format!("{n} more you already have"),
+                    (n, true) => format!("All {n} materials in hand"),
+                };
+                if crate::widgets::disclosure(ui, show_have, &label) {
+                    for (s, n) in &enough {
+                        need_row(ui, icon::CHECK_CIRCLE, pal::GOOD, &item_name(s), Some(have(s)), u64::from(*n), None);
+                    }
+                }
+            });
+        }
+    });
+}
+
+/// One row of a needs list: an icon and the name, then what you have of what's needed and how many more.
+fn need_row(ui: &mut Ui, glyph: &str, tint: Color32, name: &str, have: Option<u64>, need: u64, note: Option<&str>) {
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(glyph).color(tint));
+        // The counts first, from the right, so a long name truncates instead of widening the card.
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            match have {
+                Some(h) if h < need => {
+                    ui.label(RichText::new(format!("{} more", need - h)).color(pal::WARN));
+                    ui.label(RichText::new(format!("{h} of {need}")).color(pal::DIM));
+                }
+                Some(h) => {
+                    ui.label(RichText::new(format!("{h} of {need}")).color(pal::DIM));
+                }
+                None => {
+                    ui.label(RichText::new(format!("{need} needed")).color(pal::DIM));
+                }
+            }
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| match note {
+                Some(n) => {
+                    ui.vertical(|ui| {
+                        ui.add(egui::Label::new(RichText::new(name).color(pal::TEXT)).truncate());
+                        ui.add(egui::Label::new(RichText::new(n).size(size::FOOTNOTE).color(pal::DIM)).wrap());
+                    });
+                }
+                None => {
+                    ui.add(egui::Label::new(RichText::new(name).color(pal::TEXT)).truncate());
+                }
+            });
+        });
+    });
+}
+
+/// One roll's recipe at each grade.
+fn recipes(ui: &mut Ui, bp: &Blueprint) {
+    let merc = bp.is_merc();
+    Grid::new("recipes").num_columns(if merc { 3 } else { 2 }).spacing([14.0, 6.0]).max_col_width(ui.available_width()).show(ui, |ui| {
+        for (grade, ings) in (1u8..).zip(&bp.grades).filter(|(_, g)| !g.is_empty()) {
+            ui.label(RichText::new(format!("G{grade}")).font(display(size::FOOTNOTE)).color(pal::DIM));
+            if merc {
+                ui.label(RichText::new(format!("{} {}", icon::COINS, bp.merc_coins_for(grade))).color(pal::DIM));
+            }
+            let list: Vec<String> = ings.iter().map(|i| if i.count == 1 { i.name() } else { format!("{} × {}", i.count, i.name()) }).collect();
+            ui.add(egui::Label::new(RichText::new(list.join(", ")).color(pal::TEXT)).wrap());
+            ui.end_row();
+        }
+    });
+    crate::widgets::footnote(ui, if merc { "One roll at each grade, with its Merc Coins." } else { "One roll at each grade." });
+}
+
+/// The engineer to go to for the target grade (unlocked first, then the nearest), the others one click
+/// deeper.
+fn where_to_engineer(ui: &mut Ui, gs: &GameState, bp: &Blueprint, grade: u8, show_all: &mut bool) {
+    let here = gs.location.star_pos;
+    let dist = |e: &eng::Engineer| here.map(|p| nexus_model::location::distance(p, e.pos)).unwrap_or(0.0);
+    let mut list: Vec<(&eng::Engineer, u8)> =
+        bp.engineers_for_grade(grade).filter_map(|g| eng::engineer_by_name(&g.engineer).map(|e| (e, g.max_grade))).collect();
+    list.sort_by(|a, b| unlocked(gs, b.0).cmp(&unlocked(gs, a.0)).then_with(|| dist(a.0).total_cmp(&dist(b.0))));
+    crate::widgets::section(ui, &format!("Who can do G{grade}"));
+    let Some(((first, first_max), rest)) = list.split_first() else {
+        crate::widgets::footnote(ui, &format!("No engineer offers G{grade} of this blueprint."));
+        return;
+    };
+    crate::widgets::group(ui, |g| {
+        engineer_row(g, gs, first, *first_max);
+        if !rest.is_empty() {
+            let label = if rest.len() == 1 { "1 other engineer".to_string() } else { format!("{} other engineers", rest.len()) };
+            g.content(|ui| crate::widgets::disclosure(ui, show_all, &label));
+            if *show_all {
+                for (e, max) in rest {
+                    engineer_row(g, gs, e, *max);
+                }
+            }
+        }
+    });
+}
+
+fn unlocked(gs: &GameState, e: &eng::Engineer) -> bool {
+    gs.cmdr.engineers.get(&e.id).is_some_and(|s| s.progress == "Unlocked")
+}
+
+/// An engineer as a row: where, how far, the top grade they offer, and your standing with them.
+fn engineer_row(g: &mut crate::widgets::Group<'_>, gs: &GameState, e: &eng::Engineer, max: u8) {
+    let detail = match gs.location.star_pos {
+        Some(p) => format!("{} · {:.0} ly · up to G{max}", e.system, nexus_model::location::distance(p, e.pos)),
+        None => format!("{} · up to G{max}", e.system),
+    };
+    let status = gs.cmdr.engineers.get(&e.id).map(|s| s.progress.clone());
+    let tint = if unlocked(gs, e) { pal::GOOD } else { pal::DIM };
+    g.row(&e.name, &detail, |ui| {
+        if let Some(s) = status {
+            ui.label(RichText::new(s).color(tint));
+        }
+    });
+}
+
+/// Upgrades for the engineered modules on the current ship, each one click from the wishlist.
+fn from_your_ship(ui: &mut Ui, gs: &GameState, wishlist: &mut Vec<WishItem>) -> bool {
+    let Some(ship) = gs.fleet.current() else {
+        ui.label(RichText::new("No ship loadout yet.").color(pal::DIM));
+        return false;
+    };
+    let upgrades: Vec<_> = ship
+        .modules
+        .iter()
+        .filter_map(|m| {
+            let e = m.engineering.as_ref()?;
+            let bp = eng::blueprint_for(&m.item, &e.blueprint).or_else(|| eng::blueprint(&e.blueprint))?;
+            (e.level < u32::from(bp.max_grade())).then_some((m, e, bp))
+        })
+        .collect();
+    if upgrades.is_empty() {
+        ui.label(RichText::new("Every engineered module on this ship is at its top grade.").color(pal::DIM));
+        return false;
+    }
+    let mut changed = false;
+    crate::widgets::group(ui, |g| {
+        for (m, e, bp) in upgrades {
+            let top = bp.max_grade();
+            let name = nexus_data::outfitting::display_name(&m.item);
+            if g.row(&name, &format!("{} · G{} to G{top}", bp.name, e.level), |ui| crate::widgets::button(ui, "Add").clicked()) {
+                wishlist.push(WishItem {
+                    label: format!("{name} — {}", bp.name),
+                    blueprint: bp.symbol.clone(),
+                    module: eng::module_type(&m.item).unwrap_or("").to_string(),
+                    from: (e.level + 1).min(u32::from(top)) as u8,
+                    to: top,
+                    rolls: 3,
+                    experimental: None,
+                });
+                changed = true;
+            }
+        }
+    });
+    changed
+}
+
+/// The wishlist as rows. Returns true when an item was removed.
+fn wishlist_rows(ui: &mut Ui, wishlist: &mut Vec<WishItem>) -> bool {
+    if wishlist.is_empty() {
+        empty(ui, icon::LIST_BULLETS, "Nothing planned yet", "Add a blueprint, and everything your plan needs adds up here.");
+        return false;
+    }
+    let mut remove = None;
+    crate::widgets::group(ui, |g| {
+        for (i, w) in wishlist.iter().enumerate() {
+            let grades = if w.from == w.to { format!("G{}", w.to) } else { format!("G{} to G{}", w.from, w.to) };
+            let mut detail = format!("{grades}, {} each", rolls_text(w.rolls));
+            if let Some(x) = w.experimental.as_deref().and_then(eng::experimental) {
+                detail = format!("{detail} · {}", x.name);
+            }
+            if g.row(&w.label, &detail, |ui| crate::widgets::icon_button(ui, icon::TRASH, "Remove").clicked()) {
+                remove = Some(i);
+            }
+        }
+    });
+    match remove {
+        Some(i) => {
+            wishlist.remove(i);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Everything the wishlist needs against what you have, and the trades that cover the gaps.
+fn shopping_list(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &HashMap<String, i64>, wishlist: &[WishItem]) {
+    let mut need: Vec<(String, u32)> = Vec::new();
+    let mut coins = 0u32;
+    for w in wishlist {
+        if let Some(bp) = eng::blueprint_for(&w.module, &w.blueprint).or_else(|| eng::blueprint(&w.blueprint)) {
+            merge_into(&mut need, nexus_data::trader::blueprint_shopping(bp, w.from, w.to, w.rolls));
+            coins = coins.saturating_add(nexus_data::trader::blueprint_merc_coins(bp, w.from, w.to, w.rolls));
+        }
+        if let Some(x) = w.experimental.as_deref().and_then(eng::experimental) {
+            merge_into(&mut need, x.cost.iter().map(|i| (i.symbol.clone(), i.count)));
+        }
+    }
+    if need.is_empty() {
+        ui.label(RichText::new("Nothing needed yet.").color(pal::DIM));
+        return;
+    }
+    needs(ui, gs, inv, &need, coins, &mut st.show_list_have);
+    let plan = plan_shopping_with(&need, inv, &ShoppingOptions { cross_category: st.cross_category, ..Default::default() });
+    if !plan.trades.is_empty() {
+        crate::widgets::section(ui, "Trade at a material trader");
+        crate::widgets::group(ui, |g| {
+            for t in &plan.trades {
+                let trader = match t.trader {
+                    MaterialKind::Raw => "Raw",
+                    MaterialKind::Manufactured => "Manufactured",
+                    MaterialKind::Encoded => "Encoded",
+                };
+                let title = format!("{} {} {} {} {}", t.give_qty, item_name(&t.give), icon::ARROW_RIGHT, t.receive_qty, item_name(&t.receive));
+                g.row(&title, &format!("{trader} material trader"), |_| {});
+            }
+        });
+    }
+    if !plan.unresolved.is_empty() {
+        crate::widgets::section(ui, "Still to find");
+        crate::widgets::group(ui, |g| {
+            for u in &plan.unresolved {
+                g.row(&item_name(&u.symbol), "", |ui| {
+                    ui.label(RichText::new(format!("{} more", u.qty)).color(pal::WARN));
+                });
+            }
+        });
+    }
+    ui.add_space(4.0);
+    if crate::widgets::disclosure(ui, &mut st.show_list_options, "Options") {
+        crate::widgets::toggle(ui, &mut st.cross_category, "Trade across categories (costs 6× more)");
+    }
 }
 
 /// Merc Coins at the last login: the journal's Statistics event is the only place the game writes them.
 fn merc_coin_balance(gs: &GameState) -> Option<u64> {
     gs.cmdr.statistics.as_ref()?.bank_account.get("MercCoins_Current")?.as_u64()
-}
-
-fn blueprint_detail(ui: &mut Ui, gs: &GameState, bp: &Blueprint, inv: &HashMap<String, i64>) {
-    ui.label(RichText::new(&bp.name).font(display(18.0)));
-    for (grade, ingredients) in (1u8..).zip(&bp.grades).filter(|(_, g)| !g.is_empty()) {
-        ui.horizontal_wrapped(|ui| {
-            badge(ui, &format!("G{grade}"), pal::PURPLE);
-            for ing in ingredients {
-                ingredient_line(ui, ing, *inv.get(&ing.symbol.to_ascii_lowercase()).unwrap_or(&0));
-            }
-            let coins = bp.merc_coins_for(grade);
-            if coins > 0 {
-                ui.label(RichText::new(format!("{} {coins} Merc Coins", icon::COINS)).color(pal::TEXT));
-            }
-        });
-    }
-    if bp.is_merc() {
-        let text = match &bp.merc_module {
-            Some(m) => format!(
-                "Merc blueprint, only for the {m} bought with Merc Coins in outfitting (it comes at G1). Every roll costs Merc Coins as well as materials."
-            ),
-            None => "Merc blueprint: every roll costs Merc Coins as well as materials.".into(),
-        };
-        crate::widgets::footnote(ui, &text);
-    }
-    if let Some(effects) = bp.effects.last() {
-        ui.horizontal_wrapped(|ui| {
-            for e in effects {
-                ui.label(RichText::new(format!("{} {}", e.property, e.value)).small().color(if e.good { pal::GOOD } else { pal::BAD }));
-            }
-        });
-    }
-    ui.add_space(4.0);
-    ui.label(RichText::new("ENGINEERS").small().color(pal::ACCENT));
-    let here = gs.location.star_pos;
-    let mut list: Vec<_> = bp.engineers.iter().filter_map(|eg| eng::engineer_by_name(&eg.engineer).map(|e| (e, eg.max_grade))).collect();
-    list.sort_by(|a, b| {
-        let da = here.map(|p| nexus_model::location::distance(p, a.0.pos)).unwrap_or(0.0);
-        let db = here.map(|p| nexus_model::location::distance(p, b.0.pos)).unwrap_or(0.0);
-        da.total_cmp(&db)
-    });
-    for (e, max) in list {
-        let status = gs.cmdr.engineers.get(&e.id);
-        let unlocked = status.is_some_and(|s| s.progress == "Unlocked");
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&e.name).color(if unlocked { pal::GOOD } else { pal::TEXT }));
-            badge(ui, &format!("max G{max}"), pal::PURPLE);
-            if let Some(s) = status {
-                badge(ui, &s.progress, if unlocked { pal::GOOD } else { pal::DIM });
-            }
-            let dist = here.map(|p| format!("{:.0} ly", nexus_model::location::distance(p, e.pos))).unwrap_or_default();
-            ui.label(RichText::new(format!("{} · {}", e.system, dist)).small().color(pal::DIM));
-        });
-    }
 }
 
 fn materials(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi) {
