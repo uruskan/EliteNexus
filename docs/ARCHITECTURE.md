@@ -20,7 +20,8 @@ Parallel builds: set your own `CARGO_TARGET_DIR` (e.g. `target-agents\<name>`) t
 the window is placed off-screen and never takes focus). `--size 1000x700` tests responsive layouts, `--tab <name>` opens
 a Market section (`abnormal`, `database`, …), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
-screenshot run), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
+screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build and searches on the
+first frame), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
 `royalpurple`, …), `--demo` adds a sample Ask conversation and an alert banner, `--overlay <moment>` shows an overlay
 moment compact and expanded with sample content (`overlay::DEMOS`), `--shot-delay 8` waits longer (the
 galaxy image paints in the background, Spansh searches take 5–20 s). `ELITE_NEXUS_GAME_DIR` points HUD & cockpit at
@@ -61,7 +62,10 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   `MarketService` (market.rs → nexus-galaxy + nexus-eddn, price alerts, Spansh import), `AssistantService`
   (assistant.rs → nexus-ai on a worker thread; `ai_tools.rs` implements its 16 tools over the model, galaxy DB,
   journal and Spansh), Spansh client, TTS. `finder.rs` holds market lookups shared by pages and tools (sell plan,
-  colonisation suppliers).
+  colonisation suppliers). `shopping.rs` is Fleet › Where to buy: it reads a build (SLEF, journal `Loadout`, EDSY or
+  Coriolis import link), lists what to buy against the commander's storage, and asks Spansh's outfitting search for
+  stations that sell all of it, checking each result's exact module symbols (Spansh filters on name, class and rating
+  only, and lists MercGear-shared symbols under the MercGear name: `docs/research/spansh.md` §4.8).
 * The overlay (`overlay.rs`, `overlay/`): one black island at the top of the game's screen, in its own deferred
   viewport (a borderless always-on-top window beside the main one). `overlay.rs` is its view model, pure and tested:
   `Inputs::read` copies what it needs from the model (via `nexus_model::context`), `Rhythm::view` picks the moment,

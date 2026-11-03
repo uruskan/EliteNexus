@@ -13,4 +13,5 @@ pub mod outfitting;
 pub mod names;
 pub mod ranks;
 pub mod ships;
+pub mod sku;
 pub mod trader;

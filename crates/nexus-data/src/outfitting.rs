@@ -75,6 +75,8 @@ pub struct Module {
     pub ship: Option<String>,
     /// Class: 0 for utilities, 1–4 (small…huge) for hardpoints, 1–8 for internals.
     pub size: u8,
+    /// The class FDevIDs gives, typos included (Spansh's): `size` takes the symbol's word for it.
+    pub fdev_class: u8,
     /// Rating letter `'A'`…`'I'`.
     pub rating: char,
     /// Store entitlement SKU, if any (powerplay modules, store items, Horizons/Odyssey gates).
@@ -202,6 +204,7 @@ fn load() -> Table {
             guidance,
             ship,
             size,
+            fdev_class: csv_class,
             rating: field(8).chars().next().filter(char::is_ascii_alphabetic).unwrap_or('?'),
             entitlement: Some(field(9)).filter(|s| !s.is_empty() && *s != "?").map(str::to_string),
             symbol,
@@ -533,8 +536,9 @@ mod tests {
         );
         assert_eq!(display_name("int_largecargorack_size8_class1"), "8D Mk II Cargo Rack");
         assert_eq!(display_name("hpt_miningtoolv2_fixed_large"), "3C Fixed Mining Volley Repeater");
-        // FDevIDs says class 5 for the size-6 Mk II cabin; the symbol wins.
+        // FDevIDs says class 5 for the size-6 Mk II cabin; the symbol wins (Spansh keeps the 5).
         assert_eq!(display_name("int_mkii_passengercabin_size6_class2"), "6C Mk II Business Class Passenger Cabin");
+        assert_eq!(module("int_mkii_passengercabin_size6_class2").map(|m| (m.size, m.fdev_class)), Some((6, 5)));
         assert_eq!(display_name("int_mkiilargebuggybay_size2_class3"), "2F Mk II Large Planetary Vehicle Hangar");
     }
 

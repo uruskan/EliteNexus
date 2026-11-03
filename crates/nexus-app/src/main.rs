@@ -21,6 +21,7 @@ mod pages;
 mod runplan;
 mod secrets;
 mod settings;
+mod shopping;
 mod sync;
 #[cfg(test)]
 mod testutil;

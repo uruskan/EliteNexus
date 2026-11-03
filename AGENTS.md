@@ -97,10 +97,11 @@ a layout changes.
 
 * `-Page`: a sidebar page (`Dashboard`, `Exploration`, `Exobiology`, `Navigation`, `Market`, `Settings`, ...).
 * `-Tab`: `abnormal`, `database`, ... (Market), `galaxy` (whole-galaxy map), `find`, `history`, `unsold`
-  (Exploration), `untouched`, `known` (Exobiology > Find planets), `materials`, `engineers`, `suits`, `synthesis`,
-  `merc` (Engineering), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from
-  that theme; add `,options` to open the protection's options; nothing is written). `find`, `untouched` and `known`
-  start their search on the first frame: add `-Delay 15` to `-Delay 25` for Spansh to answer.
+  (Exploration), `untouched`, `known` (Exobiology > Find planets), `buy` (Fleet > Where to buy, from the current
+  ship's build), `materials`, `engineers`, `suits`, `synthesis`, `merc` (Engineering), `glare`, `cockpit` or a preset
+  name such as `mocha` (Hud: that tab, or HUD colours starting from that theme; add `,options` to open the
+  protection's options; nothing is written). `find`, `untouched`, `known` and `buy` start their search on the first
+  frame: add `-Delay 15` to `-Delay 25` for Spansh to answer.
 * HUD & cockpit with a game folder of your own making: set `ELITE_NEXUS_GAME_DIR` to a folder holding a dummy
   `EliteDangerous64.exe`; add a `d3dx.ini` starting `; Elite Nexus` with a `[Constants]` section (`x1 = 1` switches
   the HUD colour protection on) and an `EliteNexus-3Dmigoto.json` of `{"migoto_version":"1.4.9","files":[]}` for

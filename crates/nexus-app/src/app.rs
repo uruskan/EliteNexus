@@ -181,7 +181,7 @@ impl NexusApp {
             settings_dirty: None,
             explo: pages::exploration::ExplorationUi::new(ov.tab.as_deref(), shot.is_some()),
             exo: pages::exobio::ExobioUi::new(ov.tab.as_deref(), shot.is_some()),
-            fleet: Default::default(),
+            fleet: pages::fleet::FleetUi::new(ov.tab.as_deref(), shot.is_some()),
             eng: pages::engineering::EngineeringUi::new(ov.tab.as_deref()),
             log: Default::default(),
             map,
@@ -608,7 +608,11 @@ impl NexusApp {
             },
             Page::Carrier => settings_changed |= pages::carrier::show(ui, gs, &mut self.settings.carrier),
             Page::Engineering => settings_changed |= pages::engineering::show(ui, gs, &mut self.eng, &mut self.settings.wishlist),
-            Page::Fleet => pages::fleet::show(ui, gs, &mut self.fleet),
+            Page::Fleet => {
+                if let Some(pages::fleet::FleetAction::PlotTo(s)) = pages::fleet::show(ui, gs, &mut self.fleet, &self.spansh, self.rt.handle()) {
+                    map_action = Some(pages::galaxy_map::MapAction::PlotTo(s));
+                }
+            }
             Page::Missions => pages::missions::show(ui, gs),
             Page::Bgs => settings_changed |= pages::bgs::show(ui, gs, &mut self.settings.bgs),
             Page::Logbook => pages::logbook::show(ui, gs, &mut self.log, &self.core.index),

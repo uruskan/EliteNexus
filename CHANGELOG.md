@@ -15,6 +15,14 @@ release time that section becomes the new version and the release workflow publi
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
 - **Fleet** shows the landing pad each ship needs (S, M or L), in the ship list and on its Loadout card (asked for by
   Alvarrune on the Frontier Forums).
+- **Fleet › Where to buy**: paste a ship build (a SLEF export from EDSY or Coriolis, a journal Loadout or an import
+  link) or pick one of your ships, and Elite Nexus finds the nearest stations that sell all of it, modules and hull:
+  starports, outposts, settlements and fleet carriers with a pad your ship fits. Modules in your storage and the
+  bulkheads a new hull comes with start unticked, and unlocks (tech brokers, Powerplay) are marked; a hull no station
+  prices in credits is flagged as possibly ARX-only. Every station shows how old its outfitting list is and what the
+  build costs there, with a route button. Spansh can't tell a fixed weapon from a gimballed one, so each station's own
+  list is checked for the exact modules. When no station sells everything, it suggests two stops, or the nearest
+  seller of each missing piece. Ships › **Where to buy** opens it with that ship's build.
 - **Mining** › Surface radar numbers the deposits (an idea from Chequers2): 1, 2, 3… on each body in the order the
   Rhino records them, kept between runs, beside each deposit on the radar, in the list under it and on the overlay's
   radar. Each deposit in the list takes a note of your own, such as how many rigs fit, so two deposits of the same

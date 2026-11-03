@@ -534,7 +534,7 @@ The response was `count` 3029: Barnard's Star 5 (A ring Painite ×2), WISE 0855-
 
 ### 4.8 Outfitting: stations that sell a whole build [TESTED 2026-11-02 and 2026-11-04]
 
-What Elite Nexus's outfitting search relies on (`nexus_spansh::OutfittingQuery`, with names from `nexus_data::outfitting::fdev_names` and `ships::Ship::fdev_name`):
+What Elite Nexus's outfitting search (Fleet › Where to buy, `nexus-app/src/shopping.rs`) relies on (`nexus_spansh::OutfittingQuery`, with names from `nexus_data::outfitting::fdev_names` and `ships::Ship::fdev_name`):
 
 - **Several `modules` items must all match** (AND). Within 25 ly of Sol: 6A FSD 130 stations, 7A shield generator 108, both in one array 56. A 15-module Anaconda-style list plus `"ships":[{"name":{"value":["Anaconda"]}}]` answers in about 1.2–1.7 s; the nearest station selling all 15 was 32.8 ly from Sol.
 - **Within one item, several `name` values match any of them.** That matters because **MercGear rows share their base module's symbol, and Spansh lists the module under one name, mostly the MercGear one**: within 50 ly of Sol, `Power Distributor` 5A matched 113 stations, `Balanced Power Distributor` 5A 1,082, either name 1,195. Galileo lists `Int_PowerDistributor_Size5_Class5` only as "Balanced Power Distributor" (category `mercgear`), with no regular row. So send every FDevIDs name of the symbol (`nexus_data::outfitting::fdev_names`). The affected symbols are the 25 MercGear rows of FDevIDs `outfitting.csv` (power distributors, module reinforcements, cargo racks, seeker racks, fragment cannons, a medium fixed multi-cannon, a huge fixed beam laser and cannon, …).
