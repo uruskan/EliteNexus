@@ -99,6 +99,9 @@ release time that section becomes the new version and the release workflow publi
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
+- **Engineering** › Suits & weapons and Synthesis read the same way: each recipe (a grade, a modification, a
+  synthesis) is one row that says Ready or how many materials you're short of, with its price or effect, and opens
+  into each ingredient against what you have, instead of a run of "3× Vanadium (0)" in coloured brackets.
 - **Market**: the four lines of live-feed messages under every tab are gone, so each tab starts higher up. The
   **Live** badge stays, with the feed's rate and the database's size beside it.
 

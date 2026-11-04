@@ -138,12 +138,6 @@ fn grade_options(grades: std::ops::RangeInclusive<u8>) -> Vec<(u8, &'static str)
     grades.filter_map(|g| GRADE_LABELS.get(usize::from(g).checked_sub(1)?).map(|l| (g, *l))).collect()
 }
 
-fn ingredient_line(ui: &mut Ui, ing: &Ingredient, have: i64) {
-    let ok = have >= i64::from(ing.count);
-    ui.label(RichText::new(format!("{}× {}", ing.count, ing.name())).color(if ok { pal::TEXT } else { pal::WARN }));
-    ui.label(RichText::new(format!("({have})")).small().color(if ok { pal::GOOD } else { pal::BAD }));
-}
-
 /// English name of a material, micro-resource or commodity symbol.
 fn item_name(symbol: &str) -> String {
     Ingredient { symbol: symbol.to_string(), count: 0 }.name()
@@ -768,34 +762,33 @@ fn odyssey(ui: &mut Ui, gs: &GameState) {
         empty(ui, icon::BACKPACK, "No Odyssey data", "");
         return;
     }
+    let have = |s: &str| locker_count(locker, s);
     crate::widgets::cards(ui, 2, 360.0, |c| {
         for (kind, title) in [(OdysseyKind::Suit, "Suits"), (OdysseyKind::Weapon, "Weapons")] {
             c.add(|ui| {
                 card(ui, title, |ui| {
                 for item in eng::odyssey_items().iter().filter(|i| i.kind == kind) {
                     egui::CollapsingHeader::new(RichText::new(item.name).color(pal::TEXT)).id_salt(item.symbol).show(ui, |ui| {
-                        for g in 2..=5u8 {
-                            if let Some(up) = eng::odyssey_upgrade(item.symbol, g) {
-                                ui.horizontal_wrapped(|ui| {
-                                    badge(ui, &format!("G{g}"), pal::PURPLE);
-                                    for ing in &up.cost {
-                                        ingredient_line(ui, ing, locker_count(locker, &ing.symbol));
-                                    }
-                                });
+                        crate::widgets::section(ui, "Upgrades");
+                        crate::widgets::group(ui, |g| {
+                            for grade in 2..=5u8 {
+                                if let Some(up) = eng::odyssey_upgrade(item.symbol, grade) {
+                                    let price = item.upgrade_credits(grade).map(credits).unwrap_or_default();
+                                    g.content(|ui| recipe_row(ui, (item.symbol, grade), &format!("Grade {grade}"), &price, &up.cost, have));
+                                }
                             }
-                        }
+                        });
                         let mods = eng::odyssey_mods_for(item.symbol);
                         if !mods.is_empty() {
-                            ui.label(RichText::new("MODIFICATIONS").small().color(pal::ACCENT));
-                            for m in mods {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label(RichText::new(&m.name).color(pal::CYAN));
-                                    for ing in &m.cost {
-                                        ingredient_line(ui, ing, locker_count(locker, &ing.symbol));
-                                    }
-                                });
-                            }
+                            crate::widgets::section(ui, "Modifications");
+                            crate::widgets::group(ui, |g| {
+                                for m in mods {
+                                    let price = if m.credits > 0 { credits(m.credits) } else { String::new() };
+                                    g.content(|ui| recipe_row(ui, (item.symbol, m.symbol.as_str()), &m.name, &price, &m.cost, have));
+                                }
+                            });
                         }
+                        crate::widgets::footnote(ui, "Goods, assets and data counted in your ship locker.");
                     });
                 }
             });
@@ -806,25 +799,57 @@ fn odyssey(ui: &mut Ui, gs: &GameState) {
 
 fn synthesis(ui: &mut Ui, gs: &GameState) {
     let inv = inventory_map(gs);
+    let have = |s: &str| *inv.get(&s.to_ascii_lowercase()).unwrap_or(&0);
     let mut families: Vec<&str> = eng::synthesis_recipes().iter().map(|r| r.family.as_str()).collect();
     families.dedup();
-    for fam in families {
-        card(ui, fam, |ui| {
-            for r in eng::synthesis_recipes().iter().filter(|r| r.family == fam) {
-                let can = r.cost.iter().all(|i| *inv.get(&i.symbol.to_ascii_lowercase()).unwrap_or(&0) >= i64::from(i.count));
-                ui.horizontal_wrapped(|ui| {
-                    badge(ui, &r.name, if can { pal::GOOD } else { pal::DIM });
-                    // Basic grades have no effect text, and an empty label in a wrapping row sends the rest of the
-                    // row back over the badge.
-                    if !r.effect.is_empty() {
-                        ui.label(RichText::new(&r.effect).small().color(pal::DIM));
-                    }
-                    for ing in &r.cost {
-                        ingredient_line(ui, ing, *inv.get(&ing.symbol.to_ascii_lowercase()).unwrap_or(&0));
+    // Two columns where there's room: a family's three rows don't need the whole width.
+    crate::widgets::cards(ui, 2, 440.0, |c| {
+        for fam in families {
+            c.add(|ui| {
+                card(ui, fam, |ui| {
+                    crate::widgets::group(ui, |g| {
+                        for r in eng::synthesis_recipes().iter().filter(|r| r.family == fam) {
+                            g.content(|ui| recipe_row(ui, (fam, r.name.as_str()), &r.name, &r.effect, &r.cost, have));
+                        }
+                    });
+                });
+            });
+        }
+    });
+}
+
+fn credits(cr: u64) -> String {
+    format!("{} Cr", nexus_data::names::group_digits(i64::try_from(cr).unwrap_or(i64::MAX)))
+}
+
+/// A recipe as one row, as the blueprint planner shows needs: its name and what it does or costs, then whether you
+/// have everything it takes. Opening it lists each ingredient against what you have, what you're short of first.
+fn recipe_row(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, name: &str, detail: &str, cost: &[Ingredient], have: impl Fn(&str) -> i64) {
+    let short = cost.iter().filter(|i| have(&i.symbol) < i64::from(i.count)).count();
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), ui.make_persistent_id(id), false)
+        .show_header(ui, |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                match short {
+                    0 => ui.label(RichText::new(format!("{} Ready", icon::CHECK_CIRCLE)).color(pal::GOOD)),
+                    1 => ui.label(RichText::new("Short of 1 material").color(pal::WARN)),
+                    n => ui.label(RichText::new(format!("Short of {n} materials")).color(pal::WARN)),
+                };
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(name).color(pal::TEXT)).truncate());
+                    if !detail.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(detail).size(size::FOOTNOTE).color(pal::DIM)).truncate());
                     }
                 });
+            });
+        })
+        .body(|ui| {
+            let mut rows: Vec<&Ingredient> = cost.iter().collect();
+            rows.sort_by_key(|i| have(&i.symbol) >= i64::from(i.count));
+            for i in rows {
+                let h = u64::try_from(have(&i.symbol)).unwrap_or(0);
+                let ok = h >= u64::from(i.count);
+                let (glyph, tint) = if ok { (icon::CHECK_CIRCLE, pal::GOOD) } else { (icon::CIRCLE_DASHED, pal::WARN) };
+                need_row(ui, glyph, tint, &i.name(), Some(h), u64::from(i.count), None, |_| {});
             }
         });
-        ui.add_space(6.0);
-    }
 }
