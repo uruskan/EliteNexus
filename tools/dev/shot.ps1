@@ -57,4 +57,20 @@ if (-not $p.WaitForExit($TimeoutSec * 1000)) {
     Write-Output "TIMEOUT"
     exit 1
 }
-if (Test-Path $png) { Write-Output "saved $png" } else { Write-Output "NO PNG (exit $($p.ExitCode))"; exit 1 }
+if (-not (Test-Path $png)) { Write-Output "NO PNG (exit $($p.ExitCode))"; exit 1 }
+Write-Output "saved $png"
+# -Size is in points. A display scaled above 100 % saves a larger PNG of the same layout: say so, from the PNG's header.
+if ($Size -match '^(\d+)x(\d+)$') {
+    $rw = [double]$Matches[1]; $rh = [double]$Matches[2]
+    $fs = [IO.File]::OpenRead($png); $b = New-Object byte[] 24; $null = $fs.Read($b, 0, 24); $fs.Close()
+    $w = ([int]$b[16] -shl 24) -bor ([int]$b[17] -shl 16) -bor ([int]$b[18] -shl 8) -bor [int]$b[19]
+    $h = ([int]$b[20] -shl 24) -bor ([int]$b[21] -shl 16) -bor ([int]$b[22] -shl 8) -bor [int]$b[23]
+    if ($w -ne $rw -or $h -ne $rh) {
+        $sx = $w / $rw; $sy = $h / $rh
+        if ([math]::Abs($sx - $sy) -lt 0.02 -and $sx -gt 1) {
+            Write-Output ("PNG is {0}x{1}: the display is scaled to {2:0} % and -Size is in points, so this is the layout for {3}." -f $w, $h, ($sx * 100), $Size)
+        } else {
+            Write-Output "PNG is $($w)x$($h), not $Size."
+        }
+    }
+}
