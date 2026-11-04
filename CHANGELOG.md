@@ -17,6 +17,13 @@ release time that section becomes the new version and the release workflow publi
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
+- **Engineering** and **Missions**: where to get what you're short of (asked for by nhok0169 in GitHub issue #4). In
+  the blueprint planner and its shopping list, the pin at the end of a material you're short of opens, under it,
+  the nearest material trader of its kind, for a raw material the three landable planets within 100 ly richest in
+  it (from Spansh), and for a commodity the nearest markets that sell it and rings with hotspots for it. The Missions
+  page lists the goods your missions ask you to source, mine or donate, each with the same pin. Every answer says
+  where it comes from (Elite Nexus's market database, or Spansh's shared scans) and what it can't know, and a button
+  opens the full list on the Market page.
 - **Fleet** shows the landing pad each ship needs (S, M or L), in the ship list and on its Loadout card (asked for by
   Alvarrune on the Frontier Forums).
 - **Fleet › Where to buy**: paste a ship build (a SLEF export from EDSY or Coriolis, a journal Loadout or an import

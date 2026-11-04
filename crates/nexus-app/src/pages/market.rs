@@ -337,7 +337,8 @@ pub struct MarketUi {
     routes: Slot<Res<TradeRoute>>,
     /// The station the shown routes start at (`None`: routes around you).
     routes_from: Option<String>,
-    /// Find routes on the first frame (screenshot runs: `--tab routes`).
+    /// Search on the next frame: Trade routes (screenshot runs: `--tab routes`), or Mining hotspots (opened from a
+    /// "where to get it" panel).
     pub autorun: bool,
     service: usize,
     stations: Slot<Res<StationHit>>,
@@ -504,6 +505,33 @@ impl MarketUi {
         self.tab = t;
         self.prefs.tab = t;
     }
+
+    /// Opens what a "where to get it" panel (Engineering, Missions) asked for: the material traders of a kind, where
+    /// to buy a commodity, or rings with hotspots for it (searched at once).
+    pub fn open_source(&mut self, db: Option<&GalaxyDb>, to: crate::pages::where_to_get::Goto) {
+        use crate::pages::where_to_get::Goto;
+        match to {
+            Goto::Trader(kind) => {
+                let name = match kind {
+                    nexus_data::materials::MaterialKind::Raw => "raw",
+                    nexus_data::materials::MaterialKind::Manufactured => "manufactured",
+                    nexus_data::materials::MaterialKind::Encoded => "encoded",
+                };
+                self.service = SERVICES.iter().position(|(_, k)| *k == name).unwrap_or(0);
+                self.services_key = None;
+                self.set_tab(Tab::Services);
+            }
+            Goto::Commodity(name) => match db {
+                Some(db) => self.go(db, Nav::Commodity { name, side: Some(Side::Buy) }),
+                None => self.set_tab(Tab::Commodity),
+            },
+            Goto::Hotspots(signal) => {
+                self.prefs.hotspot_signal = signal;
+                self.autorun = true;
+                self.set_tab(Tab::Hotspots);
+            }
+        }
+    }
 }
 
 /// Farthest a local-database search can reach, ly: the whole galaxy (it's about 100,000 ly
@@ -542,6 +570,11 @@ const HOTSPOT_SIGNALS: &[&str] = &[
     "Tritium",
     "Bromellite",
 ];
+
+/// The Mining hotspots tab's name for a commodity, when it has hotspots there.
+pub(crate) fn hotspot_signal(name: &str) -> Option<&'static str> {
+    HOTSPOT_SIGNALS.iter().copied().find(|s| s.eq_ignore_ascii_case(name.trim()))
+}
 
 /// Commodities matching what was typed, best first: the whole name, the start of the name, the
 /// initials ("ltd" is Low Temperature Diamonds), the start of every typed word ("thar pro"), anywhere
@@ -724,7 +757,8 @@ fn pad_rank(p: Option<char>) -> u8 {
     }
 }
 
-fn age(updated_unix: i64) -> (String, egui::Color32) {
+/// How old a price is ("5m", "3h", "2d"), in a colour from fresh to stale.
+pub(crate) fn age(updated_unix: i64) -> (String, egui::Color32) {
     let s = (nexus_journal::Timestamp::now().0 - updated_unix).max(0);
     let col = if s < 3600 { pal::GOOD } else if s < 6 * 3600 { pal::CYAN } else if s < 48 * 3600 { pal::WARN } else { pal::FAINT };
     let txt = if s < 60 {
@@ -961,6 +995,8 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
             }
         }
         Tab::Hotspots => {
+            // Opened from a "where to get it" panel: search at once.
+            let auto = std::mem::take(&mut st.autorun);
             let p = &mut st.prefs;
             ui.horizontal_wrapped(|ui| {
                 egui::ComboBox::from_id_salt("hsig").selected_text(p.hotspot_signal.clone()).show_ui(ui, |ui| {
@@ -972,7 +1008,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
                 ui.add(egui::DragValue::new(&mut p.hotspot_min).range(1..=6));
                 ui.label("hotspots within");
                 ui.add(egui::DragValue::new(&mut p.max_dist).range(1.0..=MAX_SEARCH_LY).suffix(" ly")).on_hover_text("Searches every market Elite Nexus knows, up to the whole galaxy.");
-                if crate::widgets::primary_button(ui, "Find hotspots").clicked()
+                if (crate::widgets::primary_button(ui, "Find hotspots").clicked() || auto)
                     && let Some(o) = origin {
                         let q = HotspotQuery { origin: o, signal: p.hotspot_signal.clone(), max_distance_ly: Some(p.max_dist), min_count: p.hotspot_min, limit: 50 };
                         let db2 = db.clone();

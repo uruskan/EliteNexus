@@ -42,8 +42,9 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   checked for the exact module (a weapon's mount, the hull's own bulkheads), with how old each station's list is, the
   total price, and two stops when no one station has it all. Station data from Spansh.
 - Also: Spansh neutron/exact/fleet-carrier route planners, next system copied to the clipboard after each jump,
-  engineering wishlist and material shopping list, fleet loadouts with EDSY/Coriolis links, missions and
-  massacre stacks, mining (with the Rhino's surface mining locations, a radar to find their deposits again, and
+  engineering wishlist and material shopping list (with where to get what you're short of: the nearest material
+  trader of its kind, planets rich in a raw material, markets and ring hotspots for a commodity), fleet loadouts with
+  EDSY/Coriolis links, missions (and where to get the goods they ask for) and massacre stacks, mining (with the Rhino's surface mining locations, a radar to find their deposits again, and
   where to surface-mine next: bodies with mining locations near you or along a route, by class and volcanism),
   colonisation depots (yours kept apart from ones you only docked at), BGS and Powerplay (tick hour remembered),
   bindings (read only: the app never changes them), logbook, statistics, galaxy map, voice alerts, the game's BMP

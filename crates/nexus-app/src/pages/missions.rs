@@ -1,3 +1,4 @@
+use crate::pages::where_to_get::{Goto, Sources, WhereToGet};
 use crate::theme::{display, pal, size};
 use crate::widgets::{badge, badge_size, bar, card, duration, empty, short_credits};
 use egui::{Color32, Grid, RichText, Ui};
@@ -7,7 +8,14 @@ use nexus_journal::Timestamp;
 use nexus_model::missions::{Mission, MissionOutcome};
 use nexus_model::GameState;
 
-pub fn show(ui: &mut Ui, gs: &GameState) {
+/// The Missions page's state: "where to get it" for the goods your missions ask for.
+#[derive(Default)]
+pub struct MissionsUi {
+    get: WhereToGet,
+}
+
+/// Returns what a "where to get it" panel asks the Market page to open.
+pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> Option<Goto> {
     let stacks = gs.missions.massacre_stacks();
     if !stacks.is_empty() {
         for s in &stacks {
@@ -164,6 +172,7 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
                 });
             });
     });
+    let goto = goods(ui, gs, st, src);
     ui.add_space(8.0);
     card(ui, "Recent mission history", |ui| {
         // Reported by other developers and on Frontier's forums: the wingmate who handed the mission in gets the
@@ -190,6 +199,66 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
         });
         crate::widgets::footnote(ui, shared);
     });
+    goto
+}
+
+/// A commodity your missions ask you to bring: how many tonnes are still to go, and for which missions.
+struct Goods<'a> {
+    commodity: &'a str,
+    tonnes: i64,
+    missions: Vec<&'a str>,
+}
+
+/// What the active missions ask you to bring, one entry per commodity: not a delivery's or a smuggling run's cargo,
+/// which the mission hands you, nor a mission that's ready to hand in.
+fn wanted_goods(gs: &GameState) -> Vec<Goods<'_>> {
+    let mut out: Vec<Goods> = Vec::new();
+    for m in gs.missions.active.values() {
+        let Some(c) = m.commodity.as_deref().map(str::trim).filter(|c| !c.is_empty()) else { continue };
+        let kind = m.name.to_ascii_lowercase();
+        if kind.contains("delivery") || kind.contains("smuggle") || m.redirected {
+            continue;
+        }
+        let tonnes = (m.count.unwrap_or(0) - m.cargo_delivered).max(0);
+        if tonnes == 0 {
+            continue;
+        }
+        match out.iter_mut().find(|g| g.commodity.eq_ignore_ascii_case(c)) {
+            Some(g) => {
+                g.tonnes += tonnes;
+                g.missions.push(&m.title);
+            }
+            None => out.push(Goods { commodity: c, tonnes, missions: vec![&m.title] }),
+        }
+    }
+    out.sort_by(|a, b| a.commodity.cmp(b.commodity));
+    out
+}
+
+/// The goods your missions ask for, each with where to get it. Returns what its panel asks the Market page to open.
+fn goods(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> Option<Goto> {
+    let list = wanted_goods(gs);
+    if list.is_empty() {
+        return None;
+    }
+    let mut goto = None;
+    ui.add_space(8.0);
+    card(ui, "Goods your missions ask for", |ui| {
+        crate::widgets::group(ui, |g| {
+            for w in &list {
+                let name = nexus_data::commodities::display_name(w.commodity);
+                g.row(&name, &w.missions.join(" · "), |ui| {
+                    st.get.button(ui, w.commodity);
+                    ui.label(RichText::new(format!("{} t", nexus_data::names::group_digits(w.tonnes))).color(pal::WARN));
+                });
+                if st.get.is_open(w.commodity) {
+                    g.content(|ui| goto = st.get.panel(ui, gs, src, w.commodity));
+                }
+            }
+        });
+        crate::widgets::footnote(ui, "What your missions ask you to source, mine or donate. A delivery's cargo is handed to you with the mission, so it isn't here.");
+    });
+    goto
 }
 
 /// Splits `room` between columns that want the widths `want`. When they all fit, the spare room is shared in
