@@ -5,6 +5,7 @@ use crate::widgets::{card, empty, short_credits};
 use egui::{Grid, RichText, Ui};
 use egui_phosphor::regular as icon;
 use egui_plot::{Bar, BarChart, Plot};
+use nexus_journal::time::LocalDays;
 use nexus_journal::Timestamp;
 use nexus_model::bgs::{last_tick, BgsKind};
 use nexus_model::GameState;
@@ -128,18 +129,35 @@ fn powerplay(ui: &mut Ui, gs: &GameState, since: Timestamp) {
             crate::widgets::stat(ui, "pledged", crate::widgets::duration(pp.time_pledged_secs), pal::DIM);
         });
         if gs.bgs.merits.len() > 1 {
+            // Days are the commander's calendar days (local time), for the bars, the axis and the tooltip alike.
+            let mut calendar = LocalDays::default();
             let mut per_day: std::collections::BTreeMap<i64, i64> = Default::default();
             for (t, g, _) in &gs.bgs.merits {
-                *per_day.entry(t.0 / 86_400).or_default() += g;
+                *per_day.entry(calendar.day(*t)).or_default() += g;
             }
-            let bars: Vec<Bar> = per_day.iter().map(|(d, m)| Bar::new(*d as f64, *m as f64).width(0.8).fill(pal::PURPLE)).collect();
-            Plot::new("merits")
-                    .show_background(false)
-                    .show_grid([false, true])
+            // Whole days, so their dates are on the axis however few there are.
+            let first = per_day.keys().next().copied().unwrap_or_default();
+            let last = per_day.keys().next_back().copied().unwrap_or_default();
+            let bars: Vec<Bar> = per_day.iter().map(|(d, m)| Bar::new(*d as f64 + 0.5, *m as f64).width(0.8).fill(pal::PURPLE)).collect();
+            let plot = Plot::new("merits")
+                .show_background(false)
+                .show_grid([false, true])
                 .height(140.0)
                 .allow_scroll(false)
-                .x_axis_formatter(|m, _| Timestamp((m.value * 86_400.0) as i64).to_local_string("%d %b"))
-                .show(ui, |p| p.bar_chart(BarChart::new("merits", bars)));
+                .allow_drag(false)
+                .allow_zoom(false)
+                .include_x(first as f64)
+                .include_x(last as f64 + 1.0)
+                .include_y(0.0)
+                .x_axis_formatter(crate::widgets::day_axis)
+                .show(ui, |p| p.bar_chart(BarChart::new("merits", bars).element_formatter(Box::new(|_, _| String::new()))));
+            crate::widgets::bar_tooltip(&plot, |day| {
+                let date = LocalDays::label(day, "%d %b");
+                Some(match per_day.get(&day) {
+                    Some(m) => format!("{date}\n{} merits", nexus_data::names::group_digits(*m)),
+                    None => format!("{date}\nno merits"),
+                })
+            });
         }
     });
 }

@@ -5,6 +5,7 @@ use crate::theme::{display, pal, size};
 use crate::widgets::{card, short_credits};
 use egui::{Grid, RichText, Ui};
 use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints};
+use nexus_journal::time::LocalDays;
 use nexus_journal::Timestamp;
 use nexus_model::GameState;
 use nexus_model::history::LedgerCategory;
@@ -42,6 +43,21 @@ pub(crate) fn credit_steps(samples: &[(Timestamp, i64)], start: i64, now: i64, c
         }
     }
     pts
+}
+
+/// The y range the Credits chart shows: its line with a little room above and below, so it isn't drawn on the edge.
+/// egui_plot labels the axis at every multiple of the finest power of ten that leaves room between labels, and the
+/// labels keep three figures ("1.23 B"): a balance that didn't move spanned a tenth of a credit, and every label read
+/// "1.23 B". So a flat or nearly flat line gets a band of a tenth of its value above and below it, which labels of two
+/// figures ("1.2 M", "12 k", the coarsest they get) still tell apart. On the log scale the line holds powers of ten,
+/// and a tenth of one is room enough.
+fn credit_y_range(lo: f64, hi: f64, log: bool) -> (f64, f64) {
+    if log {
+        return (lo - 0.1, hi + 0.1);
+    }
+    let span = ((hi - lo) * 1.1).max(lo.abs().max(hi.abs()) * 0.2).max(20.0);
+    let mid = (lo + hi) / 2.0;
+    (mid - span / 2.0, mid + span / 2.0)
 }
 
 pub fn show(ui: &mut Ui, gs: &GameState) {
@@ -114,7 +130,7 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
                     let y = |v: f64| if log { v.max(1.0).log10() } else { v };
                     let shown: Vec<[f64; 2]> = steps.iter().map(|p| [p[0], y(p[1])]).collect();
                     let (lo, hi) = shown.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p[1]), hi.max(p[1])));
-                    let pad = if log { 0.1 } else { (hi - lo).max(1.0) * 0.05 };
+                    let (bottom, top) = credit_y_range(lo, hi, log);
                     let credits = move |v: f64| if log { 10f64.powf(v) } else { v };
                     Plot::new(("credits", days, log))
                         .show_background(false)
@@ -125,13 +141,15 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
                         .allow_zoom(false)
                         .include_x(start as f64 / DAY)
                         .include_x(now as f64 / DAY)
-                        // A little room above and below, so a flat line isn't drawn on the edge.
-                        .include_y(lo - pad)
-                        .include_y(hi + pad)
+                        .include_y(bottom)
+                        .include_y(top)
                         .x_axis_formatter(|m, _| Timestamp((m.value * DAY) as i64).to_local_string("%d %b"))
                         .y_axis_formatter(move |m, _| {
-                            // On the log scale only whole powers of ten are labelled (1 M, 10 M, 100 M, ...).
-                            if log && (m.value - m.value.round()).abs() > 1e-6 {
+                            // On the log scale only whole powers of ten are labelled (1 M, 10 M, 100 M, ...). On the
+                            // linear one only marks within the range above: a mark in the room egui_plot adds around
+                            // it sits on the chart's edge, and its label runs into the dates.
+                            let unlabelled = if log { (m.value - m.value.round()).abs() > 1e-6 } else { !(bottom..=top).contains(&m.value) };
+                            if unlabelled {
                                 String::new()
                             } else {
                                 nexus_data::names::compact_credits(credits(m.value).round() as i64)
@@ -153,9 +171,11 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
     });
     ui.add_space(10.0);
     card(ui, "Jumps per day", |ui| {
+        // Days are the commander's calendar days (local time), for the bars, the axis and the tooltip alike.
+        let mut calendar = LocalDays::default();
         let mut per_day: std::collections::BTreeMap<i64, (u32, f64)> = Default::default();
         for j in &jumps {
-            let e = per_day.entry(j.ts.0.div_euclid(86_400)).or_default();
+            let e = per_day.entry(calendar.day(j.ts)).or_default();
             e.0 += 1;
             e.1 += j.dist;
         }
@@ -163,24 +183,27 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
             ui.label(RichText::new("No jumps in this period.").color(pal::DIM));
             return;
         }
-        let bars: Vec<Bar> = per_day.iter().map(|(d, (n, ly))| Bar::new(*d as f64 + 0.5, f64::from(*n)).width(0.8).fill(pal::CYAN).name(format!("{n} jumps, {ly:.0} ly"))).collect();
-        Plot::new(("jumpsday", days))
+        let bars: Vec<Bar> = per_day.iter().map(|(d, (n, _))| Bar::new(*d as f64 + 0.5, f64::from(*n)).width(0.8).fill(pal::CYAN)).collect();
+        let plot = Plot::new(("jumpsday", days))
             .show_background(false)
             .show_grid([false, true])
             .height(200.0)
             .allow_scroll(false)
             .allow_drag(false)
             .allow_zoom(false)
-            .include_x(start.div_euclid(86_400) as f64)
-            .include_x(now.div_euclid(86_400) as f64 + 1.0)
+            .include_x(calendar.day(since) as f64)
+            .include_x(calendar.day(Timestamp(now)) as f64 + 1.0)
             .include_y(0.0)
-            .x_axis_formatter(|m, _| Timestamp((m.value * DAY) as i64).to_local_string("%d %b"))
+            .x_axis_formatter(crate::widgets::day_axis)
             .y_axis_formatter(|m, _| if m.value.fract() == 0.0 && m.value >= 0.0 { format!("{}", m.value as i64) } else { String::new() })
-            .label_formatter(|h| {
-                let (x, _) = crate::widgets::hover_xy(h);
-                Some(Timestamp((x.floor() * DAY) as i64).to_local_string("%d %b"))
+            .show(ui, |p| p.bar_chart(BarChart::new("Jumps", bars).element_formatter(Box::new(|_, _| String::new()))));
+        crate::widgets::bar_tooltip(&plot, |day| {
+            let date = LocalDays::label(day, "%d %b");
+            Some(match per_day.get(&day) {
+                Some((n, ly)) => format!("{date}\n{n} {} · {ly:.0} ly", if *n == 1 { "jump" } else { "jumps" }),
+                None => format!("{date}\nno jumps"),
             })
-            .show(ui, |p| p.bar_chart(BarChart::new("Jumps", bars)));
+        });
     });
     if let Some(stats) = &gs.cmdr.statistics {
         ui.add_space(10.0);
@@ -282,7 +305,10 @@ fn ledger_rows(ui: &mut Ui, totals: &[(LedgerCategory, i64, i64)], earned: i64, 
         let what = if moved < 0 { format!("{} moved to your fleet carrier", short_credits(-moved)) } else { format!("{} taken from your fleet carrier", short_credits(moved)) };
         ui.label(RichText::new(format!("{what} (not counted: it stays yours)")).size(size::FOOTNOTE).color(pal::DIM));
     }
-    crate::widgets::footnote(ui, "From the journal: sales, rewards, purchases and fees, while Elite Nexus has read them.");
+    crate::widgets::footnote(
+        ui,
+        "From the journal: sales, rewards, purchases and fees, while Elite Nexus has read them. A mission a wingmate shared and handed in isn't among them (the game writes no journal line for it), but its credits are in your balance.",
+    );
 }
 
 #[cfg(test)]
@@ -305,5 +331,40 @@ mod tests {
         assert!(credit_steps(&[], 0, 30 * d, 5).is_empty());
         assert_eq!(range_start(7, 100 * d, Some(3)), 93 * d);
         assert_eq!(range_start(0, 100 * d, Some(3)), 3);
+    }
+
+    #[test]
+    fn a_flat_balance_gets_labels_that_differ() {
+        // The y labels of a range on a plot `height` points tall. egui_plot adds 5 % of room to each side and has a
+        // mark at every multiple of the finest power of ten whose marks are more than 20 points apart (its label
+        // spacing); the chart labels those within the range. It is 240 points tall with its dates, about 223 without.
+        let labels = |(bottom, top): (f64, f64), height: f64| -> Vec<String> {
+            let per_credit = height / ((top - bottom) * 1.1);
+            let mut step = 10f64.powf((20.0 / per_credit).log10().floor());
+            while step * per_credit <= 20.0 {
+                step *= 10.0;
+            }
+            ((bottom / step).ceil() as i64..=(top / step).floor() as i64).map(|i| nexus_data::names::compact_credits((i as f64 * step).round() as i64)).collect()
+        };
+        // What a flat balance used to get: a tenth of a credit, and "1.23 B" on every line.
+        let old = labels((1_234_567_889.95, 1_234_567_890.05), 223.0);
+        assert!(old.len() > 2 && old.iter().all(|l| l == "1.23 B"), "{old:?}");
+        // Balances from nothing to a trillion, flat and moving by less than the labels show.
+        let mut v = 0.0;
+        while v < 1e12 {
+            for (lo, hi) in [(v, v), (v, v * 1.001 + 1.0)] {
+                for height in [200.0, 223.0, 300.0] {
+                    let l = labels(credit_y_range(lo, hi, false), height);
+                    assert!(!l.is_empty() && l.windows(2).all(|w| w[0] != w[1]), "{lo}..{hi} at {height} pt: {l:?}");
+                }
+            }
+            v = (v * 1.07 + 1.0).round();
+        }
+        // A flat line sits in the middle of a band a fifth of its value tall, one that moves keeps 5 % of its move
+        // above and below, and on the log scale a tenth of a power of ten.
+        let near = |(a, b): (f64, f64), (c, d): (f64, f64)| (a - c).abs() < 1e-3 && (b - d).abs() < 1e-3;
+        assert!(near(credit_y_range(2e9, 2e9, false), (1.8e9, 2.2e9)));
+        assert!(near(credit_y_range(100e6, 300e6, false), (90e6, 310e6)));
+        assert!(near(credit_y_range(8.0, 9.0, true), (7.9, 9.1)));
     }
 }

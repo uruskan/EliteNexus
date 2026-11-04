@@ -181,7 +181,12 @@ fn suit_name(key: &str) -> Option<String> {
 
 /// Landing pad size a ship needs: 'S', 'M' or 'L' (unknown symbols → 'S').
 pub fn pad_size(symbol: &str) -> char {
-    match symbol.trim().to_ascii_lowercase().as_str() {
+    known_pad_size(symbol).unwrap_or('S')
+}
+
+/// Landing pad size a ship needs, `None` for a hull this table doesn't know yet (a ship newer than this build).
+pub fn known_pad_size(symbol: &str) -> Option<char> {
+    Some(match symbol.trim().to_ascii_lowercase().as_str() {
         "anaconda"
         | "belugaliner"
         | "cutter"
@@ -214,8 +219,24 @@ pub fn pad_size(symbol: &str) -> char {
         | "typex"
         | "typex_2"
         | "typex_3" => 'M',
-        _ => 'S',
-    }
+        "adder"
+        | "cobramkiii"
+        | "cobramkiv"
+        | "cobramkv"
+        | "diamondback"
+        | "diamondbackxl"
+        | "dolphin"
+        | "eagle"
+        | "empire_courier"
+        | "empire_eagle"
+        | "hauler"
+        | "sidewinder"
+        | "smallcombat01_nx"
+        | "viper"
+        | "viper_mkiv"
+        | "vulture" => 'S',
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -300,5 +321,12 @@ mod tests {
         {
             assert_eq!(pad_size(s), 'L', "{s}");
         }
+        // Every buyable hull has its pad in the table, so a new one in shipyard.csv fails here until it's added.
+        for s in all() {
+            assert!(known_pad_size(&s.symbol).is_some(), "{} ({}) has no pad size", s.name, s.symbol);
+        }
+        assert_eq!(known_pad_size("SideWinder"), Some('S'));
+        assert_eq!(known_pad_size("some_new_ship"), None);
+        assert_eq!(pad_size("some_new_ship"), 'S');
     }
 }

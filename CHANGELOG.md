@@ -13,6 +13,8 @@ release time that section becomes the new version and the release workflow publi
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
+- **Fleet** shows the landing pad each ship needs (S, M or L), in the ship list and on its Loadout card (asked for by
+  Alvarrune on the Frontier Forums).
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
@@ -23,6 +25,32 @@ release time that section becomes the new version and the release workflow publi
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.
+- **Statistics and BGS & Powerplay: a bar's number is no longer cut off** (GitHub issue #4, with a screenshot).
+  Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
+  edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always
+  fits, and the merits chart no longer slides away from its bars when dragged.
+- **Statistics: the Credits chart's axis reads right when your balance stays put.** When your balance didn't change
+  over the period, every label up its side was the same ("1.23 B" eleven times): the chart spanned a tenth of a
+  credit. A flat or nearly flat balance now sits in a band of a tenth of its value above and below it, with labels
+  that differ.
+- **Statistics and BGS & Powerplay: per-day charts go by your own days.** Jumps per day and the Powerplay merits chart
+  cut the days at midnight UTC and named each after your date when that midnight came, which west of UTC (the
+  Americas) is the day before: most of a day's jumps and merits showed under the previous date, on the axis and when
+  you hovered a bar. Both now count your calendar days, midnight to midnight on your clock, under the dates it shows,
+  and the merits chart no longer writes the same date on every tick when your merits fit in a day or two.
+- **Fleet: long module names stay in their column** (GitHub issue #4, with a screenshot). A name such as "8A Mk II
+  Supercharge Optimised Frame Shift Drive (SCO)" ran over the module's value. The Module column now widens to the
+  longest name when the window has room, and a name that still doesn't fit ends in "…" and shows whole when you hover
+  it.
+- **Missions and Statistics say why a wingmate's shared mission isn't counted** (GitHub issue #4). Your own missions,
+  wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
+  game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The
+  Missions page and Statistics › Income and spending now say so; the credits still show in your balance.
+- **Ask can look back through your whole journal** (GitHub issue #4). Its journal search returned only the newest 15
+  matching lines (40 at most, fewer when they were long), so a question about last week's jumps saw only the last day
+  or two, and nothing said so. It can now search a period you name ("where did I go from 22 to 29 October?") and page
+  back through it, says when it left older matches out and from which day your journal folder starts, and gives times
+  in your local time.
 
 ## [0.7.3-beta.2] - 2026-10-25
 

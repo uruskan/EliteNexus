@@ -870,6 +870,23 @@ pub fn hover_xy(h: &egui_plot::HoverPosition<'_>) -> (f64, f64) {
     }
 }
 
+/// A bar chart's label as a tooltip by the pointer, which always fits: egui_plot writes a hovered bar's label above its
+/// corner, where the plot's edge cuts off the tallest bars and the last one. `label` gets the slot under the pointer
+/// (x rounded down: bars sit at slot + 0.5); the chart blanks its own with `element_formatter(Box::new(|_, _| String::new()))`.
+pub fn bar_tooltip<R>(plot: &egui_plot::PlotResponse<R>, label: impl FnOnce(i64) -> Option<String>) {
+    let Some(pos) = plot.response.hover_pos() else { return };
+    let Some(text) = label(plot.transform.value_from_position(pos).x.floor() as i64) else { return };
+    egui::Tooltip::always_open(plot.response.ctx.clone(), plot.response.layer_id, plot.response.id, egui::PopupAnchor::Pointer).gap(12.0).show(|ui| {
+        ui.label(text);
+    });
+}
+
+/// The x axis of a chart per day (days from `nexus_journal::time::LocalDays`, bars at day + 0.5): each day's mark
+/// named by its date. Finer marks stay blank, or a chart of a day or two would write its date on every tenth of a day.
+pub fn day_axis(m: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>) -> String {
+    if m.step_size < 1.0 { String::new() } else { nexus_journal::time::LocalDays::label(m.value.round() as i64, "%d %b") }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The overlay's island
 
