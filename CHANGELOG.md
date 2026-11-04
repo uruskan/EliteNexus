@@ -84,6 +84,9 @@ release time that section becomes the new version and the release workflow publi
   every share was read as 0. Each faction now gets its share, in the system where you hand the vouchers in. The page
   is read from your journal, so bounties you handed in before this version show too. Combat bonds and Statistics
   were counted right.
+- **BGS & Powerplay: "All time" says what it counts.** It said "Counting from 01 Jan 02:00", the date computer
+  clocks count from (1 January 1970) in your time zone. It now says it counts all your journals, and the date of
+  your first activity in them.
 - **Statistics and BGS & Powerplay: a bar's number is no longer cut off** (GitHub issue #4, with a screenshot).
   Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
   edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always

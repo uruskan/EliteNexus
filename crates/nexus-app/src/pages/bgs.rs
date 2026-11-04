@@ -66,7 +66,8 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut BgsPrefs) -> bool {
         Period::Week => Timestamp(now.0 - 7 * 86_400),
         Period::All => Timestamp::ZERO,
     };
-    ui.label(RichText::new(format!("Counting from {}", since.to_local_string("%d %b %H:%M"))).small().color(pal::DIM));
+    let first = gs.bgs.actions.iter().map(|a| a.ts).chain(gs.bgs.merits.iter().map(|m| m.ts)).min();
+    ui.label(RichText::new(counting(st.period, since, first)).small().color(pal::DIM));
     ui.add_space(6.0);
 
     powerplay(ui, gs, since);
@@ -115,6 +116,16 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut BgsPrefs) -> bool {
         ui.add_space(6.0);
     }
     changed
+}
+
+/// What the period counts, under its buttons. "All time" has no start of its own (the Unix epoch it counts from read
+/// "01 Jan 02:00"): it counts every journal, and `first` is the oldest activity in them.
+fn counting(period: Period, since: Timestamp, first: Option<Timestamp>) -> String {
+    match (period, first) {
+        (Period::All, Some(first)) => format!("Counting all your journals (first activity {})", first.to_local_string("%d %b %Y")),
+        (Period::All, None) => "Counting all your journals".into(),
+        _ => format!("Counting from {}", since.to_local_string("%d %b %H:%M")),
+    }
 }
 
 /// A system's merits, in its card's title row.
@@ -178,4 +189,22 @@ fn powerplay(ui: &mut Ui, gs: &GameState, since: Timestamp) {
             crate::widgets::footnote(ui, "Each system below shows the merits you earned there. The journal doesn't say which system a merit award counts for, so it's placed in the system you were in when the game awarded it.");
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_time_counts_every_journal() {
+        // "All time" counts from the Unix epoch, which in local time read "01 Jan 02:00" (or 31 Dec, west of UTC).
+        let first = Timestamp::parse("2025-03-14T12:00:00Z").unwrap();
+        let all = counting(Period::All, Timestamp::ZERO, Some(first));
+        assert_eq!(all, format!("Counting all your journals (first activity {})", first.to_local_string("%d %b %Y")));
+        assert!(all.ends_with("2025)"), "{all}");
+        assert_eq!(counting(Period::All, Timestamp::ZERO, None), "Counting all your journals");
+        // The other periods start at their own time.
+        let tick = Timestamp::parse("2026-11-03T13:00:00Z").unwrap();
+        assert_eq!(counting(Period::SinceTick, tick, Some(first)), format!("Counting from {}", tick.to_local_string("%d %b %H:%M")));
+    }
 }
