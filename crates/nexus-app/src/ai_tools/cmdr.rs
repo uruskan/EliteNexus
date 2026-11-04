@@ -198,6 +198,15 @@ fn locker(l: &Locker, counts_only: bool) -> Value {
     v
 }
 
+/// An on-foot modification by name ("Improved Battery Capacity"), not by the journal's symbol
+/// (`suit_increasedbatterycapacity`).
+fn mod_name(symbol: &str) -> String {
+    match nexus_data::engineering::odyssey_mod(symbol) {
+        Some(m) => m.name.clone(),
+        None => nexus_data::names::split_camel(&symbol.trim_start_matches("suit_").trim_start_matches("weapon_").replace('_', " ")),
+    }
+}
+
 /// A suit loadout: `detail` 0 = everything, 1 = no weapon modifications, 2 = only which suit and weapons.
 fn loadout(l: &SuitLoadoutInfo, current: bool, detail: u8) -> Value {
     let mut v = json!({ "name": text(&l.name), "suit": l.suit_name, "current": current });
@@ -205,7 +214,7 @@ fn loadout(l: &SuitLoadoutInfo, current: bool, detail: u8) -> Value {
         v["weapons"] = l.weapons.iter().map(|w| w.1.clone()).collect();
     } else {
         if !l.suit_mods.is_empty() {
-            v["suit_mods"] = json!(l.suit_mods);
+            v["suit_mods"] = l.suit_mods.iter().map(|m| mod_name(m)).collect();
         }
         v["weapons"] = l
             .weapons
@@ -213,7 +222,7 @@ fn loadout(l: &SuitLoadoutInfo, current: bool, detail: u8) -> Value {
             .map(|(slot, weapon, class, mods)| {
                 let mut w = json!({ "slot": slot, "weapon": weapon, "grade": class });
                 if detail == 0 && !mods.is_empty() {
-                    w["mods"] = json!(mods);
+                    w["mods"] = mods.iter().map(|m| mod_name(m)).collect();
                 }
                 w
             })

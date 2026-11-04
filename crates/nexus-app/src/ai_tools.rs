@@ -2534,7 +2534,7 @@ mod tests {
             commander(),
             &[
                 format!(r#"{{ "timestamp":"{t}", "event":"Materials", "Raw":[ {{ "Name":"iron", "Name_Localised":"Iron", "Count":300 }}, {{ "Name":"polonium", "Name_Localised":"Polonium", "Count":12 }} ], "Manufactured":[ {{ "Name":"chemicaldistillery", "Name_Localised":"Chemical Distillery", "Count":4 }} ], "Encoded":[ ] }}"#),
-                format!(r#"{{ "timestamp":"{t}", "event":"SuitLoadout", "SuitID":1700216165682989, "SuitName":"tacticalsuit_class1", "SuitName_Localised":"Dominator Suit", "SuitMods":["suit_increased_air_reserves"], "LoadoutID":4293000001, "LoadoutName":"Fighter", "Modules":[ {{ "SlotName":"PrimaryWeapon1", "SuitModuleID":1700216180036986, "ModuleName":"wpn_m_assaultrifle_plasma_fauto", "ModuleName_Localised":"Manticore Tormentor", "Class":3, "WeaponMods":["weapon_extended_magazine"] }}, {{ "SlotName":"SecondaryWeapon", "SuitModuleID":1700216180036987, "ModuleName":"wpn_s_pistol_kinetic_sauto", "ModuleName_Localised":"Karma P-15", "Class":1, "WeaponMods":[] }} ] }}"#),
+                format!(r#"{{ "timestamp":"{t}", "event":"SuitLoadout", "SuitID":1700216165682989, "SuitName":"tacticalsuit_class1", "SuitName_Localised":"Dominator Suit", "SuitMods":["suit_increasedbatterycapacity"], "LoadoutID":4293000001, "LoadoutName":"Fighter", "Modules":[ {{ "SlotName":"PrimaryWeapon1", "SuitModuleID":1700216180036986, "ModuleName":"wpn_m_assaultrifle_plasma_fauto", "ModuleName_Localised":"Manticore Tormentor", "Class":3, "WeaponMods":["weapon_clipsize"] }}, {{ "SlotName":"SecondaryWeapon", "SuitModuleID":1700216180036987, "ModuleName":"wpn_s_pistol_kinetic_sauto", "ModuleName_Localised":"Karma P-15", "Class":1, "WeaponMods":[] }} ] }}"#),
                 format!(r#"{{ "timestamp":"{t}", "event":"ShipLocker", "Items":[ {{ "Name":"healthpack", "Name_Localised":"Medkit", "OwnerID":0, "Count":3 }} ], "Components":[ {{ "Name":"graphene", "Name_Localised":"Graphene", "OwnerID":0, "Count":9 }} ], "Consumables":[ {{ "Name":"energycell", "Name_Localised":"Energy Cell", "OwnerID":0, "Count":5 }} ], "Data":[ {{ "Name":"airqualityreports", "Name_Localised":"Air Quality Reports", "OwnerID":0, "Count":2 }} ] }}"#),
             ],
         )
@@ -2641,18 +2641,37 @@ mod tests {
         assert_eq!(loadouts[0]["suit"], "Dominator Suit");
         assert_eq!(loadouts[0]["name"], "Fighter");
         assert_eq!(loadouts[0]["current"], true);
-        assert_eq!(loadouts[0]["suit_mods"][0], "suit_increased_air_reserves");
+        assert_eq!(loadouts[0]["suit_mods"][0], "Improved Battery Capacity", "by name, not the journal's symbol");
         let weapons = loadouts[0]["weapons"].as_array().unwrap();
         assert_eq!(weapons.len(), 2);
         assert_eq!(weapons[0]["weapon"], "Manticore Tormentor");
         assert_eq!(weapons[0]["grade"], 3);
-        assert_eq!(weapons[0]["mods"][0], "weapon_extended_magazine");
+        assert_eq!(weapons[0]["mods"][0], "Magazine Size");
         assert!(weapons[1].get("mods").is_none(), "no mods, no key: {}", weapons[1]);
         assert_eq!(v["locker"]["items"]["Medkit"], 3);
         assert_eq!(v["locker"]["components"]["Graphene"], 9);
         assert_eq!(v["locker"]["consumables"]["Energy Cell"], 5);
         assert_eq!(v["locker"]["data"]["Air Quality Reports"], 2);
         assert!(v["backpack"]["items"].as_object().unwrap().is_empty());
+    }
+
+    /// The loadouts are the ones the game still has, under their names now (review note 7 on PR #14).
+    #[test]
+    fn on_foot_follows_deleted_and_renamed_loadouts() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let t = at(40);
+        let m = with_lines(
+            geared_commander(),
+            &[
+                format!(r#"{{ "timestamp":"{t}", "event":"CreateSuitLoadout", "SuitID":18, "SuitName":"explorationsuit_class1", "SuitName_Localised":"Artemis Suit", "SuitMods":[], "LoadoutID":4293000002, "LoadoutName":"Loadout 2", "Modules":[] }}"#),
+                format!(r#"{{ "timestamp":"{t}", "event":"RenameSuitLoadout", "SuitID":1700216165682989, "SuitName":"tacticalsuit_class1", "SuitName_Localised":"$TacticalSuit_Class1_Name;", "LoadoutID":4293000001, "LoadoutName":"Assault" }}"#),
+                format!(r#"{{ "timestamp":"{t}", "event":"DeleteSuitLoadout", "SuitID":18, "SuitName":"explorationsuit_class1", "SuitName_Localised":"Artemis Suit", "LoadoutID":4293000002, "LoadoutName":"Loadout 2" }}"#),
+            ],
+        );
+        let v = model_tools(m, &rt).call("on_foot", &json!({})).unwrap();
+        let loadouts = v["loadouts"].as_array().unwrap();
+        assert_eq!(loadouts.len(), 1, "the deleted one is gone: {v}");
+        assert_eq!((&loadouts[0]["name"], &loadouts[0]["suit"]), (&json!("Assault"), &json!("Dominator Suit")));
     }
 
     #[test]
