@@ -63,9 +63,13 @@ CREATE TABLE IF NOT EXISTS stations (
     market_updated        INTEGER NOT NULL DEFAULT 0,
     n_commodities         INTEGER NOT NULL DEFAULT 0,
     prohibited            TEXT,
-    -- The market report since which every price change and every new commodity at this market is in the price
-    -- history (unix seconds); NULL when its prices aren't followed (history off, or not reported since this column).
-    history_since         INTEGER
+    -- A fleet carrier's: the market report since which every price change and every new commodity at this market is
+    -- in the price history (unix seconds); NULL when its prices aren't followed (a station, history off, or not
+    -- reported since this column).
+    history_since         INTEGER,
+    -- The report this version stored with history_since: an older version stores a report without first appearances
+    -- and leaves both alone, so when market_updated has moved on from this the history has a gap and starts afresh.
+    history_at            INTEGER
 );
 CREATE INDEX IF NOT EXISTS stations_system ON stations(system_id64);
 CREATE INDEX IF NOT EXISTS stations_unlinked ON stations(system_name_lower) WHERE system_id64 IS NULL;
@@ -175,7 +179,8 @@ CREATE INDEX IF NOT EXISTS bodies_name ON bodies(name);
 "#;
 
 /// Columns added to existing tables after they were first created: (table, column, type).
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("bodies", "checked_online", "INTEGER"), ("stations", "history_since", "INTEGER")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] =
+    &[("bodies", "checked_online", "INTEGER"), ("stations", "history_since", "INTEGER"), ("stations", "history_at", "INTEGER")];
 
 /// What earlier versions created and nothing reads any more: `market_goods`, a view whose rare goods queries read
 /// the whole market table.

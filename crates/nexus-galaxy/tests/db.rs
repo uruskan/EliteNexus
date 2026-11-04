@@ -458,8 +458,17 @@ fn old_price_history_is_pruned_and_uncounted() {
     assert_eq!(t.db().stats().expect("stats").price_history_rows, Some(0));
 }
 
+/// A market report from a fleet carrier: (symbol, buy, sell, stock, demand).
+fn carrier_report(mid: u64, sys_name: &str, name: &str, ts: i64, items: &[(&str, i64, i64, i64, i64)]) -> Ingest {
+    match market(mid, sys_name, name, ts, items) {
+        Ingest::Market(m) => Ingest::Market(MarketSnapshot { station_type: Some("FleetCarrier".into()), ..m }),
+        other => other,
+    }
+}
+
 /// How long a carrier's buy order has stood, from the reports the database compared: since a change, since it
-/// appeared, at least since the market was first reported (or since the 30 days kept), or not known.
+/// appeared, at least since the market was first reported (or since the 30 days kept), or not known. A station's
+/// prices aren't followed that way.
 #[test]
 fn how_long_an_order_stood() {
     let mut t = TempDb::new("since");
@@ -467,7 +476,7 @@ fn how_long_an_order_stood() {
     populate(db);
     let n = now();
     const D: i64 = 86_400;
-    let carrier = |mid: u64, ts: i64, items: &[(&str, i64, i64, i64, i64)]| market(mid, "Beta", "B-CARRIER", ts, items);
+    let carrier = |mid: u64, ts: i64, items: &[(&str, i64, i64, i64, i64)]| carrier_report(mid, "Beta", "B-CARRIER", ts, items);
     // Changed from 50,000 to 55,000 twelve days ago, reported unchanged since.
     for (ts, p) in [(n - 20 * D, 50_000), (n - 12 * D, 55_000), (n - 3 * D, 55_000), (n - 3600, 55_000)] {
         db.ingest(carrier(21, ts, &[("tritium", 0, p, 0, 9_000)]));
@@ -485,7 +494,12 @@ fn how_long_an_order_stood() {
     for (ts, p) in [(n - 40 * D, 40_000), (n - 35 * D, 45_000), (n - 3600, 45_000)] {
         db.ingest(carrier(25, ts, &[("tritium", 0, p, 0, 1_000)]));
     }
+    // A station, whose limpets come and go between reports.
+    db.ingest(market(27, "Beta", "B Port", n - 2 * D, &[("gold", 9_000, 0, 100, 0)]));
+    db.ingest(market(27, "Beta", "B Port", n - D, &[("gold", 9_000, 0, 100, 0), ("drones", 101, 0, 1_000, 0)]));
     db.flush().expect("flush");
+    assert_eq!(db.price_since(27, "gold").expect("since").and_then(|s| s.buy), Some(Stood::Unknown), "a station isn't followed");
+    assert!(db.price_history(27, "drones").expect("history").is_empty(), "nor are first appearances at a station recorded");
     let sell = |db: &GalaxyDb, mid: u64| db.price_since(mid, "tritium").expect("since").and_then(|s| s.sell);
     assert_eq!(sell(db, 21), Some(Stood::Since { since: n - 12 * D, before: n - 20 * D, previous: 50_000 }));
     assert_eq!(sell(db, 22), Some(Stood::AtLeast { since: n - 25 * D }));
@@ -506,6 +520,39 @@ fn how_long_an_order_stood() {
         other => panic!("{other:?}"),
     }
     assert_eq!(sell(db, 21), Some(Stood::Since { since: n - 12 * D, before: n - 20 * D, previous: 50_000 }), "kept");
+}
+
+/// A report stored by an older version, which records no first appearances and leaves `history_since` alone, breaks
+/// the chain: the history starts afresh from that report, so an order that appeared in it isn't taken for one that
+/// stood since the report before.
+#[test]
+fn an_older_version_breaks_the_chain() {
+    let mut t = TempDb::new("since-gap");
+    populate(t.db());
+    let n = now();
+    const D: i64 = 86_400;
+    t.db().ingest(carrier_report(26, "Beta", "C-CARRIER", n - 10 * D, &[("gold", 8_000, 0, 400, 0)]));
+    t.db().flush().expect("flush");
+    // The older version stores the report of six days ago, where a tritium buy order appeared.
+    let path = t.db().path().to_path_buf();
+    t.db = None;
+    rusqlite::Connection::open(&path)
+        .expect("open")
+        .execute_batch(&format!(
+            "UPDATE stations SET market_updated = {ts} WHERE market_id = 26;
+             DELETE FROM market WHERE market_id = 26;
+             INSERT INTO market (market_id, commodity_id, buy, sell, mean, stock, demand, updated)
+                 SELECT 26, id, 8000, 0, 0, 400, 0, {ts} FROM commodities WHERE symbol = 'gold';
+             INSERT INTO market (market_id, commodity_id, buy, sell, mean, stock, demand, updated)
+                 SELECT 26, id, 0, 62000, 0, 0, 5000, {ts} FROM commodities WHERE symbol = 'tritium';",
+            ts = n - 6 * D
+        ))
+        .expect("the older version's report");
+    t.db = Some(GalaxyDb::open(&path).expect("reopen"));
+    t.db().ingest(carrier_report(26, "Beta", "C-CARRIER", n - 3600, &[("gold", 8_000, 0, 380, 0), ("tritium", 0, 62_000, 0, 5_000)]));
+    t.db().flush().expect("flush");
+    let sell = t.db().price_since(26, "tritium").expect("since").and_then(|s| s.sell);
+    assert_eq!(sell, Some(Stood::AtLeast { since: n - 6 * D }), "from the older version's report, not ten days ago");
 }
 
 /// The live feed's "updates stored" counts what changed the database: not a bare rock it doesn't keep, a market

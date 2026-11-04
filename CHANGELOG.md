@@ -82,7 +82,7 @@ release time that section becomes the new version and the release workflow publi
   no buy order for it, or unchanged as far back as Elite Nexus's price history reaches. It keeps 30 days of price
   changes, from the first report of that carrier it received; neither the game nor the live feed says when an order
   was set up (asked for by hangerhead in GitHub discussion #1). The price history now also records when a commodity
-  first appears on a market.
+  first appears on a fleet carrier's market.
 - **Market** › Trade routes, while you're docked: **From this station** lists only the routes that start there, what
   to buy at this station and where to sell it within the distance you set (asked for by NetworX on the Frontier
   Forums). Open the commodity market in the game first, so Elite Nexus has the station's latest prices.
