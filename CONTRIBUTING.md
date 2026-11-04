@@ -92,7 +92,7 @@ Open a [GitHub issue](https://github.com/uruskan/EliteNexus/issues) (questions a
 * `nexus.log` and, if the app closed unexpectedly, `crash.log`, both from the data folder (Settings › About › Data
   folder › Open). Neither is sent anywhere by itself.
 
-What works on Linux and what doesn't yet is collected in [issue #3](https://github.com/uruskan/EliteNexus/issues/3).
+What works on Linux and what doesn't yet is collected in [discussion #17](https://github.com/uruskan/EliteNexus/discussions/17).
 
 ## Sending changes
 

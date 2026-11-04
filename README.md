@@ -44,7 +44,7 @@ the older tools need.
 Everything it keeps (settings, the galaxy database, logs) lives in a `nexus-data` folder next to the program (on a
 Mac, in `~/Library/Application Support/EliteNexus`). Every page, and the Linux and macOS notes, are in the
 **[user guide](docs/USER_GUIDE.md)**. Linux reports are collected in
-[issue #3](https://github.com/uruskan/EliteNexus/issues/3).
+[discussion #17](https://github.com/uruskan/EliteNexus/discussions/17).
 
 ## Support Elite Nexus
 
@@ -115,7 +115,7 @@ else's report, idea or help. Thank you, commanders.
 **Bug reports and ideas on GitHub**
 
 * **[pioniere](https://github.com/pioniere)**: the first Linux review, on Nobara under Proton and Wayland, and the
-  silent Test voice ([issue #3](https://github.com/uruskan/EliteNexus/issues/3)).
+  silent Test voice ([discussion #17](https://github.com/uruskan/EliteNexus/discussions/17)).
 * **[docfallingapart](https://github.com/docfallingapart)**: the Linux app-menu entry, and a folder with a space in
   its name.
 * **[nhok0169](https://github.com/nhok0169)**: Ask answering from old data, the empty Services tab, the window

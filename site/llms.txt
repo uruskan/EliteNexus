@@ -63,7 +63,7 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   journals in the game's Proton prefix in every Steam library (native, Flatpak, Snap), then Lutris's and Heroic's usual
   prefixes; any other folder can be set in Settings › Journal. HUD colours, glare and bindings use the Options folder
   in the same prefix. A commander has confirmed the build with the game under Proton (Nobara Linux on Wayland);
-  HUD colours and Cockpit lights haven't been confirmed there yet, and reports are collected in GitHub issue #3.
+  HUD colours and Cockpit lights haven't been confirmed there yet, and reports are collected in GitHub discussion #17.
   Cockpit lights (3Dmigoto) may need the Steam launch option
   WINEDLLOVERRIDES="d3d11,d3dcompiler_47=n,b" %command%. Voice uses speech-dispatcher (spd-say), else espeak-ng or espeak.
 - macOS: a native Elite Nexus.app (since 0.7.0); each release has an Apple Silicon zip, and an Intel Mac builds it

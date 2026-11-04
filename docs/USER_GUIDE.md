@@ -184,7 +184,7 @@ The game itself runs under Proton (Steam) or Wine (Lutris, Heroic), and writes i
 Wine prefix, in the same folders as on Windows; Elite Nexus reads them there. The Linux build is new: it is built and
 tested on Ubuntu, and a commander has confirmed it with the game under Proton (Nobara Linux 44 on Wayland: the journals
 were found by themselves, Exploration and Exobiology work). HUD colours and Cockpit lights haven't been confirmed there
-yet. Reports are collected in GitHub issue #3 (github.com/uruskan/EliteNexus/issues/3).
+yet. Reports are collected in GitHub discussion #17 (github.com/uruskan/EliteNexus/discussions/17).
 
 * **Journal folder**: found automatically in the game's Proton prefix in every Steam library (native, Flatpak and
   Snap Steam): `steamapps/compatdata/359320/pfx/drive_c/users/steamuser/Saved Games/Frontier Developments/Elite
