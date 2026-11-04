@@ -561,10 +561,10 @@ impl NexusTools {
             "last_login": (!c.last_login.is_zero()).then(|| c.last_login.to_iso()),
         });
         strip_nulls(&mut game);
-        Ok(json!({
+        let mut out = json!({
             "commander": c.name,
             "ranks": RankKind::ALL.iter().map(|k| json!({
-                "rank": format!("{k:?}"), "name": c.rank_name(*k), "rank_number": c.ranks.get(*k), "progress_pct": c.progress.get(*k),
+                "rank": format!("{k:?}"), "name": c.rank_name(*k), "rank_number": c.ranks.get(*k), "progress_pct": c.rank_progress(*k),
             })).collect::<Vec<_>>(),
             "engineers": engineers.into_iter().map(|e| {
                 let mut v = json!({ "name": e.name, "status": e.progress, "rank": e.rank, "rank_progress_pct": e.rank_progress });
@@ -581,7 +581,11 @@ impl NexusTools {
             })),
             "squadron": c.squadron.as_ref().map(|s| json!({ "name": s.name, "rank": s.rank_name.clone().or_else(|| s.rank.map(|r| r.to_string())) })),
             "game": game,
-        }))
+        });
+        if !c.promoted.is_empty() {
+            out["notes"] = json!(["progress_pct is null for a rank promoted since the game last reported progress: it does at login, so it isn't known until the next one."]);
+        }
+        Ok(out)
     }
 
     /// The index entries of arrivals (FSDJump, Location, CarrierJump) up to `last`, newest first: only those of that

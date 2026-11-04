@@ -3040,6 +3040,28 @@ mod tests {
         assert!(v.to_string().len() < nexus_ai::agent::MAX_RESULT_CHARS, "{} chars", v.to_string().len());
     }
 
+    /// After a promotion the progress the game reported at login belongs to the old rank: it isn't given with the new
+    /// one (review note 9 on PR #14), and a squadron promotion brings its rank's name.
+    #[test]
+    fn progress_after_a_promotion() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let t = at(60);
+        let m = with_lines(
+            commander(),
+            &[
+                format!(r#"{{ "timestamp":"{t}", "event":"SquadronStartup", "SquadronName":"VANGUARDS OF TEST", "SquadronID":42, "CurrentRank":4, "CurrentRankName":"$Squadron_DefaultRankName_Rank4;", "CurrentRankName_Localised":"Rookie" }}"#),
+                format!(r#"{{ "timestamp":"{t}", "event":"Promotion", "Explore":7 }}"#),
+                format!(r#"{{ "timestamp":"{t}", "event":"SquadronPromotion", "SquadronID":42, "SquadronName":"VANGUARDS OF TEST", "OldRank":4, "NewRank":3, "NewRankName":"$Squadron_DefaultRankName_Rank3;", "NewRankName_Localised":"Agent" }}"#),
+            ],
+        );
+        let p = model_tools(m, &rt).call("progress", &json!({})).unwrap();
+        let rank = |k: &str| p["ranks"].as_array().unwrap().iter().find(|r| r["rank"] == k).cloned().unwrap();
+        assert_eq!((&rank("Explore")["name"], &rank("Explore")["progress_pct"]), (&json!("Pioneer"), &Value::Null), "{p}");
+        assert_eq!(rank("Trade")["progress_pct"], 46, "the others keep theirs");
+        assert!(p["notes"][0].as_str().unwrap().contains("promoted"), "{p}");
+        assert_eq!(p["squadron"]["rank"], "Agent");
+    }
+
     #[test]
     fn new_tools_are_appended_and_old_ones_unchanged() {
         let old = [
