@@ -6,9 +6,39 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
+- **AI agents** (Settings › AI agents, off by default): Claude Code, Claude Desktop and other AI programs that speak
+  MCP can use the tools Ask uses, to read only: your commander, fleet, materials, ranks and engineers, journal, the
+  market database, engineering, where to mine or buy, and Spansh. Copy buttons set them up. The program the agent
+  starts (`EliteNexus --mcp`) opens no window and reaches the Elite Nexus you have running over a pipe on this
+  computer, never the network; it answers one call at a time, at most 30 a minute. The user guide's Data & privacy
+  section lists what an agent can read.
+- **Ask** says what it can see and do: **What I can see and do**, under the suggestions or behind the list icon at the
+  top, lists every tool it has, from the same list its model gets, grouped by what it reads, what it asks Spansh or
+  EDGalaxyData, and what it changes (route plans for Navigation), with what AI agents may read besides.
 - **Ask** can be stopped: while it answers, the round button becomes **Stop**, and **New conversation**, now there
   while it works too, stops it as well. A slow model no longer leaves you waiting with no way out, and a stopped
   question changes nothing, not even a route it was planning.
+- **Ask** knows more: it can list your whole fleet (where each ship is, even when you left it to ride an Apex taxi,
+  when a transfer arrives, jump range, cargo, value, rebuy and the engineered modules with their blueprint, grade and
+  experimental effect, from the last loadout the game reported for that ship) and tell you how far you are on every
+  rank, which engineers you've unlocked, your superpower reputation, Powerplay, squadron, and whether the game is
+  running or at the main menu. It also knows your engineering materials (each with its grade, storage cap and whether
+  it's full), by their English names on a game client in another language too, and where to find a raw material: the
+  landable bodies that hold it most, or the nearest, within a distance you name (100 ly unless you say otherwise),
+  from the scans commanders shared that Spansh holds.
+- **Ask** knows engineering, from the Engineering page's data: name a module and it lists the blueprints, experimental
+  effects and engineers for it; name a blueprint and it works out what each grade takes against the materials you
+  hold, what you're short of, the material-trader swaps that cover it (as the Blueprint planner does) and which
+  engineers offer that grade, how far they are and what unlocking them takes. It starts from the grade your current
+  ship's module already has of that blueprint, unless you say otherwise.
+- **Ask** searches where to surface-mine with the Rhino, as Mining › Where to mine does: landable bodies with
+  planetary mining locations near you (nearest first, or the most locations first) or the best system in each stretch
+  of the way to a system, by class and volcanism, with what your own runs gave on each ground. It says where the
+  counts come from and that nothing records what a location holds.
+- **Ask** finds where to buy a build, as Fleet › Where to buy does: the nearest stations that sell all of one of your
+  ships' builds (the one you fly unless you name another), a pasted build, some of its modules or a hull ("where can
+  I buy a 6A FSD?"), with what it costs there and how old the station's list is; or, when no station has everything,
+  the stops that cover it between them. Modules in your storage and a hull you own aren't searched for.
 - **BGS & Powerplay** shows the merits you earned in each system, on the system's card beside its factions'
   influence, bonds, profit and data (asked for by NetworX on the Frontier Forums). The journal doesn't say which
   system a merit award counts for, so each award is placed in the system you were in when the game awarded it. The
@@ -115,6 +145,8 @@ release time that section becomes the new version and the release workflow publi
   turned into, so every body scanned anywhere, though from the feed Elite Nexus keeps only bodies with biology,
   Earth-like, water and ammonia worlds and terraformables, and every market report, even one older than the market
   it already had.
+- **Ask**: the line under an answer names each source once. Two tools that use the same source (Spansh) made it read
+  "Spansh · your journal · Spansh".
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.
@@ -188,6 +220,15 @@ release time that section becomes the new version and the release workflow publi
   next jump). The game's route now takes over, under the finished tour's summary.
 - The **Anaconda Mk II** is known by name, with its bulkheads, and as a large ship: until now the Fleet page showed
   its raw game name and market searches offered it stations with only small and medium pads.
+- **Fleet: the ship you fly is where you left it, not where you are.** Once you stepped out of it and took an Apex
+  taxi or a dropship, or crewed another commander's ship, the Ships list put your ship wherever you went. It now
+  shows where you left it (on your own or your squadron's fleet carrier, wherever the carrier has jumped since). A
+  ship you transferred showed "In transit" until the game next listed your stored ships; it now arrives when its
+  transfer time is up.
+- **Dashboard: no stale rank progress after a promotion.** The game reports your progress towards each rank when you
+  log in. Promoted during a session, the Commander card paired your new rank with the progress you had made towards it,
+  a bar near full. That rank's bar now stays empty until the game reports it again at your next login, and says so
+  when you hover it.
 
 ## [0.7.3-beta.2] - 2026-10-25
 

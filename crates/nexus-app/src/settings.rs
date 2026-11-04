@@ -79,6 +79,8 @@ pub struct AiSettings {
     pub model: String,
     /// Empty = the provider's default address (needed only for "Other").
     pub base_url: String,
+    /// AI agents on this computer (MCP clients such as Claude Code) may use the read-only tools: off until switched on.
+    pub agents: bool,
 }
 
 impl AiSettings {
@@ -363,7 +365,8 @@ fn recover_keys(text: &str) -> (Settings, Vec<&'static str>) {
     if let (Some(api_key), Some(provider)) = (sealed("api_key"), provider)
         && (provider != nexus_ai::ProviderKind::Custom || !base_url.is_empty())
     {
-        s.ai = AiSettings { provider, api_key, model: string_value(text, "model").unwrap_or_default(), base_url };
+        // AI agents stay off, as uploads do: the commander switches them back on.
+        s.ai = AiSettings { provider, api_key, model: string_value(text, "model").unwrap_or_default(), base_url, ..AiSettings::default() };
         found.push("Ask");
     }
     if let Some(name) = string_value(text, "edsm_commander") {

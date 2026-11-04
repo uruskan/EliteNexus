@@ -337,6 +337,11 @@ pub struct SquadronEvent {
     pub old_rank: Option<u32>,
     #[serde(rename = "NewRank")]
     pub new_rank: Option<u32>,
+    /// Promotion/demotion: the squadron's name for the new rank, or the game's placeholder for a default one.
+    #[serde(rename = "NewRankName")]
+    pub new_rank_name: Option<String>,
+    #[serde(rename = "NewRankName_Localised")]
+    pub new_rank_name_localised: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -350,6 +355,8 @@ pub struct SquadronStartup {
     pub current_rank: u32,
     #[serde(rename = "CurrentRankName")]
     pub current_rank_name: Option<String>,
+    #[serde(rename = "CurrentRankName_Localised")]
+    pub current_rank_name_localised: Option<String>,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -709,6 +716,16 @@ pub struct EmbarkDisembark {
     pub station_type: Option<String>,
     #[serde(rename = "MarketID")]
     pub market_id: Option<u64>,
+}
+
+/// `JoinACrew` / `QuitACrew`: the commander joined, or left, another commander's ship (multicrew).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct CrewSession {
+    #[serde(rename = "Captain")]
+    pub captain: String,
+    #[serde(rename = "Telepresence")]
+    pub telepresence: Option<bool>,
 }
 
 /// `LaunchSRV`, `DockSRV`, `LaunchFighter`, `DockFighter`, `SRVDestroyed`, `FighterDestroyed`.
@@ -2101,6 +2118,46 @@ pub struct SuitLoadout {
     pub modules: Vec<SuitModule>,
 }
 
+/// `DeleteSuitLoadout` / `RenameSuitLoadout`: `LoadoutName` is the new name of a renamed loadout.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SuitLoadoutName {
+    #[serde(rename = "SuitID")]
+    pub suit_id: u64,
+    #[serde(rename = "SuitName")]
+    pub suit_name: String,
+    #[serde(rename = "SuitName_Localised")]
+    pub suit_name_localised: Option<String>,
+    #[serde(rename = "LoadoutID")]
+    pub loadout_id: u64,
+    #[serde(rename = "LoadoutName")]
+    pub loadout_name: String,
+}
+
+/// `LoadoutEquipModule` / `LoadoutRemoveModule`: a weapon put into, or taken out of, one slot of a suit loadout.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct SuitLoadoutSlot {
+    #[serde(rename = "LoadoutID")]
+    pub loadout_id: u64,
+    #[serde(rename = "LoadoutName")]
+    pub loadout_name: String,
+    #[serde(rename = "SuitID")]
+    pub suit_id: u64,
+    #[serde(rename = "SlotName")]
+    pub slot_name: String,
+    #[serde(rename = "SuitModuleID")]
+    pub suit_module_id: u64,
+    #[serde(rename = "ModuleName")]
+    pub module_name: String,
+    #[serde(rename = "ModuleName_Localised")]
+    pub module_name_localised: Option<String>,
+    #[serde(rename = "Class")]
+    pub class: u32,
+    #[serde(rename = "WeaponMods")]
+    pub weapon_mods: Vec<String>,
+}
+
 /// `BuySuit` / `SellSuit` / `BuyWeapon` / `SellWeapon`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -2928,6 +2985,8 @@ journal_events! {
     ApproachSettlement => ApproachSettlement,
     Embark => EmbarkDisembark,
     Disembark => EmbarkDisembark,
+    JoinACrew => CrewSession,
+    QuitACrew => CrewSession,
     LaunchSRV => VehicleEvent,
     DockSRV => VehicleEvent,
     SRVDestroyed => VehicleEvent,
@@ -3030,6 +3089,10 @@ journal_events! {
     SuitLoadout => SuitLoadout,
     SwitchSuitLoadout => SuitLoadout,
     CreateSuitLoadout => SuitLoadout,
+    DeleteSuitLoadout => SuitLoadoutName,
+    RenameSuitLoadout => SuitLoadoutName,
+    LoadoutEquipModule => SuitLoadoutSlot,
+    LoadoutRemoveModule => SuitLoadoutSlot,
     UpgradeSuit => UpgradeGear,
     UpgradeWeapon => UpgradeGear,
     BuySuit => GearPurchase,
@@ -3101,6 +3164,22 @@ mod tests {
         let l = r#"{ "timestamp":"2026-10-25T09:00:00Z", "event":"Music", "MusicTrack":"MainMenu" }"#;
         let Event::Music(m) = Event::parse("Music", l).unwrap() else { panic!() };
         assert_eq!(m.music_track, "MainMenu");
+    }
+
+    #[test]
+    fn suit_loadout_changes() {
+        let l = r#"{ "timestamp":"2026-10-20T10:36:16Z", "event":"DeleteSuitLoadout", "SuitID":1698365752966423, "SuitName":"explorationsuit_class1", "SuitName_Localised":"Artemis Suit", "LoadoutID":4293000004, "LoadoutName":"Loadout 1" }"#;
+        let Event::DeleteSuitLoadout(d) = Event::parse("DeleteSuitLoadout", l).unwrap() else { panic!() };
+        assert_eq!((d.loadout_id, d.loadout_name.as_str()), (4293000004, "Loadout 1"));
+        let l = r#"{ "timestamp":"2026-10-20T10:18:24Z", "event":"RenameSuitLoadout", "SuitID":1698364940285172, "SuitName":"tacticalsuit_class1", "SuitName_Localised":"$TacticalSuit_Class1_Name;", "LoadoutID":4293000003, "LoadoutName":"Dom L/K" }"#;
+        let Event::RenameSuitLoadout(r) = Event::parse("RenameSuitLoadout", l).unwrap() else { panic!() };
+        assert_eq!(r.loadout_name, "Dom L/K");
+        let l = r#"{ "timestamp":"2026-10-20T11:19:55Z", "event":"LoadoutEquipModule", "LoadoutName":"Dom L/K", "SuitID":1698364934364699, "SuitName":"tacticalsuit_class1", "SuitName_Localised":"Dominator Suit", "LoadoutID":4293000003, "SlotName":"PrimaryWeapon2", "ModuleName":"wpn_m_assaultrifle_laser_fauto", "ModuleName_Localised":"TK Aphelion", "Class":3, "WeaponMods":[ "weapon_stability" ], "SuitModuleID":1698364962722310 }"#;
+        let Event::LoadoutEquipModule(m) = Event::parse("LoadoutEquipModule", l).unwrap() else { panic!() };
+        assert_eq!((m.loadout_id, m.slot_name.as_str(), m.module_name_localised.as_deref(), m.class), (4293000003, "PrimaryWeapon2", Some("TK Aphelion"), 3));
+        assert_eq!(m.weapon_mods, ["weapon_stability"]);
+        let l = r#"{ "timestamp":"2026-10-20T11:11:13Z", "event":"LoadoutRemoveModule", "LoadoutName":"Dom L/K", "SuitID":1698364934364699, "SuitName":"tacticalsuit_class1", "SuitName_Localised":"Dominator Suit", "LoadoutID":4293000003, "SlotName":"PrimaryWeapon1", "ModuleName":"wpn_m_assaultrifle_laser_fauto", "ModuleName_Localised":"TK Aphelion", "Class":1, "WeaponMods":[  ], "SuitModuleID":1698364962722310 }"#;
+        assert!(matches!(Event::parse("LoadoutRemoveModule", l).unwrap(), Event::LoadoutRemoveModule(m) if m.slot_name == "PrimaryWeapon1"));
     }
 
     #[test]

@@ -60,8 +60,16 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
 
 * `app.rs` owns the services: `Core` (journal → model), `SyncService` (sync.rs → nexus-uplink),
   `MarketService` (market.rs → nexus-galaxy + nexus-eddn, price alerts, Spansh import), `AssistantService`
-  (assistant.rs → nexus-ai on a worker thread; `ai_tools.rs` implements its 16 tools over the model, galaxy DB,
-  journal and Spansh), Spansh client, TTS. `finder.rs` holds market lookups shared by pages and tools (sell plan,
+  (assistant.rs → nexus-ai on a worker thread; `ai_tools.rs` implements its tools over the model, galaxy DB,
+  journal and Spansh), Spansh client, TTS. `ai_tools::TOOLS` describes each tool once: name, description, argument
+  schema, the words Ask shows while it runs and under an answer, whether it only reads, whether it goes online, and
+  whether Ask's model or an MCP agent is offered it. A tool that can say more than its caller takes
+  (`NexusTools::budget`) builds its reply through `ai_tools::fit`, which keeps the most detail that fits. `mcp.rs` is
+  Settings › AI agents: `EliteNexus --mcp` (`mcp/stdio.rs`, started by the agent, before any window, lock or log)
+  speaks MCP on stdin/stdout, both the 2026-07-28 revision (`server/discover`, `_meta` on every request) and the
+  `initialize` revisions before it, and hands each call to the running app over a per-user named pipe (Unix socket
+  off Windows) as one line of JSON; `McpService` answers with the read-only tools offered to agents, on one worker
+  thread, within a deadline and a calls-a-minute limit, with a Spansh client of its own. `finder.rs` holds market lookups shared by pages and tools (sell plan,
   colonisation suppliers). `shopping.rs` is Fleet › Where to buy: it reads a build (SLEF, journal `Loadout`, EDSY or
   Coriolis import link), lists what to buy against the commander's storage, and asks Spansh's outfitting search for
   stations that sell all of it, checking each result's exact module symbols (Spansh filters on name, class and rating

@@ -48,11 +48,14 @@ fn commander(ui: &mut Ui, gs: &GameState) {
             for k in [RankKind::Combat, RankKind::Trade, RankKind::Explore, RankKind::Soldier, RankKind::Exobiologist, RankKind::Empire, RankKind::Federation] {
                 ui.label(RichText::new(k.label()).color(pal::DIM));
                 ui.label(RichText::new(c.rank_name(k)).color(pal::TEXT));
-                let p = c.progress.get(k) as f32 / 100.0;
                 ui.scope(|ui| {
                     ui.set_width(72.0);
                     ui.add_space(6.0);
-                    bar(ui, p, pal::ACCENT, 5.0, None).on_hover_text(format!("{:.0}% to the next rank", p * 100.0));
+                    match c.rank_progress(k) {
+                        Some(p) => bar(ui, p as f32 / 100.0, pal::ACCENT, 5.0, None).on_hover_text(format!("{p}% to the next rank")),
+                        // Promoted this session: the game reports progress again at the next login.
+                        None => bar(ui, 0.0, pal::FAINT, 5.0, None).on_hover_text("Promoted since the game last reported your progress: it does again when you next log in."),
+                    };
                 });
                 ui.end_row();
             }

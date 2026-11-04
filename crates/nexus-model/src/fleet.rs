@@ -47,15 +47,51 @@ pub struct ShipModule {
     pub engineering: Option<ModuleEngineering>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ShipLocation {
     pub system: Option<String>,
     pub station: Option<String>,
     pub market_id: Option<u64>,
+    /// The body a ship was left on or near, when it isn't at a station.
+    pub body: Option<String>,
     pub in_transit: bool,
     /// When an in-transit ship arrives (ShipyardTransfer time + duration).
     pub arrives: Option<Timestamp>,
     pub updated: Timestamp,
+}
+
+impl ShipLocation {
+    /// Still on its way at `now`. A transfer has arrived once its time is up, though the journal says so only with
+    /// the next `StoredShips`; one whose arrival time isn't known counts as on its way until then.
+    pub fn in_transit_at(&self, now: Timestamp) -> bool {
+        self.in_transit && self.arrives.is_none_or(|a| a.0 > now.0)
+    }
+
+    /// "Jameson Memorial (Shinrarta Dezhra)", "Sol 3 (Sol)", "Sol".
+    pub fn text(&self) -> Option<String> {
+        let system = self.system.as_deref();
+        match (self.station.as_deref().or(self.body.as_deref()), system) {
+            (Some(place), Some(sys)) if !place.eq_ignore_ascii_case(sys) => Some(format!("{place} ({sys})")),
+            (Some(place), _) => Some(place.to_string()),
+            (None, sys) => sys.map(str::to_string),
+        }
+    }
+}
+
+/// Where one of the commander's ships is, as far as the journal tells (`GameState::ship_place`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ShipPlace {
+    /// The ship they fly, with them aboard it or close by (on foot beside it, in an SRV): where they are.
+    WithYou,
+    /// The ship they fly, where they stepped out of it or left it to crew another commander's ship, while they're
+    /// elsewhere.
+    Left(ShipLocation),
+    /// The ship they fly, while they ride an Apex taxi or a dropship or crew another commander's ship, left where the
+    /// journal Elite Nexus read doesn't say.
+    Away,
+    /// Another ship: stored at a station, or on its way to one (`ShipLocation::in_transit_at`).
+    Stored(ShipLocation),
+    Unknown,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -131,6 +167,9 @@ pub struct Fleet {
     pub stored_modules_updated: Timestamp,
     pub fuel_main: f64,
     pub fuel_reservoir: f64,
+    /// Where the commander stepped out of the ship they fly, or left it to crew another commander's ship: it stays
+    /// there while they walk, ride an Apex taxi or a dropship elsewhere, or crew. None while they're aboard it.
+    pub left_at: Option<ShipLocation>,
 }
 
 impl Fleet {
@@ -149,6 +188,8 @@ impl Fleet {
         if lower.contains("suit") || lower.contains("taxi") || lower.contains("dropship") {
             return;
         }
+        // Logged in aboard it.
+        self.left_at = None;
         self.current_ship_id = Some(id);
         let s = self.ships.entry(id).or_insert_with(|| Ship::new(id, ship));
         if let Some(n) = &l.ship_name {
@@ -268,6 +309,7 @@ impl Fleet {
             market_id: Some(t.market_id),
             in_transit: t.transfer_time > 0,
             arrives: Some(Timestamp(ts.0 + t.transfer_time)),
+            body: None,
             updated: ts,
         };
     }
@@ -305,6 +347,7 @@ impl Fleet {
                         market_id: Some(s.market_id),
                         in_transit: true,
                         arrives: ship.location.arrives.filter(|a| a.0 > ts.0),
+                        body: None,
                         updated: ts,
                     }
                 } else if here {
@@ -322,6 +365,7 @@ impl Fleet {
                         market_id: st.ship_market_id,
                         in_transit,
                         arrives: None,
+                        body: None,
                         updated: ts,
                     }
                 };

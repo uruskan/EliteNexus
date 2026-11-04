@@ -294,6 +294,160 @@ fn stored_ships_in_transit_show_destination() {
     assert!(gs.fleet.ships.contains_key(&22), "current ship is kept");
 }
 
+/// A promotion mid-session leaves the new rank's progress unknown until the next login reports it, and a squadron
+/// promotion brings the new rank's name.
+#[test]
+fn promotions_drop_the_old_progress_and_rank_name() {
+    use nexus_data::ranks::RankKind;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:00:05Z", "event":"Rank", "Combat":3, "Trade":4, "Explore":6, "Soldier":0, "Exobiologist":2, "Empire":7, "Federation":1, "CQC":0 }"#,
+            r#"{ "timestamp":"2026-10-01T10:00:06Z", "event":"Progress", "Combat":30, "Trade":46, "Explore":97, "Soldier":0, "Exobiologist":35, "Empire":37, "Federation":100, "CQC":0 }"#,
+            r#"{ "timestamp":"2026-10-01T10:00:07Z", "event":"SquadronStartup", "SquadronName":"VANGUARDS OF TEST", "SquadronID":42, "CurrentRank":4, "CurrentRankName":"$Squadron_DefaultRankName_Rank4;", "CurrentRankName_Localised":"Rookie" }"#,
+            r#"{ "timestamp":"2026-10-01T11:00:00Z", "event":"Promotion", "Explore":7 }"#,
+            r#"{ "timestamp":"2026-10-01T11:05:00Z", "event":"SquadronPromotion", "SquadronID":42, "SquadronName":"VANGUARDS OF TEST", "OldRank":4, "NewRank":3, "OldRankName":"$Squadron_DefaultRankName_Rank4;", "OldRankName_Localised":"Rookie", "NewRankName":"$Squadron_DefaultRankName_Rank3;", "NewRankName_Localised":"Agent" }"#,
+        ],
+    );
+    let c = &m.active().unwrap().cmdr;
+    assert_eq!(c.rank_name(RankKind::Explore), "Pioneer");
+    assert_eq!(c.rank_progress(RankKind::Explore), None, "97% was progress towards Pioneer");
+    assert_eq!(c.rank_progress(RankKind::Trade), Some(46), "the other ranks keep theirs");
+    let sq = c.squadron.as_ref().unwrap();
+    assert_eq!((sq.rank, sq.rank_name.as_deref()), (Some(3), Some("Agent")));
+    // The next login reports progress again; a squadron rank with no name has none rather than the old one's.
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-02T10:00:06Z", "event":"Progress", "Combat":30, "Trade":46, "Explore":4, "Soldier":0, "Exobiologist":35, "Empire":37, "Federation":100, "CQC":0 }"#,
+            r#"{ "timestamp":"2026-10-02T11:05:00Z", "event":"SquadronPromotion", "SquadronID":42, "SquadronName":"VANGUARDS OF TEST", "OldRank":3, "NewRank":2 }"#,
+        ],
+    );
+    let c = &m.active().unwrap().cmdr;
+    assert_eq!(c.rank_progress(RankKind::Explore), Some(4));
+    let sq = c.squadron.as_ref().unwrap();
+    assert_eq!((sq.rank, sq.rank_name.as_deref()), (Some(2), None));
+}
+
+/// The ship you fly stays where you stepped out of it while an Apex taxi or another commander's ship takes you
+/// elsewhere; a transferred ship has arrived once its time is up.
+#[test]
+fn the_ship_stays_where_you_left_it() {
+    use nexus_model::fleet::ShipPlace;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let place = |m: &Model| {
+        let gs = m.active().unwrap();
+        gs.ship_place(&gs.fleet.ships[&22])
+    };
+    let left_at = |m: &Model| match place(m) {
+        ShipPlace::Left(l) => l.text(),
+        other => panic!("{other:?}"),
+    };
+    let docked = |ts: &str, taxi: bool, system: &str, station: &str, market: u64| {
+        format!(r#"{{ "timestamp":"{ts}", "event":"Docked", "StationName":"{station}", "StationType":"Coriolis", "Taxi":{taxi}, "Multicrew":false, "StarSystem":"{system}", "SystemAddress":100, "MarketID":{market}, "DistFromStarLS":10.0 }}"#)
+    };
+    let step = |event: &str, ts: &str, taxi: bool, system: &str, station: &str, market: u64| {
+        format!(r#"{{ "timestamp":"{ts}", "event":"{event}", "SRV":false, "Taxi":{taxi}, "Multicrew":false, "StarSystem":"{system}", "SystemAddress":100, "Body":"{station}", "BodyID":3, "OnStation":true, "OnPlanet":false, "StationName":"{station}", "StationType":"Coriolis", "MarketID":{market} }}"#)
+    };
+    let lines = [
+        docked("2026-10-01T10:01:00Z", false, "Alpha", "Alpha Port", 5001),
+        step("Disembark", "2026-10-01T10:02:00Z", false, "Alpha", "Alpha Port", 5001),
+    ];
+    feed(&mut m, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(place(&m), ShipPlace::WithYou, "on foot beside it");
+    let lines = [
+        step("Embark", "2026-10-01T10:05:00Z", true, "Alpha", "Alpha Port", 5001),
+        r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"FSDJump", "Taxi":true, "StarSystem":"Beta", "SystemAddress":200, "StarPos":[10.0,0.0,0.0], "Population":0, "JumpDist":10.0, "FuelUsed":0.0, "FuelLevel":0.0 }"#.to_string(),
+        docked("2026-10-01T10:25:00Z", true, "Beta", "Beta Hub", 5002),
+        step("Disembark", "2026-10-01T10:26:00Z", true, "Beta", "Beta Hub", 5002),
+    ];
+    feed(&mut m, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(m.active().unwrap().location.system, "Beta");
+    assert_eq!(left_at(&m).as_deref(), Some("Alpha Port (Alpha)"), "the taxi took you, not your ship");
+    // Back by taxi, and aboard: with you again.
+    let lines = [
+        step("Embark", "2026-10-01T10:30:00Z", true, "Beta", "Beta Hub", 5002),
+        r#"{ "timestamp":"2026-10-01T10:45:00Z", "event":"FSDJump", "Taxi":true, "StarSystem":"Alpha", "SystemAddress":100, "StarPos":[0.0,0.0,0.0], "Population":0, "JumpDist":10.0, "FuelUsed":0.0, "FuelLevel":0.0 }"#.to_string(),
+        docked("2026-10-01T10:50:00Z", true, "Alpha", "Alpha Port", 5001),
+        step("Disembark", "2026-10-01T10:51:00Z", true, "Alpha", "Alpha Port", 5001),
+        step("Embark", "2026-10-01T10:52:00Z", false, "Alpha", "Alpha Port", 5001),
+    ];
+    feed(&mut m, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(place(&m), ShipPlace::WithYou);
+    // Crewing another commander's ship: yours stays docked at Alpha Port until you're back aboard it.
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T11:00:00Z", "event":"JoinACrew", "Captain":"Bob", "Telepresence":true }"#,
+            r#"{ "timestamp":"2026-10-01T11:01:00Z", "event":"Location", "Docked":false, "Multicrew":true, "StarSystem":"Gamma", "SystemAddress":300, "StarPos":[20.0,0.0,0.0], "Population":0, "Body":"Gamma", "BodyID":0, "BodyType":"Star" }"#,
+        ],
+    );
+    assert_eq!(left_at(&m).as_deref(), Some("Alpha Port (Alpha)"));
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T11:30:00Z", "event":"QuitACrew", "Captain":"Bob", "Telepresence":true }"#,
+            r#"{ "timestamp":"2026-10-01T11:30:05Z", "event":"Location", "Docked":true, "Multicrew":false, "Taxi":false, "StationName":"Alpha Port", "StationType":"Coriolis", "MarketID":5001, "StarSystem":"Alpha", "SystemAddress":100, "StarPos":[0.0,0.0,0.0], "Population":0, "Body":"Alpha Port", "BodyID":3, "BodyType":"Station" }"#,
+        ],
+    );
+    assert_eq!(place(&m), ShipPlace::WithYou);
+    // In a taxi with no record of where you left your ship: away, somewhere the journal doesn't say.
+    let mut fresh = Model::default();
+    feed(&mut fresh, LOGIN);
+    feed(&mut fresh, &[r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"FSDJump", "Taxi":true, "StarSystem":"Beta", "SystemAddress":200, "StarPos":[10.0,0.0,0.0], "Population":0 }"#]);
+    assert_eq!(place(&fresh), ShipPlace::Away);
+
+    // A transfer: in transit for its 10 minutes, then there, though only a later StoredShips says so.
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T12:00:00Z", "event":"StoredShips", "StationName":"Alpha Port", "MarketID":5001, "StarSystem":"Alpha", "ShipsHere":[ ], "ShipsRemote":[ { "ShipID":5, "ShipType":"python", "Name":"Mule", "StarSystem":"Beta", "ShipMarketID":5002, "TransferPrice":1000, "TransferTime":600, "Value":55000000, "Hot":false } ] }"#,
+            r#"{ "timestamp":"2026-10-01T12:01:00Z", "event":"ShipyardTransfer", "ShipType":"python", "ShipID":5, "System":"Beta", "ShipMarketID":5002, "Distance":10.0, "TransferPrice":1000, "TransferTime":600, "MarketID":5001 }"#,
+        ],
+    );
+    let gs = m.active().unwrap();
+    let ShipPlace::Stored(l) = gs.ship_place(&gs.fleet.ships[&5]) else { panic!() };
+    assert_eq!(l.text().as_deref(), Some("Alpha Port (Alpha)"));
+    let t = |s: &str| nexus_journal::Timestamp::parse(s).unwrap();
+    assert!(l.in_transit_at(t("2026-10-01T12:05:00Z")));
+    assert!(!l.in_transit_at(t("2026-10-01T12:11:01Z")), "arrived after its 600 s");
+}
+
+/// Suit loadouts follow what the game says happened to them: deleted ones go, renames and weapon changes show.
+#[test]
+fn suit_loadouts_follow_deletions_renames_and_weapons() {
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:10:00Z", "event":"SuitLoadout", "SuitID":17, "SuitName":"tacticalsuit_class3", "SuitName_Localised":"$TacticalSuit_Class1_Name;", "SuitMods":[], "LoadoutID":4293000001, "LoadoutName":"Fighter", "Modules":[ { "SlotName":"PrimaryWeapon1", "SuitModuleID":1, "ModuleName":"wpn_m_assaultrifle_plasma_fauto", "ModuleName_Localised":"Manticore Tormentor", "Class":3, "WeaponMods":[] }, { "SlotName":"SecondaryWeapon", "SuitModuleID":2, "ModuleName":"wpn_s_pistol_kinetic_sauto", "ModuleName_Localised":"Karma P-15", "Class":1, "WeaponMods":[] } ] }"#,
+            r#"{ "timestamp":"2026-10-01T10:11:00Z", "event":"CreateSuitLoadout", "SuitID":18, "SuitName":"explorationsuit_class1", "SuitName_Localised":"Artemis Suit", "SuitMods":[], "LoadoutID":4293000002, "LoadoutName":"Loadout 2", "Modules":[] }"#,
+            r#"{ "timestamp":"2026-10-01T10:12:00Z", "event":"RenameSuitLoadout", "SuitID":17, "SuitName":"tacticalsuit_class3", "SuitName_Localised":"$TacticalSuit_Class1_Name;", "LoadoutID":4293000001, "LoadoutName":"Assault" }"#,
+            r#"{ "timestamp":"2026-10-01T10:13:00Z", "event":"LoadoutEquipModule", "LoadoutName":"Assault", "SuitID":17, "SuitName":"tacticalsuit_class3", "SuitName_Localised":"Dominator Suit", "LoadoutID":4293000001, "SlotName":"PrimaryWeapon2", "ModuleName":"wpn_m_sniper_plasma_charged", "ModuleName_Localised":"Manticore Executioner", "Class":4, "WeaponMods":["weapon_stability"], "SuitModuleID":3 }"#,
+            r#"{ "timestamp":"2026-10-01T10:14:00Z", "event":"LoadoutRemoveModule", "LoadoutName":"Assault", "SuitID":17, "SuitName":"tacticalsuit_class3", "SuitName_Localised":"Dominator Suit", "LoadoutID":4293000001, "SlotName":"SecondaryWeapon", "ModuleName":"wpn_s_pistol_kinetic_sauto", "ModuleName_Localised":"Karma P-15", "Class":1, "WeaponMods":[], "SuitModuleID":2 }"#,
+            r#"{ "timestamp":"2026-10-01T10:15:00Z", "event":"DeleteSuitLoadout", "SuitID":18, "SuitName":"explorationsuit_class1", "SuitName_Localised":"Artemis Suit", "LoadoutID":4293000002, "LoadoutName":"Loadout 2" }"#,
+            // A loadout never listed: a single weapon change doesn't make it up.
+            r#"{ "timestamp":"2026-10-01T10:16:00Z", "event":"LoadoutEquipModule", "LoadoutName":"Ghost", "SuitID":19, "SuitName":"utilitysuit_class1", "LoadoutID":4293000009, "SlotName":"PrimaryWeapon1", "ModuleName":"wpn_m_shotgun_plasma_doublebarrel", "ModuleName_Localised":"Manticore Intimidator", "Class":2, "WeaponMods":[], "SuitModuleID":4 }"#,
+        ],
+    );
+    let inv = &m.active().unwrap().inventory;
+    assert_eq!(inv.suit_loadouts.keys().copied().collect::<Vec<_>>(), [4293000001], "the deleted and the unknown loadouts aren't listed");
+    let l = &inv.suit_loadouts[&4293000001];
+    assert_eq!((l.name.as_str(), l.suit_name.as_str()), ("Assault", "Dominator Suit"), "renamed; the game's placeholder isn't shown as the suit's name");
+    let weapons: Vec<(&str, &str, u32)> = l.weapons.iter().map(|w| (w.0.as_str(), w.1.as_str(), w.2)).collect();
+    assert_eq!(weapons, [("PrimaryWeapon1", "Manticore Tormentor", 3), ("PrimaryWeapon2", "Manticore Executioner", 4)]);
+    assert_eq!(l.weapons[1].3, ["weapon_stability"]);
+    assert_eq!(inv.current_suit_loadout, Some(4293000001));
+    // Deleting the loadout in use leaves none in use.
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:17:00Z", "event":"DeleteSuitLoadout", "SuitID":17, "SuitName":"tacticalsuit_class3", "LoadoutID":4293000001, "LoadoutName":"Assault" }"#]);
+    let inv = &m.active().unwrap().inventory;
+    assert!(inv.suit_loadouts.is_empty() && inv.current_suit_loadout.is_none());
+}
+
 #[test]
 fn massacre_stack_end_to_end() {
     let mut m = Model::default();

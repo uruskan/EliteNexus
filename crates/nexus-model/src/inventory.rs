@@ -272,6 +272,15 @@ pub struct Inventory {
     pub current_suit_loadout: Option<u64>,
 }
 
+/// A suit's or weapon's name: the journal's localised one, unless the game wrote its placeholder there
+/// (`$TacticalSuit_Class1_Name;`), as it often does in loadout events.
+fn gear_name(symbol: &str, localised: Option<&str>) -> String {
+    match localised.map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('$')) {
+        Some(l) => l.to_string(),
+        None => nexus_data::engineering::odyssey_item(symbol).map(|i| i.name.to_string()).unwrap_or_else(|| nexus_data::ships::ship_name(symbol)),
+    }
+}
+
 impl Inventory {
     pub fn on_suit_loadout(&mut self, s: &ev::SuitLoadout, select: bool) {
         self.suit_loadouts.insert(
@@ -280,24 +289,51 @@ impl Inventory {
                 loadout_id: s.loadout_id,
                 name: s.loadout_name.clone(),
                 suit_id: s.suit_id,
-                suit_name: s.suit_name_localised.clone().unwrap_or_else(|| s.suit_name.clone()),
+                suit_name: gear_name(&s.suit_name, s.suit_name_localised.as_deref()),
                 suit_mods: s.suit_mods.clone(),
-                weapons: s
-                    .modules
-                    .iter()
-                    .map(|m| {
-                        (
-                            m.slot_name.clone(),
-                            m.module_name_localised.clone().unwrap_or_else(|| m.module_name.clone()),
-                            m.class,
-                            m.weapon_mods.clone(),
-                        )
-                    })
-                    .collect(),
+                weapons: s.modules.iter().map(|m| (m.slot_name.clone(), gear_name(&m.module_name, m.module_name_localised.as_deref()), m.class, m.weapon_mods.clone())).collect(),
             },
         );
         if select {
             self.current_suit_loadout = Some(s.loadout_id);
+        }
+    }
+
+    /// `DeleteSuitLoadout`.
+    pub fn on_delete_suit_loadout(&mut self, d: &ev::SuitLoadoutName) {
+        self.suit_loadouts.remove(&d.loadout_id);
+        if self.current_suit_loadout == Some(d.loadout_id) {
+            self.current_suit_loadout = None;
+        }
+    }
+
+    /// `RenameSuitLoadout`. A loadout not seen yet waits for the game to list it whole (`SuitLoadout` and
+    /// `SwitchSuitLoadout` give every slot).
+    pub fn on_rename_suit_loadout(&mut self, r: &ev::SuitLoadoutName) {
+        if let Some(l) = self.suit_loadouts.get_mut(&r.loadout_id) {
+            l.name = r.loadout_name.clone();
+        }
+    }
+
+    /// `LoadoutEquipModule` (`equip`) / `LoadoutRemoveModule`: the weapon in one slot changed, or the slot was emptied.
+    /// Only loadouts already known are changed: an unknown one with a single weapon would look complete.
+    pub fn on_loadout_module(&mut self, m: &ev::SuitLoadoutSlot, equip: bool) {
+        let Some(l) = self.suit_loadouts.get_mut(&m.loadout_id) else { return };
+        if !m.loadout_name.is_empty() {
+            l.name = m.loadout_name.clone();
+        }
+        let weapon = (m.slot_name.clone(), gear_name(&m.module_name, m.module_name_localised.as_deref()), m.class, m.weapon_mods.clone());
+        match l.weapons.iter().position(|w| w.0.eq_ignore_ascii_case(&m.slot_name)) {
+            Some(i) if equip => l.weapons[i] = weapon,
+            Some(i) => {
+                l.weapons.remove(i);
+            }
+            None if equip => {
+                l.weapons.push(weapon);
+                // The game's slot order: PrimaryWeapon1, PrimaryWeapon2, SecondaryWeapon.
+                l.weapons.sort_by(|a, b| a.0.cmp(&b.0));
+            }
+            None => {}
         }
     }
 }
