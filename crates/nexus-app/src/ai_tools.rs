@@ -2083,7 +2083,7 @@ mod tests {
             format!(r#"{{ "timestamp":"{now}", "event":"Commander", "FID":"F1", "Name":"Tester" }}"#),
             format!(r#"{{ "timestamp":"{now}", "event":"LoadGame", "FID":"F1", "Commander":"Tester", "Horizons":true, "Odyssey":true, "Ship":"Anaconda", "ShipID":1, "ShipName":"", "ShipIdent":"", "FuelLevel":32.0, "FuelCapacity":32.0, "GameMode":"Solo", "Credits":250000000, "Loan":0 }}"#),
             format!(r#"{{ "timestamp":"{now}", "event":"Location", "Docked":false, "StarSystem":"Alpha", "SystemAddress":1001, "StarPos":[0.0,0.0,0.0], "Population":1000, "Body":"Alpha", "BodyID":0, "BodyType":"Star" }}"#),
-            format!(r#"{{ "timestamp":"{now}", "event":"Loadout", "Ship":"anaconda", "ShipID":1, "ShipName":"", "ShipIdent":"", "HullValue":100, "ModulesValue":100, "HullHealth":1.0, "UnladenMass":400.0, "CargoCapacity":400, "MaxJumpRange":30.5, "FuelCapacity":{{ "Main":32.0, "Reserve":1.07 }}, "Rebuy":5000000, "Modules":[ {{ "Slot":"FrameShiftDrive", "Item":"int_hyperdrive_size6_class5", "On":true, "Priority":0, "Health":1.0, "Value":3000000, "Engineering":{{ "Engineer":"Felicity Farseer", "EngineerID":300100, "BlueprintID":128673694, "BlueprintName":"FSD_LongRange", "Level":5, "Quality":1.0, "ExperimentalEffect":"special_fsd_heavy", "ExperimentalEffect_Localised":"Mass Manager", "Modifiers":[] }} }} ] }}"#),
+            format!(r#"{{ "timestamp":"{now}", "event":"Loadout", "Ship":"anaconda", "ShipID":1, "ShipName":"", "ShipIdent":"", "HullValue":100, "ModulesValue":100, "HullHealth":1.0, "UnladenMass":400.0, "CargoCapacity":400, "MaxJumpRange":30.5, "FuelCapacity":{{ "Main":32.0, "Reserve":1.07 }}, "Rebuy":5000000, "Modules":[ {{ "Slot":"FrameShiftDrive", "Item":"int_hyperdrive_size6_class5", "On":true, "Priority":0, "Health":1.0, "Value":3000000, "Engineering":{{ "Engineer":"Felicity Farseer", "EngineerID":300100, "BlueprintID":128673694, "BlueprintName":"FSD_LongRange", "Level":5, "Quality":1.0, "ExperimentalEffect":"special_fsd_heavy", "ExperimentalEffect_Localised":"Mass Manager", "Modifiers":[] }} }}, {{ "Slot":"PaintJob", "Item":"paintjob_anaconda_tactical_blue", "On":true, "Priority":1, "Health":1.0 }}, {{ "Slot":"ShipCockpit", "Item":"anaconda_cockpit", "On":true, "Priority":1, "Health":1.0 }} ] }}"#),
             format!(r#"{{ "timestamp":"{now}", "event":"Cargo", "Vessel":"Ship", "Count":100, "Inventory":[ {{ "Name":"gold", "Name_Localised":"Gold", "Count":100, "Stolen":0 }} ] }}"#),
             // A second ship in storage, and the progress the Rank, Progress and EngineerProgress events carry.
             format!(r#"{{ "timestamp":"{now}", "event":"StoredShips", "StationName":"Alpha Port", "MarketID":5001, "StarSystem":"Alpha", "ShipsHere":[ {{ "ShipID":2, "ShipType":"Python", "Name":"Mule", "Value":55000000, "Hot":false }} ], "ShipsRemote":[ ] }}"#),
@@ -2332,7 +2332,7 @@ mod tests {
         assert_eq!(here["rebuy_cr"], 5_000_000);
         let engineered = here["engineered"].as_array().unwrap();
         assert_eq!(engineered.len(), 1);
-        assert_eq!(engineered[0]["blueprint"], "FSD_LongRange");
+        assert_eq!(engineered[0]["blueprint"], "Increased FSD Range", "by name, not the journal's symbol");
         assert_eq!(engineered[0]["grade"], 5);
         assert_eq!(engineered[0]["engineer"], "Felicity Farseer");
         assert_eq!(engineered[0]["experimental"], "Mass Manager");
@@ -2342,13 +2342,13 @@ mod tests {
         assert_eq!(stored["where"]["station"], "Alpha Port");
         assert_eq!(stored["where"]["system"], "Alpha");
         assert_eq!(stored["value_cr"], 55_000_000);
-        assert!(stored["engineered"].as_array().unwrap().is_empty());
+        assert!(stored.get("engineered").is_none() && stored["loadout_known"] == false, "never seen is not \"no engineering\": {stored}");
         assert_eq!(f["total_value_cr"], 55_000_000 + 200);
 
         let all = tools.call("fleet", &json!({ "all_modules": true })).unwrap();
         let here = all["ships"].as_array().unwrap().iter().find(|s| s["current"] == true).unwrap();
         let modules = here["modules"].as_array().unwrap();
-        assert_eq!(modules.len(), 1);
+        assert_eq!(modules.len(), 1, "the paint job and the cockpit aren't modules to list: {modules:?}");
         assert_eq!(modules[0]["slot"], "Frame Shift Drive");
         assert_eq!(modules[0]["engineered"], true);
         assert!(modules[0]["module"].as_str().is_some_and(|m| !m.is_empty()));
@@ -2357,7 +2357,7 @@ mod tests {
         let mule = tools.call("fleet", &json!({ "ship": "mule", "all_modules": true })).unwrap();
         assert_eq!(mule["ships"].as_array().unwrap().len(), 1);
         assert_eq!(mule["ships"][0]["name"], "Mule");
-        assert_eq!(mule["ships"][0]["modules"].as_array().map(Vec::len), Some(0), "no loadout known for it: {mule}");
+        assert!(mule["ships"][0].get("modules").is_none() && mule["notes"][0].as_str().unwrap().contains("loadout_known"), "no loadout known for it: {mule}");
         let anaconda = tools.call("fleet", &json!({ "ship": "ANACONDA", "all_modules": true })).unwrap();
         assert_eq!(anaconda["ships"].as_array().unwrap().len(), 1);
         assert_eq!(anaconda["ships"][0]["modules"].as_array().map(Vec::len), Some(1));
@@ -2434,6 +2434,41 @@ mod tests {
         assert!(one.get("notes").is_none());
 
         assert!(tools.call("fleet", &json!({ "ship": "nope" })).is_err());
+    }
+
+    /// The ship being flown stays where the commander stepped out of it while an Apex taxi takes them elsewhere
+    /// (review note 8 on PR #14).
+    #[test]
+    fn fleet_says_where_you_left_your_ship() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let (t1, t2, t3) = (at(10), at(20), at(30));
+        let m = with_lines(
+            commander(),
+            &[
+                format!(r#"{{ "timestamp":"{t1}", "event":"Disembark", "SRV":false, "Taxi":false, "Multicrew":false, "StarSystem":"Alpha", "SystemAddress":1001, "Body":"Alpha Port", "BodyID":3, "OnStation":true, "OnPlanet":false, "StationName":"Alpha Port", "StationType":"Coriolis", "MarketID":5001 }}"#),
+                format!(r#"{{ "timestamp":"{t2}", "event":"Embark", "SRV":false, "Taxi":true, "Multicrew":false, "StarSystem":"Alpha", "SystemAddress":1001, "Body":"Alpha Port", "BodyID":3, "OnStation":true, "OnPlanet":false, "StationName":"Alpha Port", "StationType":"Coriolis", "MarketID":5001 }}"#),
+                format!(r#"{{ "timestamp":"{t3}", "event":"FSDJump", "Taxi":true, "StarSystem":"Beta", "SystemAddress":1002, "StarPos":[10.0,0.0,0.0], "Population":0, "JumpDist":10.0, "FuelUsed":0.0, "FuelLevel":0.0 }}"#),
+            ],
+        );
+        let f = model_tools(m, &rt).call("fleet", &json!({ "ship": "anaconda" })).unwrap();
+        let here = &f["ships"][0]["where"];
+        assert_eq!((&here["system"], &here["station"]), (&json!("Alpha"), &json!("Alpha Port")), "not Beta, where the taxi went: {f}");
+        assert!(here["left_there"].is_string() && here.get("with_commander").is_none(), "{here}");
+    }
+
+    /// Advice on what was left out never sends the model back to ask for the ship it just asked for.
+    #[test]
+    fn fleet_advice_fits_what_was_asked() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let mut tools = model_tools(crowded_fleet(15), &rt);
+        let notes = |tools: &NexusTools, args: Value| tools.call("fleet", &args).unwrap()["notes"].to_string();
+        tools.budget = 2_500;
+        assert!(notes(&tools, json!({})).contains("ship="), "no ship asked for: ask for one");
+        let several = notes(&tools, json!({ "ship": "python" }));
+        assert!(several.contains("by its ident or id") && !several.contains("ship="), "{several}");
+        tools.budget = 1_200;
+        let one = notes(&tools, json!({ "ship": "ID-07", "all_modules": true }));
+        assert!(one.contains("every module") && !one.contains("ask for"), "{one}");
     }
 
     /// How much a reply says is the caller's: an agent with room for more gets the detail Ask has to leave out.

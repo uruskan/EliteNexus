@@ -4,12 +4,12 @@
 
 use super::{NexusTools, arg_bool, arg_f64, arg_str, fit, r1, strip_nulls};
 use nexus_data::materials::{self, Material};
-use nexus_data::outfitting::{display_name, slot_display};
+use nexus_data::outfitting::{SlotKind, display_name, slot_display, slot_kind};
 use nexus_data::ranks::RankKind;
 use nexus_journal::events::SystemArrival;
 use nexus_journal::{IndexEntry, Timestamp};
 use nexus_model::GameState;
-use nexus_model::fleet::{Ship, ShipModule};
+use nexus_model::fleet::{Ship, ShipLocation, ShipModule, ShipPlace};
 use nexus_model::history::LedgerCategory;
 use nexus_model::inventory::{Locker, MaterialCategory, SuitLoadoutInfo};
 use nexus_model::location::{FactionSummary, SystemInfo};
@@ -26,15 +26,30 @@ fn text(s: &str) -> Option<&str> {
     Some(s.trim()).filter(|s| !s.is_empty())
 }
 
+/// A blueprint by name ("Increased FSD Range"), not by the journal's symbol (`FSD_LongRange`), as the Engineering page
+/// names it.
+fn blueprint_name(item: &str, symbol: &str) -> String {
+    match nexus_data::engineering::blueprint_for(item, symbol) {
+        Some(b) => b.name.clone(),
+        None => nexus_data::names::split_camel(&symbol.replace('_', " ")),
+    }
+}
+
 fn engineered(m: &ShipModule) -> Option<Value> {
     let e = m.engineering.as_ref()?;
     let mut v = json!({
         "slot": slot_display(&m.slot), "module": display_name(&m.item),
-        "blueprint": e.blueprint, "grade": e.level, "quality_pct": pct(e.quality),
+        "blueprint": blueprint_name(&m.item, &e.blueprint), "grade": e.level, "quality_pct": pct(e.quality),
         "engineer": e.engineer, "experimental": e.experimental,
     });
     strip_nulls(&mut v);
     Some(v)
+}
+
+/// The modules that make the ship what it is: paint, decals, the cockpit, the cargo hatch and the built-in scanners
+/// aren't listed.
+fn fitted(s: &Ship) -> impl Iterator<Item = &ShipModule> {
+    s.modules.iter().filter(|m| !matches!(slot_kind(&m.slot), SlotKind::Cosmetic | SlotKind::Other))
 }
 
 fn module(m: &ShipModule) -> Value {
@@ -46,19 +61,31 @@ fn module(m: &ShipModule) -> Value {
     v
 }
 
-/// Where a ship is. The current ship's own `location` is stale while it is flown, so that one comes from the
-/// commander's position.
+/// Where a ship is, as far as the journal tells: the ship being flown is where the commander is, unless they stepped
+/// out of it and went on by taxi or in another commander's ship.
 fn whereabouts(gs: &GameState, s: &Ship, now: Timestamp) -> Value {
-    let mut v = if gs.fleet.current_ship_id == Some(s.id) {
-        let loc = &gs.location;
-        json!({ "system": text(&loc.system), "station": loc.station.as_ref().filter(|_| loc.docked).map(|st| &st.name), "situation": loc.situation() })
-    } else {
-        let l = &s.location;
-        json!({
-            "system": l.system, "station": l.station, "in_transit": l.in_transit.then_some(true),
-            "arrives": l.arrives.filter(|_| l.in_transit).map(Timestamp::to_iso),
-            "arrives_in_min": l.arrives.filter(|_| l.in_transit).map(|a| ((a.0 - now.0).max(0) as f64 / 60.0).round() as i64),
-        })
+    let place = |l: &ShipLocation| json!({ "system": l.system, "station": l.station, "body": l.body });
+    let mut v = match gs.ship_place(s) {
+        ShipPlace::WithYou => {
+            let loc = &gs.location;
+            json!({ "with_commander": true, "system": text(&loc.system), "station": loc.station.as_ref().filter(|_| loc.docked).map(|st| &st.name), "situation": loc.situation() })
+        }
+        ShipPlace::Left(l) => {
+            let mut v = place(&l);
+            v["left_there"] = json!("The commander stepped out of it there and is elsewhere now.");
+            v
+        }
+        ShipPlace::Away => json!({ "unknown": "The commander is away from it (an Apex taxi, a dropship or another commander's ship) and their journal doesn't say where they left it." }),
+        ShipPlace::Stored(l) => {
+            let mut v = place(&l);
+            if l.in_transit_at(now) {
+                v["in_transit"] = json!(true);
+                v["arrives"] = json!(l.arrives.map(Timestamp::to_iso));
+                v["arrives_in_min"] = json!(l.arrives.map(|a| ((a.0 - now.0).max(0) as f64 / 60.0).round() as i64));
+            }
+            v
+        }
+        ShipPlace::Unknown => json!({ "unknown": "Not in the journal." }),
     };
     strip_nulls(&mut v);
     v
@@ -74,8 +101,8 @@ struct Detail {
 }
 
 fn ship(gs: &GameState, s: &Ship, detail: Detail, now: Timestamp) -> Value {
-    // A ship known only from StoredShips has no loadout: its jump range, cargo and hull would be zeros and a full
-    // hull that nobody reported, so they are left out rather than shown.
+    // A ship known only from StoredShips has no loadout: its jump range, cargo, hull and modules would be zeros, a full
+    // hull and an empty list that nobody reported, which read as "no engineering". They are left out rather than shown.
     let loadout = !s.loadout_ts.is_zero();
     let mut v = json!({
         "id": s.id, "type": s.type_name, "name": text(&s.name), "ident": text(&s.ident),
@@ -89,17 +116,22 @@ fn ship(gs: &GameState, s: &Ship, detail: Detail, now: Timestamp) -> Value {
         "hot": s.hot.then_some(true),
         "modules_as_of": loadout.then(|| s.loadout_ts.to_iso()),
     });
-    if detail.counts_only {
+    if !loadout {
+        v["loadout_known"] = json!(false);
+    } else if detail.counts_only {
         v["engineered_count"] = s.engineered_modules().into();
     } else {
         v["engineered"] = s.modules.iter().filter_map(engineered).collect();
     }
-    if detail.modules {
-        v["modules"] = s.modules.iter().map(module).collect();
+    if detail.modules && loadout {
+        v["modules"] = fitted(s).map(module).collect();
     }
     strip_nulls(&mut v);
     v
 }
+
+/// Said when a listed ship's loadout was never seen.
+const LOADOUT_UNKNOWN: &str = "loadout_known false: the game hasn't reported that ship's modules in the journal Elite Nexus read (it does when the ship is flown), so its engineering, modules, jump range and cargo aren't known.";
 
 /// Ships matching what the commander asked for: an id, or a name, ident or type (as written, ignoring case); when
 /// none matches exactly, a name, ident or type that contains it.
@@ -471,6 +503,14 @@ impl NexusTools {
             });
         }
         ships.sort_by_key(|s| (gs.fleet.current_ship_id != Some(s.id), std::cmp::Reverse(s.total_value())));
+        // Where to look for what had to be left out: never "ask for one ship" to a question that named one.
+        let ask_one = match (&query, ships.len()) {
+            (Some(_), 1) => None,
+            (Some(_), _) => Some("ask for one of them by its ident or id"),
+            (None, _) => Some("ask for one ship with ship="),
+        };
+        let then = |what: &str| ask_one.map(|a| format!("{what}{a}")).unwrap_or_default();
+        let unknown_loadout = ships.iter().any(|s| s.loadout_ts.is_zero());
         // What gives way when the reply is too long for the caller: the module lists, then which modules are
         // engineered (a count each instead), then the ships of least value, one by one, down to the first.
         let steps = if all_modules { 3 } else { 2 };
@@ -486,17 +526,20 @@ impl NexusTools {
                     ship(gs, s, Detail { modules, counts_only }, now)
                 })
                 .collect();
-            let mut notes: Vec<&str> = Vec::new();
+            let mut notes: Vec<String> = Vec::new();
+            if unknown_loadout {
+                notes.push(LOADOUT_UNKNOWN.into());
+            }
             if all_modules && !with_modules {
-                notes.push("Too much to list every module: ask for one ship with ship= to see its modules.");
+                notes.push(format!("Too much to list every module{}.", then(": ")));
             }
             if counts_only {
-                notes.push("Too many engineered modules to list: engineered_count says how many each ship has; ask for one ship with ship= to see which.");
+                notes.push(format!("Too many engineered modules to list: engineered_count says how many each ship has{}.", then("; ")));
             }
             let mut out = json!({ "commander": gs.cmdr.name, "ships": listed, "total_value_cr": gs.fleet.total_value() });
             if kept < ships.len() {
                 out["ships_omitted"] = (ships.len() - kept).into();
-                notes.push("Ships left out (the least valuable) to fit: ask for one with ship=.");
+                notes.push(format!("Ships left out (the least valuable) to fit{}.", then(": ")));
             }
             if !notes.is_empty() {
                 out["notes"] = json!(notes);
