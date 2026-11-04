@@ -126,10 +126,30 @@ fn engineer_order(status: &str) -> u8 {
 
 /// One material the commander holds.
 struct Held {
+    /// As the game names it, in the game's language.
     name: String,
     count: i64,
     /// What the game's catalogue says about it (None for a material it doesn't list).
     info: Option<&'static Material>,
+}
+
+impl Held {
+    /// Its English name, when the game's is another.
+    fn english(&self) -> Option<&str> {
+        self.info.map(|m| m.name.as_str()).filter(|en| !en.eq_ignore_ascii_case(&self.name))
+    }
+
+    /// Whether a name asked for (already a [`name_key`]) is part of this material's name: as the game writes it, in
+    /// English, or its journal symbol. A commander on a German client asking for "chemical distillery" or "wake
+    /// echoes" finds them too.
+    fn named(&self, key: &str) -> bool {
+        name_key(&self.name).contains(key) || self.info.is_some_and(|m| name_key(&m.name).contains(key) || m.symbol.contains(key))
+    }
+}
+
+/// Lower-case letters and digits only: "Wake Echoes", "wake echoes" and "wakeechoes" are the same.
+fn name_key(s: &str) -> String {
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
 /// How a material is written, from the most to the least detailed.
@@ -139,12 +159,12 @@ fn material_row(h: &Held, form: u8) -> Value {
     let full = cap.map(|c| h.count >= c);
     match form {
         0 => {
-            let mut v = json!({ "name": h.name, "count": h.count, "grade": grade, "cap": cap, "full": full });
+            let mut v = json!({ "name": h.name, "english": h.english(), "count": h.count, "grade": grade, "cap": cap, "full": full });
             strip_nulls(&mut v);
             v
         }
         1 => {
-            let mut v = json!({ "name": h.name, "count": h.count, "grade": grade, "full": full.filter(|f| *f) });
+            let mut v = json!({ "name": h.name, "english": h.english(), "count": h.count, "grade": grade, "full": full.filter(|f| *f) });
             strip_nulls(&mut v);
             v
         }
@@ -282,7 +302,7 @@ impl NexusTools {
                 _ => return Err(format!("category must be raw, manufactured or encoded, not \"{c}\".")),
             }),
         };
-        let query = arg_str(a, "name").map(|n| n.to_lowercase());
+        let query = arg_str(a, "name").map(|n| name_key(&n)).filter(|k| !k.is_empty());
         let (lists, as_of) = {
             let model = self.model.read();
             let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
@@ -295,7 +315,7 @@ impl NexusTools {
                             .iter()
                             .filter(|(_, n)| **n > 0)
                             .map(|(sym, n)| Held { name: mats.names.get(sym).cloned().unwrap_or_else(|| materials::display_name(sym)), count: *n, info: materials::material(sym) })
-                            .filter(|h| query.as_ref().is_none_or(|q| h.name.to_lowercase().contains(q) || h.info.is_some_and(|m| m.symbol.contains(q.as_str()))))
+                            .filter(|h| query.as_deref().is_none_or(|q| h.named(q)))
                             .collect()
                     } else {
                         Vec::new()

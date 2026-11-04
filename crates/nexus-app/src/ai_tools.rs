@@ -2604,6 +2604,33 @@ mod tests {
         assert_eq!(listed, held);
     }
 
+    /// On a game client in another language the journal names materials in that language: a name asked for in English
+    /// still finds them, and the reply gives the English name beside the game's (review note 6 on PR #14).
+    #[test]
+    fn materials_match_english_names_on_any_client() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let t = at(30);
+        let m = with_lines(
+            commander(),
+            &[format!(
+                r#"{{ "timestamp":"{t}", "event":"Materials", "Raw":[ {{ "Name":"polonium", "Name_Localised":"Polonium", "Count":12 }} ], "Manufactured":[ {{ "Name":"chemicaldistillery", "Name_Localised":"Chemische Destillerie", "Count":4 }} ], "Encoded":[ {{ "Name":"disruptedwakeechoes", "Name_Localised":"Atypische gestörte Sogechos", "Count":40 }} ] }}"#
+            )],
+        );
+        let tools = model_tools(m, &rt);
+        let found = |name: &str| {
+            let v = tools.call("materials", &json!({ "name": name })).unwrap();
+            ["raw", "manufactured", "encoded"].iter().flat_map(|k| v[k].as_array().cloned().unwrap_or_default()).collect::<Vec<_>>()
+        };
+        let distillery = found("chemical distillery");
+        assert_eq!(distillery.len(), 1, "the English name finds the German one");
+        assert_eq!((&distillery[0]["name"], &distillery[0]["english"]), (&json!("Chemische Destillerie"), &json!("Chemical Distillery")));
+        assert_eq!(found("Wake Echoes")[0]["english"], "Atypical Disrupted Wake Echoes");
+        assert_eq!(found("destillerie").len(), 1, "and the game's own name still does");
+        assert_eq!(found("chemicaldistillery").len(), 1, "so does the journal symbol");
+        assert!(found("polonium")[0].get("english").is_none(), "no English name when it's the same");
+        assert!(found("iron").is_empty());
+    }
+
     #[test]
     fn on_foot_lists_loadouts_and_locker() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
