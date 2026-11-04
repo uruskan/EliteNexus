@@ -258,8 +258,13 @@ fn chat(ui: &mut Ui, svc: &mut AssistantService, st: &mut AskUi) -> AskAction {
                                 Some(Ok(text)) => {
                                     markdown(ui, text);
                                     if !ex.tools.is_empty() {
-                                        let mut nouns: Vec<&str> = ex.tools.iter().map(|t| crate::ai_tools::noun(t)).collect();
-                                        nouns.dedup();
+                                        // Each source once, in the order first used: two tools can share one ("Spansh").
+                                        let mut nouns: Vec<&str> = Vec::new();
+                                        for n in ex.tools.iter().map(|t| crate::ai_tools::noun(t)) {
+                                            if !nouns.contains(&n) {
+                                                nouns.push(n);
+                                            }
+                                        }
                                         ui.add_space(2.0);
                                         ui.label(RichText::new(format!("{} {}", icon::CHECK, nouns.join(" · "))).size(12.0).color(pal::FAINT)).on_hover_text(format!(
                                             "{} input tokens ({} cached), {} output tokens",

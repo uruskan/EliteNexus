@@ -87,6 +87,8 @@ release time that section becomes the new version and the release workflow publi
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
 
 ### Fixed
+- **Ask**: the line under an answer names each source once. Two tools that use the same source (Spansh) made it read
+  "Spansh · your journal · Spansh".
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.
