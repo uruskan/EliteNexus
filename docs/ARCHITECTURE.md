@@ -71,6 +71,9 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   hidden and inactive, shows it once it has painted, switches click-through on only after that, and hides it while the
   game isn't in front (`overlay/platform.rs`: the foreground window's class on Windows, `_NET_ACTIVE_WINDOW` on X11).
   See-through needs the renderer set up for it at start (`main.rs`; DirectComposition on Windows).
+* Follow my flight (`follow.rs`, Settings › Exploration): `Follower::step` reduces `nexus_model::context` to the
+  page that fits (Navigation, Exploration, Exobiology) and names it when that changes, pure and tested; `App::logic`
+  switches to it only while one of those pages is shown and the journal is followed live.
 * Routes and tours: Navigation holds one `PlannedRoute` (pages/navigation.rs) that drives the "next system →
   clipboard" automation and the galaxy map. It tracks progress by arrival (`advance`), so a loop that starts here isn't
   finished at once. Navigation plans travel itself (neutron, exact, carrier); scan tours are planned on the page they

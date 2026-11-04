@@ -22,6 +22,16 @@ release time that section becomes the new version and the release workflow publi
 - **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
   the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
   for later starts.
+- **Settings › Follow my flight** (off by default) changes the page as you fly, the way Elite Dangerous
+  Exploration Buddy switches its tabs: it reads what you're doing from the game's Status.json and switches when
+  that changes. Flying a system opens Exploration; getting below **Planet view below** (150 km by default) over a
+  planet, landing, or stepping outside on foot opens Exobiology when the planet has biological signals you haven't
+  finished analysing (Exploration otherwise); climbing back above it returns to Exploration; the galaxy map, a
+  charging hyperspace jump or a finished system (every body found, every planet worth the high-value threshold
+  mapped, every genus analysed) opens Navigation. Exploration opens on the current system and Exobiology on This
+  system, whichever tab you left open there. It only ever moves between those three pages: on any other page it
+  leaves you alone; docked, in an SRV or on foot inside, only opening the galaxy map changes the page, and it reacts
+  only to what happens while the game runs: never to the journals read at start, nor to loading another commander.
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
@@ -76,6 +86,9 @@ release time that section becomes the new version and the release workflow publi
   by it, before you deploy. A drop after you lifted off is no longer credited to the location you left. A body you
   mined where the game named no location no longer says "you've worked 0": it says "at least 1". Reported by
   Chequers2.
+- **Navigation**: once every stop of a planned route was reached, the page kept showing "Route complete" and hid the
+  route plotted in the game afterwards (so did "Copy the next system", the auto-copy after a jump and the overlay's
+  next jump). The game's route now takes over, under the finished tour's summary.
 
 ## [0.7.3-beta.2] - 2026-10-25
 

@@ -102,6 +102,8 @@ pub struct NexusApp {
     overrides: Overrides,
     shot: Option<ScreenshotJob>,
     last_jump_count: Option<usize>,
+    /// What the commander was doing at the last Status.json update or journal event (Settings › Follow my flight).
+    flight: crate::follow::Follower,
     clipboard: Option<arboard::Clipboard>,
     /// The overlay: the island at the top of the game's screen, in a window of its own.
     overlay: crate::overlay::window::Overlay,
@@ -200,6 +202,7 @@ impl NexusApp {
             overrides: ov,
             shot,
             last_jump_count: None,
+            flight: Default::default(),
             clipboard: None,
             overlay,
             xsoverlay: Default::default(),
@@ -256,6 +259,31 @@ impl NexusApp {
                     born: Instant::now(),
                 }),
                 Err(e) => tracing::warn!("clipboard: {e}"),
+            }
+        }
+    }
+
+    /// Follow my flight: when what the commander is doing changes, open the page that fits (`follow::Follower`). Only
+    /// moves between Navigation, Exploration and Exobiology. The snapshot is kept even with the setting off, so
+    /// switching it on never acts on an old transition, and the history read at start never switches.
+    fn follow_flight(&mut self) {
+        let target = {
+            let model = self.core.model.read();
+            let Some(gs) = model.active() else { return };
+            self.flight.step(gs, f64::from(self.settings.auto_page_altitude_km) * 1000.0, self.settings.high_value_threshold)
+        };
+        let Some(target) = target else { return };
+        let following = matches!(self.page, Page::Navigation | Page::Exploration | Page::Exobiology);
+        if self.settings.auto_page && following && self.page != target && self.shot.is_none() && matches!(self.core.status.read().phase, Phase::Live) {
+            self.page = target;
+            // The page's live view, not a planner or another system left open there.
+            match target {
+                Page::Exploration => {
+                    self.explo.tab = pages::exploration::Tab::Current;
+                    self.explo.system = None;
+                }
+                Page::Exobiology => self.exo.tab = pages::exobio::Tab::ThisSystem,
+                _ => {}
             }
         }
     }
@@ -719,6 +747,8 @@ impl NexusApp {
             self.core = start_core(ctx, self.overrides.journal_dir.as_ref().or(self.settings.journal_dir.as_ref()), self.market.history_sink(), &self.settings.mining);
             self.sync.attach(&self.core);
             self.market.attach(&self.core);
+            // A new model: Follow my flight starts afresh instead of comparing it with the old one.
+            self.flight = Default::default();
         }
     }
 
@@ -987,6 +1017,7 @@ impl eframe::App for NexusApp {
         }
         self.auto_copy_next();
         self.remember_deposits();
+        self.follow_flight();
         let here = self.core.model.read().active().and_then(|g| g.location.star_pos);
         self.market.set_origin(here);
         self.overlay_logic(ctx);
@@ -1057,7 +1088,8 @@ impl NexusApp {
             // The journal is followed live and the game is running (as the page header's "Live" says).
             let live = phase_live && (fresh || gs.is_some_and(|g| !g.game_closed));
             let src = crate::overlay::Sources {
-                route: self.nav.planned.as_ref(),
+                // A finished tour hands over to the in-game route, as on Navigation and for the clipboard.
+                route: self.nav.planned.as_ref().filter(|p| !p.complete()),
                 pins: &self.settings.market.pins,
                 mining: &self.settings.mining,
                 auto_copy: self.settings.auto_copy_next_system,

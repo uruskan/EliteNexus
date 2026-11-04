@@ -66,6 +66,11 @@ impl PlannedRoute {
         &self.waypoints[self.done.min(self.waypoints.len())..]
     }
 
+    /// Every stop has been reached: the in-game route takes over.
+    pub fn complete(&self) -> bool {
+        self.remaining().is_empty() && !self.waypoints.is_empty()
+    }
+
     /// The carrier a fleet carrier route was planned for.
     pub fn carrier(&self) -> Option<CarrierKind> {
         match self.kind {
@@ -189,9 +194,11 @@ pub(crate) fn from_spansh(w: &nexus_spansh::Waypoint) -> Waypoint {
     }
 }
 
-/// Remaining waypoints of the active route (planner route if set, else the in-game route).
+/// Remaining waypoints of the active route (planner route if set and not finished, else the in-game route).
 pub fn active_route(gs: &GameState, planned: Option<&PlannedRoute>) -> Vec<Waypoint> {
-    if let Some(p) = planned {
+    if let Some(p) = planned
+        && !p.complete()
+    {
         return p.remaining().to_vec();
     }
     gs.route_remaining()
@@ -507,9 +514,13 @@ fn route_view(ui: &mut Ui, gs: &GameState, st: &NavUi) {
             }
         });
         ui.add_space(8.0);
-        if route.is_empty() && !p.waypoints.is_empty() {
-            empty(ui, icon::FLAG_CHECKERED, "Route complete", "You've reached every stop. Go back to the in-game route, or plan another one.");
-            return;
+        if p.complete() {
+            if route.is_empty() {
+                empty(ui, icon::FLAG_CHECKERED, "Route complete", "You've reached every stop. Plot a route in the galaxy map and it shows here, or plan another one above.");
+                return;
+            }
+            ui.add(egui::Label::new(RichText::new(format!("{} Tour complete, showing the route plotted in the game.", icon::FLAG_CHECKERED)).size(size::FOOTNOTE).color(pal::DIM)).wrap());
+            ui.add_space(8.0);
         }
     }
     if route.is_empty() {
