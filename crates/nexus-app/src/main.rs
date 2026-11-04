@@ -22,6 +22,7 @@ mod runplan;
 mod secrets;
 mod settings;
 mod shopping;
+mod surface_finder;
 mod sync;
 #[cfg(test)]
 mod testutil;

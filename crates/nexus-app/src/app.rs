@@ -75,6 +75,7 @@ pub struct NexusApp {
     settings_dirty: Option<Instant>,
     explo: pages::exploration::ExplorationUi,
     exo: pages::exobio::ExobioUi,
+    mining_ui: pages::mining::MiningUi,
     fleet: pages::fleet::FleetUi,
     eng: pages::engineering::EngineeringUi,
     log: pages::logbook::LogbookUi,
@@ -181,6 +182,7 @@ impl NexusApp {
             settings_dirty: None,
             explo: pages::exploration::ExplorationUi::new(ov.tab.as_deref(), shot.is_some()),
             exo: pages::exobio::ExobioUi::new(ov.tab.as_deref(), shot.is_some()),
+            mining_ui: pages::mining::MiningUi::new(ov.tab.as_deref(), shot.is_some()),
             fleet: pages::fleet::FleetUi::new(ov.tab.as_deref(), shot.is_some()),
             eng: pages::engineering::EngineeringUi::new(ov.tab.as_deref()),
             log: Default::default(),
@@ -583,10 +585,18 @@ impl NexusApp {
             },
             Page::GalaxyMap => map_action = pages::galaxy_map::show(ui, gs, &mut self.map, &route),
             Page::Mining => {
-                let (changed, action) = pages::mining::show(ui, gs, &mut self.settings.mining);
+                // Where to mine plans towards the end of the active route when no destination is typed.
+                let route_end = match &self.nav.planned {
+                    Some(p) => p.waypoints.last().map(|w| w.system.clone()),
+                    None => gs.route_remaining().last().map(|h| h.star_system.clone()),
+                };
+                let (changed, action, route) = pages::mining::show(ui, gs, &mut self.settings.mining, &mut self.mining_ui, &self.spansh, self.rt.handle(), route_end.as_deref());
                 settings_changed |= changed;
                 if action.is_some() {
                     map_action = action;
+                }
+                if route.is_some() {
+                    follow = route;
                 }
             }
             Page::Colonisation => settings_changed |= pages::colonisation::show(ui, gs, &self.market, &mut self.colo, &mut self.settings.colonisation),
@@ -679,7 +689,7 @@ impl NexusApp {
             self.nav.planner = pages::navigation::Planner::Exact;
             self.page = Page::Navigation;
         }
-        // A tour picked on Exploration or Exobiology becomes the active route.
+        // A tour picked on Exploration, Exobiology or Mining becomes the active route.
         if let Some(route) = follow {
             self.nav.planned = Some(route);
             self.nav.planner = pages::navigation::Planner::InGame;

@@ -40,6 +40,19 @@ release time that section becomes the new version and the release workflow publi
   system, whichever tab you left open there. It only ever moves between those three pages: on any other page it
   leaves you alone; docked, in an SRV or on foot inside, only opening the galaxy map changes the page, and it reacts
   only to what happens while the game runs: never to the journals read at start, nor to loading another commander.
+- **Mining** › **Where to mine** (asked for by NetworX on the Frontier forum): which bodies are worth landing on for
+  Rhino surface mining. **Near you** lists landable bodies with planetary mining locations within 25 to 1,000 ly,
+  nearest first or most locations first, with each body's ground (its class and its volcanism, as the game reports
+  them), its number of mining locations, its distance from the star and its gravity. Narrow it to a class
+  (metal-rich, high metal content, rocky, rocky ice, icy), a volcanism (none, metallic or rocky magma, silicate
+  vapour geysers, water magma or geysers, carbon dioxide geysers, ammonia, methane or nitrogen magma) and a least
+  number of locations; **Tour 10 systems** plans a route through the first ten systems. **Along a route** finds
+  stops on the way to a destination (the end of your route, or one you type): the system with the most mining
+  locations in each stretch of the trip, up to 1,000 ly from the line, then **Follow this route** puts them on the
+  Navigation page. **In this system** lists the landable planets your own scans described, and **Your grounds** what
+  your own Rhino runs gave on each ground. Counts come from scans commanders share through EDDN (EDMC,
+  EDDiscovery…), collected by Spansh, and only scans since the Rhino update carry them; no journal or feed says what
+  a mining location holds, and the page says so.
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain

@@ -1,9 +1,12 @@
 //! Mining: the live session and earlier ones. For Rhino surface mining, the planetary mining locations worked (with
-//! the number to pick in the game's navigation panel to go back) and a radar of the deposits around you.
+//! the number to pick in the game's navigation panel to go back) and a radar of the deposits around you; and on its
+//! own tab, where to mine next (where_to_mine.rs).
 
 use crate::pages::galaxy_map::MapAction;
+use crate::pages::navigation::PlannedRoute;
+use crate::pages::where_to_mine::{self, WhereUi};
 use crate::theme::{display, pal, size};
-use crate::widgets::{self, badge, card, card_tinted, duration, empty, footnote};
+use crate::widgets::{self, GAP, badge, card, card_tinted, duration, empty, footnote};
 use egui::{Align, Align2, Grid, Layout, Pos2, RichText, Sense, Stroke, Ui, Vec2};
 use egui_phosphor::regular as icon;
 use nexus_journal::Timestamp;
@@ -174,8 +177,59 @@ fn same_place(d: &Deposit, spot: &Spot, radius_m: Option<f64>) -> bool {
     }
 }
 
-/// Returns whether `prefs` changed (to be saved), and a system to plot a route to.
-pub fn show(ui: &mut Ui, gs: &GameState, prefs: &mut MiningPrefs) -> (bool, Option<MapAction>) {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Tab {
+    #[default]
+    Sites,
+    Where,
+}
+
+/// State of the Mining page while the app runs.
+#[derive(Default)]
+pub struct MiningUi {
+    pub tab: Tab,
+    pub find: WhereUi,
+}
+
+impl MiningUi {
+    /// `where` (or `where-route`) opens Where to mine; `autorun` starts its search on the first frame (screenshots).
+    pub fn new(tab: Option<&str>, autorun: bool) -> Self {
+        let find = WhereUi::new(tab, autorun);
+        let tab = if matches!(tab, Some("where" | "where-route")) { Tab::Where } else { Tab::Sites };
+        MiningUi { tab, find }
+    }
+}
+
+/// Returns whether `prefs` changed (to be saved), a system to plot a route to, and a route to follow. `route_end` is
+/// where the active route ends, Where to mine's destination when none is typed.
+pub fn show(
+    ui: &mut Ui,
+    gs: &GameState,
+    prefs: &mut MiningPrefs,
+    st: &mut MiningUi,
+    spansh: &nexus_spansh::Spansh,
+    rt: &tokio::runtime::Handle,
+    route_end: Option<&str>,
+) -> (bool, Option<MapAction>, Option<PlannedRoute>) {
+    if let Some(t) = widgets::tabs(ui, st.tab, &[(Tab::Sites, "Sessions and sites"), (Tab::Where, "Where to mine")]) {
+        st.tab = t;
+    }
+    ui.add_space(GAP);
+    match st.tab {
+        Tab::Sites => {
+            let (changed, action) = sessions_and_sites(ui, gs, prefs);
+            (changed, action, None)
+        }
+        Tab::Where => match where_to_mine::show(ui, gs, &mut st.find, spansh, rt, route_end) {
+            Some(where_to_mine::Action::PlotTo(s)) => (false, Some(MapAction::PlotTo(s)), None),
+            Some(where_to_mine::Action::Follow(r)) => (false, None, Some(r)),
+            None => (false, None, None),
+        },
+    }
+}
+
+/// The live session, the surface radar, the sites the Rhino worked and earlier sessions.
+fn sessions_and_sites(ui: &mut Ui, gs: &GameState, prefs: &mut MiningPrefs) -> (bool, Option<MapAction>) {
     let mut changed = false;
     let mut action = None;
     match &gs.mining.session {
