@@ -545,7 +545,7 @@ const HOTSPOT_SIGNALS: &[&str] = &[
 /// initials ("ltd" is Low Temperature Diamonds), the start of every typed word ("thar pro"), anywhere
 /// in the name, the game's internal name (Thargoid Probe is `UnknownArtifact2`), then the category
 /// ("salvage" lists all salvage).
-pub fn rank_commodities<'a>(all: &'a [CommodityInfo], typed: &str, limit: usize) -> Vec<&'a CommodityInfo> {
+pub fn rank_commodities<'a>(all: impl IntoIterator<Item = &'a CommodityInfo>, typed: &str, limit: usize) -> Vec<&'a CommodityInfo> {
     let q = typed.trim().to_lowercase();
     if q.is_empty() {
         return Vec::new();
@@ -554,7 +554,7 @@ pub fn rank_commodities<'a>(all: &'a [CommodityInfo], typed: &str, limit: usize)
     let q_words = words_of(&q);
     let q_key: String = q.chars().filter(|c| c.is_alphanumeric()).collect();
     let mut scored: Vec<(u8, &CommodityInfo)> = all
-        .iter()
+        .into_iter()
         .filter_map(|c| {
             let name = c.name.to_lowercase();
             let words = words_of(&name);
@@ -687,8 +687,8 @@ fn item_suggestions(all: &[CommodityInfo], recent: &[String], category: &str, ty
         out.extend(category_items(all, category));
         return out;
     }
-    let pool: Vec<CommodityInfo> = all.iter().filter(|c| listed(c) && in_category(c, category)).cloned().collect();
-    let mut out: Vec<Suggestion> = rank_commodities(&pool, typed, 40).into_iter().map(commodity_suggestion).collect();
+    let pool = all.iter().filter(|c| listed(c) && in_category(c, category));
+    let mut out: Vec<Suggestion> = rank_commodities(pool, typed, 40).into_iter().map(commodity_suggestion).collect();
     let rares = rare_count(all, category);
     if rares > 0 && RARE_GOODS.to_lowercase().contains(&q) {
         out.push(rare_goods_item(rares));
