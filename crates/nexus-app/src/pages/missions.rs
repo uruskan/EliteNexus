@@ -166,8 +166,8 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
     });
     ui.add_space(8.0);
     card(ui, "Recent mission history", |ui| {
-        // Seen live by another tool's author (edda-app, three hand-ins) and on Frontier's forums: the wingmate who
-        // handed the mission in gets the MissionCompleted line, the others get none (docs/research/journal.md §5.6).
+        // Reported by other developers and on Frontier's forums: the wingmate who handed the mission in gets the
+        // MissionCompleted line, the others get none (docs/research/journal.md §5.6).
         let shared = "A mission a wingmate shared and handed in isn't counted: the game writes nothing about it in your journal.";
         if gs.missions.history.is_empty() {
             ui.label(RichText::new("None recorded.").color(pal::DIM));

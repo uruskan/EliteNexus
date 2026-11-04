@@ -141,9 +141,8 @@ else's report, idea or help. Thank you, commanders.
 * HUD themes by **CMDR Diomedian** (Empire blue, Federation, Alliance green), **CMDR Alex Traut** (Royal purple),
   **Arkku** (Blue and red, and the HUD colour editor the themes come from) and **Prima Games** (VR yellow);
   **CMDR Morbad**'s Odyssey glare settings.
-* Data and research: EDCD's FDevIDs, EDEngineer (msarilar), EDDiscovery, jixxed's journal schemas, Richard Buckle's
-  EDRefCard, the exobiology research of Canonn, EDMC-BioScan, SrvSurvey and EDAstro, and MattG's exploration value
-  formulae; the services Spansh, EDSM, Inara, EDDN and EDAstro; 3Dmigoto (bo3b); the Inter typeface and Phosphor
+* Data: EDCD's FDevIDs, EDEngineer (msarilar), EDDiscovery, jixxed's journal schemas and Richard Buckle's
+  EDRefCard; the services Spansh, EDSM, Inara, EDDN and EDAstro; 3Dmigoto (bo3b); the Inter typeface and Phosphor
   icons. Sources and licences: [NOTICE.md](NOTICE.md).
 
 ## What it does

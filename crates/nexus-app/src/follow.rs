@@ -1,6 +1,6 @@
-//! Follow my flight (Settings › Exploration): the page that fits what the commander is doing, the way Elite Dangerous
-//! Exploration Buddy switches its tabs. Pure: `Follower::step` reads the model and names the page to open; the app
-//! decides whether it may (the setting, the page shown, a journal followed live).
+//! Follow my flight (Settings › Exploration): the page that fits what the commander is doing. Pure: `Follower::step`
+//! reads the model and names the page to open; the app decides whether it may (the setting, the page shown, a journal
+//! followed live).
 
 use crate::pages::Page;
 use nexus_journal::companion::{GuiFocus, Status};
@@ -8,8 +8,7 @@ use nexus_model::context::{Activity, Context};
 use nexus_model::GameState;
 use std::sync::Arc;
 
-/// What Follow my flight follows: the commander's context (`nexus_model::context`), reduced to the pages here the
-/// way Elite Dangerous Exploration Buddy reduces it to its tabs.
+/// What Follow my flight follows: the commander's context (`nexus_model::context`), reduced to the pages it moves between.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Flight {
     /// Nothing to follow: not in the game, docked, driving, on foot inside.
@@ -244,7 +243,7 @@ mod tests {
         assert_eq!(step(&m), Some(Page::Exploration), "the alt is followed from there");
     }
 
-    /// The pages Follow my flight moves between, from the commander's context, EDEB's way.
+    /// The pages Follow my flight moves between, from the commander's context.
     #[test]
     fn flight_from_context() {
         let of = |a: Activity, alt: Option<f64>| Flight::of(&cx(a, GuiFocus::None), alt, KM150);

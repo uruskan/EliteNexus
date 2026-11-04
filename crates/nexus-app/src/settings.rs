@@ -31,7 +31,7 @@ pub struct Settings {
     /// system is done. Only while on one of those three pages.
     pub auto_page: bool,
     /// Altitude (km) below which Follow my flight treats the commander as exploring the planet rather than
-    /// the system: EDEB's default of 150 km.
+    /// the system (150 km by default).
     pub auto_page_altitude_km: f32,
     pub accounts: Accounts,
     /// The first-run welcome has been completed.

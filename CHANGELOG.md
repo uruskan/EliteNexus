@@ -37,9 +37,9 @@ release time that section becomes the new version and the release workflow publi
 - **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
   the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
   for later starts.
-- **Settings › Follow my flight** (off by default) changes the page as you fly, the way Elite Dangerous
-  Exploration Buddy switches its tabs: it reads what you're doing from the game's Status.json and switches when
-  that changes. Flying a system opens Exploration; getting below **Planet view below** (150 km by default) over a
+- **Settings › Follow my flight** (off by default) changes the page as you fly: it reads what you're doing from
+  the game's Status.json and switches when that changes. Flying a system opens Exploration; getting below
+  **Planet view below** (150 km by default) over a
   planet, landing, or stepping outside on foot opens Exobiology when the planet has biological signals you haven't
   finished analysing (Exploration otherwise); climbing back above it returns to Exploration; the galaxy map, a
   charging hyperspace jump or a finished system (every body found, every planet worth the high-value threshold
