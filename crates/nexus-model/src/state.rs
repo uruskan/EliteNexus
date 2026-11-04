@@ -177,21 +177,11 @@ impl GameState {
             }
             Event::Music(m) => self.at_main_menu = m.music_track == "MainMenu",
             Event::Rank(r) => self.cmdr.ranks.apply(r),
-            Event::Progress(p) => self.cmdr.progress.apply(p),
+            Event::Progress(p) => self.cmdr.on_progress(p),
             Event::Promotion(p) => {
-                self.cmdr.ranks.apply(p);
+                self.cmdr.on_promotion(p);
                 for k in nexus_data::ranks::RankKind::ALL {
-                    let v = match k {
-                        nexus_data::ranks::RankKind::Combat => p.combat,
-                        nexus_data::ranks::RankKind::Trade => p.trade,
-                        nexus_data::ranks::RankKind::Explore => p.explore,
-                        nexus_data::ranks::RankKind::Soldier => p.soldier,
-                        nexus_data::ranks::RankKind::Exobiologist => p.exobiologist,
-                        nexus_data::ranks::RankKind::Empire => p.empire,
-                        nexus_data::ranks::RankKind::Federation => p.federation,
-                        nexus_data::ranks::RankKind::Cqc => p.cqc,
-                    };
-                    if let Some(v) = v {
+                    if let Some(v) = crate::commander::rank_value(p, k) {
                         let text = format!("{} rank: {}", k.label(), k.name_of(v));
                         self.feed(ts, "Promotion", text.clone());
                         alerts.push_with(|| {
@@ -241,7 +231,7 @@ impl GameState {
                     name: s.squadron_name.clone(),
                     id: s.squadron_id,
                     rank: Some(s.current_rank),
-                    rank_name: s.current_rank_name.clone(),
+                    rank_name: squadron_rank_name(s.current_rank_name.as_deref(), s.current_rank_name_localised.as_deref()),
                 });
             }
             Event::JoinedSquadron(s) | Event::SquadronCreated(s) => {
@@ -261,6 +251,8 @@ impl GameState {
             Event::SquadronPromotion(s) | Event::SquadronDemotion(s) => {
                 if let Some(sq) = self.cmdr.squadron.as_mut() {
                     sq.rank = s.new_rank;
+                    // The old rank's name doesn't belong to the new one: none rather than that.
+                    sq.rank_name = squadron_rank_name(s.new_rank_name.as_deref(), s.new_rank_name_localised.as_deref());
                 }
             }
 
@@ -1363,6 +1355,12 @@ impl GameState {
             .map(|c| (c, self.inventory.materials.total(c)))
             .collect()
     }
+}
+
+/// A squadron rank's name: the localised one, else the squadron's own (a default rank's is only the game's
+/// placeholder, `$Squadron_DefaultRankName_Rank4;`).
+fn squadron_rank_name(name: Option<&str>, localised: Option<&str>) -> Option<String> {
+    [localised, name].into_iter().flatten().map(str::trim).find(|n| !n.is_empty() && !n.starts_with('$')).map(str::to_string)
 }
 
 fn spoken_credits(v: i64) -> String {

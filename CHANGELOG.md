@@ -133,6 +133,10 @@ release time that section becomes the new version and the release workflow publi
   shows where you left it (on your own or your squadron's fleet carrier, wherever the carrier has jumped since). A
   ship you transferred showed "In transit" until the game next listed your stored ships; it now arrives when its
   transfer time is up.
+- **Dashboard: no stale rank progress after a promotion.** The game reports your progress towards each rank when you
+  log in. Promoted during a session, the Commander card paired your new rank with the progress you had made towards it,
+  a bar near full. That rank's bar now stays empty until the game reports it again at your next login, and says so
+  when you hover it.
 
 ## [0.7.3-beta.2] - 2026-10-25
 

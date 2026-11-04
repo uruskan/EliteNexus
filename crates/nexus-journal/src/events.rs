@@ -337,6 +337,11 @@ pub struct SquadronEvent {
     pub old_rank: Option<u32>,
     #[serde(rename = "NewRank")]
     pub new_rank: Option<u32>,
+    /// Promotion/demotion: the squadron's name for the new rank, or the game's placeholder for a default one.
+    #[serde(rename = "NewRankName")]
+    pub new_rank_name: Option<String>,
+    #[serde(rename = "NewRankName_Localised")]
+    pub new_rank_name_localised: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -350,6 +355,8 @@ pub struct SquadronStartup {
     pub current_rank: u32,
     #[serde(rename = "CurrentRankName")]
     pub current_rank_name: Option<String>,
+    #[serde(rename = "CurrentRankName_Localised")]
+    pub current_rank_name_localised: Option<String>,
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -18,6 +18,20 @@ pub struct RankLadder {
     pub cqc: u32,
 }
 
+/// One ladder's value in a `Rank`, `Progress` or `Promotion` event.
+pub fn rank_value(r: &ev::RankSet, k: RankKind) -> Option<u32> {
+    match k {
+        RankKind::Combat => r.combat,
+        RankKind::Trade => r.trade,
+        RankKind::Explore => r.explore,
+        RankKind::Soldier => r.soldier,
+        RankKind::Exobiologist => r.exobiologist,
+        RankKind::Empire => r.empire,
+        RankKind::Federation => r.federation,
+        RankKind::Cqc => r.cqc,
+    }
+}
+
 impl RankLadder {
     pub fn apply(&mut self, r: &ev::RankSet) {
         let set = |slot: &mut u32, v: Option<u32>| {
@@ -100,7 +114,11 @@ pub struct Commander {
     pub game_build: String,
     pub language: String,
     pub ranks: RankLadder,
+    /// Percent towards the next rank, as the game last reported it (`Progress`, written at login): read it through
+    /// [`Commander::rank_progress`].
     pub progress: RankLadder,
+    /// Ranks promoted since the game last reported progress: theirs isn't known until it does again.
+    pub promoted: Vec<RankKind>,
     pub reputation: SuperpowerReputation,
     pub powerplay: Option<PowerplayStatus>,
     pub squadron: Option<Squadron>,
@@ -193,6 +211,28 @@ impl Commander {
 
     pub fn rank_name(&self, k: RankKind) -> &'static str {
         k.name_of(self.ranks.get(k))
+    }
+
+    /// Percent towards the next rank. None after a promotion, until the game reports progress again (at the next
+    /// login): the one it reported before belongs to the old rank.
+    pub fn rank_progress(&self, k: RankKind) -> Option<u32> {
+        (!self.promoted.contains(&k)).then(|| self.progress.get(k))
+    }
+
+    /// `Progress`: every ladder it reports is known again.
+    pub fn on_progress(&mut self, p: &ev::RankSet) {
+        self.progress.apply(p);
+        self.promoted.retain(|k| rank_value(p, *k).is_none());
+    }
+
+    /// `Promotion`: the ladders it names have a new rank, and progress on them is no longer known.
+    pub fn on_promotion(&mut self, p: &ev::RankSet) {
+        self.ranks.apply(p);
+        for k in RankKind::ALL {
+            if rank_value(p, k).is_some() && !self.promoted.contains(&k) {
+                self.promoted.push(k);
+            }
+        }
     }
 
     pub fn unlocked_engineers(&self) -> impl Iterator<Item = &EngineerStatus> {

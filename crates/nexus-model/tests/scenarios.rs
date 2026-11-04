@@ -294,6 +294,43 @@ fn stored_ships_in_transit_show_destination() {
     assert!(gs.fleet.ships.contains_key(&22), "current ship is kept");
 }
 
+/// A promotion mid-session leaves the new rank's progress unknown until the next login reports it, and a squadron
+/// promotion brings the new rank's name.
+#[test]
+fn promotions_drop_the_old_progress_and_rank_name() {
+    use nexus_data::ranks::RankKind;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:00:05Z", "event":"Rank", "Combat":3, "Trade":4, "Explore":6, "Soldier":0, "Exobiologist":2, "Empire":7, "Federation":1, "CQC":0 }"#,
+            r#"{ "timestamp":"2026-10-01T10:00:06Z", "event":"Progress", "Combat":30, "Trade":46, "Explore":97, "Soldier":0, "Exobiologist":35, "Empire":37, "Federation":100, "CQC":0 }"#,
+            r#"{ "timestamp":"2026-10-01T10:00:07Z", "event":"SquadronStartup", "SquadronName":"VANGUARDS OF TEST", "SquadronID":42, "CurrentRank":4, "CurrentRankName":"$Squadron_DefaultRankName_Rank4;", "CurrentRankName_Localised":"Rookie" }"#,
+            r#"{ "timestamp":"2026-10-01T11:00:00Z", "event":"Promotion", "Explore":7 }"#,
+            r#"{ "timestamp":"2026-10-01T11:05:00Z", "event":"SquadronPromotion", "SquadronID":42, "SquadronName":"VANGUARDS OF TEST", "OldRank":4, "NewRank":3, "OldRankName":"$Squadron_DefaultRankName_Rank4;", "OldRankName_Localised":"Rookie", "NewRankName":"$Squadron_DefaultRankName_Rank3;", "NewRankName_Localised":"Agent" }"#,
+        ],
+    );
+    let c = &m.active().unwrap().cmdr;
+    assert_eq!(c.rank_name(RankKind::Explore), "Pioneer");
+    assert_eq!(c.rank_progress(RankKind::Explore), None, "97% was progress towards Pioneer");
+    assert_eq!(c.rank_progress(RankKind::Trade), Some(46), "the other ranks keep theirs");
+    let sq = c.squadron.as_ref().unwrap();
+    assert_eq!((sq.rank, sq.rank_name.as_deref()), (Some(3), Some("Agent")));
+    // The next login reports progress again; a squadron rank with no name has none rather than the old one's.
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-02T10:00:06Z", "event":"Progress", "Combat":30, "Trade":46, "Explore":4, "Soldier":0, "Exobiologist":35, "Empire":37, "Federation":100, "CQC":0 }"#,
+            r#"{ "timestamp":"2026-10-02T11:05:00Z", "event":"SquadronPromotion", "SquadronID":42, "SquadronName":"VANGUARDS OF TEST", "OldRank":3, "NewRank":2 }"#,
+        ],
+    );
+    let c = &m.active().unwrap().cmdr;
+    assert_eq!(c.rank_progress(RankKind::Explore), Some(4));
+    let sq = c.squadron.as_ref().unwrap();
+    assert_eq!((sq.rank, sq.rank_name.as_deref()), (Some(2), None));
+}
+
 /// The ship you fly stays where you stepped out of it while an Apex taxi or another commander's ship takes you
 /// elsewhere; a transferred ship has arrived once its time is up.
 #[test]
