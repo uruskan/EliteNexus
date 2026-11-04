@@ -449,7 +449,7 @@ EDD also synthesises its own `EDD*` events; ignore them.
 
 * `PowerplayJoin/Leave/Defect` as before.
 * `Powerplay{Power, Rank, Merits, TimePledged}` at login (`Votes` gone after Ascendancy).
-* `PowerplayMerits{Power, MeritsGained, TotalMerits}` on each merit award. EDD parses these as doubles, so be tolerant of fractional values.
+* `PowerplayMerits{Power, MeritsGained, TotalMerits}` on each merit award. EDD parses these as doubles, so be tolerant of fractional values. It names no system: Elite Nexus places each award in the system the commander is in when it's written (BGS & Powerplay's merits per system).
 * `PowerplayRank{Power, Rank}` on rank-up. PP2 ranks are numeric and far beyond PP1's 0–5, so don't cap them.
 * System state appears in `FSDJump`/`Location`/`CarrierJump`:
   * `Powers[]`

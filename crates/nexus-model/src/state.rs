@@ -229,7 +229,8 @@ impl GameState {
                 }
             }
             Event::PowerplayMerits(m) => {
-                self.bgs.on_merits(m, ts);
+                let here = Here { system: &self.location.system, system_address: self.location.system_address, station_faction: None };
+                self.bgs.on_merits(m, ts, &here);
                 let pp = self.cmdr.powerplay.get_or_insert_with(Default::default);
                 pp.power = m.power.clone();
                 pp.merits = m.total_merits;

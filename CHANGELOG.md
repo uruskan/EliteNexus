@@ -9,6 +9,10 @@ release time that section becomes the new version and the release workflow publi
 - **Ask** can be stopped: while it answers, the round button becomes **Stop**, and **New conversation**, now there
   while it works too, stops it as well. A slow model no longer leaves you waiting with no way out, and a stopped
   question changes nothing, not even a route it was planning.
+- **BGS & Powerplay** shows the merits you earned in each system, on the system's card beside its factions'
+  influence, bonds, profit and data (asked for by NetworX on the Frontier Forums). The journal doesn't say which
+  system a merit award counts for, so each award is placed in the system you were in when the game awarded it. The
+  page is read from your journal, so merits you earned before this version are placed too.
 - **Engineering**: Merc blueprints, bought from engineers with Merc Coins, are in the blueprint planner: Extended cargo
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its

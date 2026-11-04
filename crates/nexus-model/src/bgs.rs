@@ -1,7 +1,8 @@
 //! Background Simulation (BGS) contributions and Powerplay merits.
 //!
 //! Every action that moves a faction's influence is recorded with the system and faction it
-//! affects; the UI aggregates by period (since the last tick, today, 7 days…).
+//! affects, and every merit award with the system the commander was in; the UI aggregates by period
+//! (since the last tick, today, 7 days…).
 
 use nexus_journal::events as ev;
 use nexus_journal::Timestamp;
@@ -56,11 +57,22 @@ pub struct BgsAction {
     pub amount: i64,
 }
 
+/// One `PowerplayMerits` event. It names no system, so the award is placed in the system the commander
+/// was in when the game wrote it.
+#[derive(Debug, Clone)]
+pub struct MeritAward {
+    pub ts: Timestamp,
+    pub gained: i64,
+    /// The commander's merits after this award.
+    pub total: i64,
+    pub system_address: u64,
+    pub system: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Bgs {
     pub actions: Vec<BgsAction>,
-    /// (ts, merits gained, total) per PowerplayMerits event.
-    pub merits: Vec<(Timestamp, i64, i64)>,
+    pub merits: Vec<MeritAward>,
 }
 
 /// Where the commander is right now (for attributing station-based actions).
@@ -136,32 +148,45 @@ impl Bgs {
         self.push(ts, here.system_address, here.system, &c.faction, kind, 1);
     }
 
-    pub fn on_merits(&mut self, m: &ev::PowerplayMerits, ts: Timestamp) {
-        self.merits.push((ts, m.merits_gained, m.total_merits));
+    pub fn on_merits(&mut self, m: &ev::PowerplayMerits, ts: Timestamp, here: &Here) {
+        self.merits.push(MeritAward {
+            ts,
+            gained: m.merits_gained,
+            total: m.total_merits,
+            system_address: here.system_address,
+            system: here.system.to_string(),
+        });
     }
 
-    /// Totals per (system, faction, kind) since `since`.
+    /// Totals per (system, faction, kind) since `since`, with the merits awarded in each system.
     pub fn summary(&self, since: Timestamp) -> Vec<SystemSummary> {
         use std::collections::BTreeMap;
-        let mut map: BTreeMap<(String, String), BTreeMap<BgsKind, (i64, u32)>> = BTreeMap::new();
+        /// faction → kind → (amount, occurrences)
+        type Factions<'a> = BTreeMap<&'a str, BTreeMap<BgsKind, (i64, u32)>>;
+        // system → (its factions, its merits)
+        let mut map: BTreeMap<&str, (Factions, i64)> = BTreeMap::new();
         for a in self.actions.iter().filter(|a| a.ts >= since) {
-            let e = map.entry((a.system.clone(), a.faction.clone())).or_default().entry(a.kind).or_default();
+            let e = map.entry(a.system.as_str()).or_default().0.entry(a.faction.as_str()).or_default().entry(a.kind).or_default();
             e.0 += a.amount;
             e.1 += 1;
         }
-        let mut out: Vec<SystemSummary> = Vec::new();
-        for ((system, faction), kinds) in map {
-            let f = FactionSummary { faction, kinds: kinds.into_iter().map(|(k, (amt, n))| (k, amt, n)).collect() };
-            match out.last_mut() {
-                Some(s) if s.system == system => s.factions.push(f),
-                _ => out.push(SystemSummary { system, factions: vec![f] }),
-            }
+        for m in self.merits.iter().filter(|m| m.ts >= since && m.gained != 0) {
+            map.entry(m.system.as_str()).or_default().1 += m.gained;
         }
-        out
+        map.into_iter()
+            .map(|(system, (factions, merits))| SystemSummary {
+                system: system.to_string(),
+                factions: factions
+                    .into_iter()
+                    .map(|(faction, kinds)| FactionSummary { faction: faction.to_string(), kinds: kinds.into_iter().map(|(k, (amt, n))| (k, amt, n)).collect() })
+                    .collect(),
+                merits,
+            })
+            .collect()
     }
 
     pub fn merits_since(&self, since: Timestamp) -> i64 {
-        self.merits.iter().filter(|(t, _, _)| *t >= since).map(|(_, g, _)| *g).sum()
+        self.merits.iter().filter(|m| m.ts >= since).map(|m| m.gained).sum()
     }
 }
 
@@ -181,7 +206,10 @@ impl FactionSummary {
 #[derive(Debug, Clone)]
 pub struct SystemSummary {
     pub system: String,
+    /// Empty when the commander only earned merits there.
     pub factions: Vec<FactionSummary>,
+    /// Powerplay merits awarded while the commander was in this system.
+    pub merits: i64,
 }
 
 /// Start of the current BGS day. The tick moves around; a fixed UTC hour is a good default and the
@@ -219,5 +247,24 @@ mod tests {
         b.on_mission_completed(&c, Timestamp(10), |_| "Sys".into());
         let s = b.summary(Timestamp::ZERO);
         assert_eq!(s[0].factions[0].influence_plus(), 3);
+    }
+
+    #[test]
+    fn merits_join_their_system() {
+        let mut b = Bgs::default();
+        let at = |system| Here { system, system_address: 1, station_faction: Some("A") };
+        let award = |gained| ev::PowerplayMerits { power: "P".into(), merits_gained: gained, ..Default::default() };
+        let sale = ev::MarketSell { total_sale: 1500, avg_price_paid: 100, count: 10, ..Default::default() };
+        b.on_market_sell(&sale, Timestamp(10), &at("Beta"));
+        b.on_merits(&award(30), Timestamp(10), &at("Beta"));
+        b.on_merits(&award(5), Timestamp(20), &at("Alpha"));
+        b.on_merits(&award(7), Timestamp(30), &at("Beta"));
+        let s = b.summary(Timestamp::ZERO);
+        let found: Vec<_> = s.iter().map(|s| (s.system.as_str(), s.factions.len(), s.merits)).collect();
+        assert_eq!(found, [("Alpha", 0, 5), ("Beta", 1, 37)], "a system with merits only has a card too");
+        assert_eq!(b.merits_since(Timestamp::ZERO), 42);
+        let s = b.summary(Timestamp(15));
+        assert_eq!(s.iter().map(|s| (s.system.as_str(), s.merits)).collect::<Vec<_>>(), [("Alpha", 5), ("Beta", 7)]);
+        assert!(s[1].factions.is_empty(), "the sale was before the period");
     }
 }

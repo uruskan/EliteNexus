@@ -1,10 +1,11 @@
 //! BGS contributions per system/faction and Powerplay merits (OD Elite Tracker style).
 
 use crate::theme::{display, pal};
-use crate::widgets::{card, empty, short_credits};
+use crate::widgets::{card, card_with, empty, short_credits};
 use egui::{Grid, RichText, Ui};
 use egui_phosphor::regular as icon;
 use egui_plot::{Bar, BarChart, Plot};
+use nexus_data::names::group_digits;
 use nexus_journal::time::LocalDays;
 use nexus_journal::Timestamp;
 use nexus_model::bgs::{last_tick, BgsKind};
@@ -73,11 +74,16 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut BgsPrefs) -> bool {
 
     let summary = gs.bgs.summary(since);
     if summary.is_empty() {
-        empty(ui, icon::SCALES, "No BGS activity in this period", "Missions, bounties, bonds, trade and data sales are attributed to the factions they affect.");
+        empty(ui, icon::SCALES, "No BGS activity in this period", "Missions, bounties, bonds, trade and data sales are attributed to the factions they affect, and Powerplay merits to the system you were in.");
         return changed;
     }
     for sys in &summary {
-        card(ui, &sys.system, |ui| {
+        let title = if sys.system.is_empty() { "Unknown system" } else { sys.system.as_str() };
+        card_with(ui, title, |ui| merits_here(ui, sys.merits), |ui| {
+            if sys.factions.is_empty() {
+                ui.label(RichText::new("No faction activity recorded here in this period.").color(pal::DIM));
+                return;
+            }
             Grid::new(("bgs", &sys.system)).num_columns(COLUMNS.len() + 1).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
                 ui.label(RichText::new("Faction").color(pal::DIM));
                 for k in COLUMNS {
@@ -111,6 +117,15 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut BgsPrefs) -> bool {
     changed
 }
 
+/// A system's merits, in its card's title row.
+fn merits_here(ui: &mut Ui, merits: i64) {
+    if merits == 0 {
+        return;
+    }
+    ui.label(RichText::new(format!("{} {} merits", icon::CROWN, group_digits(merits))).font(display(14.0)).color(pal::PURPLE))
+        .on_hover_text("Powerplay merits the game awarded while you were in this system. The journal doesn't say which system an award counts for, so Elite Nexus places it where you were.");
+}
+
 fn powerplay(ui: &mut Ui, gs: &GameState, since: Timestamp) {
     card(ui, "Powerplay", |ui| {
         let Some(pp) = &gs.cmdr.powerplay else {
@@ -122,9 +137,9 @@ fn powerplay(ui: &mut Ui, gs: &GameState, since: Timestamp) {
             ui.add_space(16.0);
             crate::widgets::stat(ui, "rank", pp.rank.to_string(), pal::TEXT);
             ui.add_space(16.0);
-            crate::widgets::stat(ui, "total merits", nexus_data::names::group_digits(pp.merits), pal::GOLD);
+            crate::widgets::stat(ui, "total merits", group_digits(pp.merits), pal::GOLD);
             ui.add_space(16.0);
-            crate::widgets::stat(ui, "merits this period", nexus_data::names::group_digits(gs.bgs.merits_since(since)), pal::ACCENT);
+            crate::widgets::stat(ui, "merits this period", group_digits(gs.bgs.merits_since(since)), pal::ACCENT);
             ui.add_space(16.0);
             crate::widgets::stat(ui, "pledged", crate::widgets::duration(pp.time_pledged_secs), pal::DIM);
         });
@@ -132,8 +147,8 @@ fn powerplay(ui: &mut Ui, gs: &GameState, since: Timestamp) {
             // Days are the commander's calendar days (local time), for the bars, the axis and the tooltip alike.
             let mut calendar = LocalDays::default();
             let mut per_day: std::collections::BTreeMap<i64, i64> = Default::default();
-            for (t, g, _) in &gs.bgs.merits {
-                *per_day.entry(calendar.day(*t)).or_default() += g;
+            for m in &gs.bgs.merits {
+                *per_day.entry(calendar.day(m.ts)).or_default() += m.gained;
             }
             // Whole days, so their dates are on the axis however few there are.
             let first = per_day.keys().next().copied().unwrap_or_default();
@@ -154,10 +169,13 @@ fn powerplay(ui: &mut Ui, gs: &GameState, since: Timestamp) {
             crate::widgets::bar_tooltip(&plot, |day| {
                 let date = LocalDays::label(day, "%d %b");
                 Some(match per_day.get(&day) {
-                    Some(m) => format!("{date}\n{} merits", nexus_data::names::group_digits(*m)),
+                    Some(m) => format!("{date}\n{} merits", group_digits(*m)),
                     None => format!("{date}\nno merits"),
                 })
             });
+        }
+        if gs.bgs.merits_since(since) != 0 {
+            crate::widgets::footnote(ui, "Each system below shows the merits you earned there. The journal doesn't say which system a merit award counts for, so it's placed in the system you were in when the game awarded it.");
         }
     });
 }

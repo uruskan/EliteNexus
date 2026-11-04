@@ -314,6 +314,35 @@ fn massacre_stack_end_to_end() {
     assert_eq!(m.active().unwrap().missions.massacre_stacks()[0].kills_remaining, 0);
 }
 
+/// `PowerplayMerits` names no system: each award goes to the system the commander was in when the game wrote it,
+/// and the period's total stays the sum of the awards.
+#[test]
+fn merits_are_placed_where_the_commander_was() {
+    use nexus_journal::Timestamp;
+    let merits = |ts: &str, gained: i64, total: i64| {
+        format!(r#"{{ "timestamp":"{ts}", "event":"PowerplayMerits", "Power":"Aisling Duval", "MeritsGained":{gained}, "TotalMerits":{total} }}"#)
+    };
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let lines = [
+        merits("2026-10-01T10:10:00Z", 100, 1100),
+        r#"{ "timestamp":"2026-10-01T10:30:00Z", "event":"FSDJump", "StarSystem":"Beta", "SystemAddress":200, "StarPos":[10.0,0.0,0.0], "Population":5000, "JumpDist":10.0, "FuelUsed":1.0, "FuelLevel":63.0 }"#.to_string(),
+        merits("2026-10-01T10:40:00Z", 30, 1130),
+        r#"{ "timestamp":"2026-10-01T11:00:00Z", "event":"Shutdown" }"#.to_string(),
+        // The next session: an award written before the game says where the commander is goes where they logged out.
+        r#"{ "timestamp":"2026-10-02T09:00:00Z", "event":"LoadGame", "FID":"F1", "Commander":"Test", "Horizons":true, "Odyssey":true, "Ship":"explorer_nx", "ShipID":22, "GameMode":"Solo", "Credits":1000000, "Loan":0 }"#.to_string(),
+        merits("2026-10-02T09:00:01Z", 10, 1140),
+        r#"{ "timestamp":"2026-10-02T09:00:05Z", "event":"Location", "Docked":false, "StarSystem":"Beta", "SystemAddress":200, "StarPos":[10.0,0.0,0.0], "Population":5000 }"#.to_string(),
+    ];
+    feed(&mut m, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+    let gs = m.active().expect("commander");
+    let per_system: Vec<(String, i64)> = gs.bgs.summary(Timestamp::ZERO).into_iter().map(|s| (s.system, s.merits)).collect();
+    assert_eq!(per_system, [("Alpha".to_string(), 100), ("Beta".to_string(), 40)]);
+    assert_eq!(gs.bgs.merits_since(Timestamp::ZERO), 140, "the period's total is the sum of the awards");
+    assert_eq!(gs.bgs.merits[1].system_address, 200);
+    assert_eq!(gs.cmdr.powerplay.as_ref().map(|p| p.merits), Some(1140));
+}
+
 /// A construction depot snapshot, as the game writes it every few seconds while you're docked there.
 fn depot_line(ts: &str, market_id: u64, progress: f64, provided_steel: i64) -> String {
     format!(
