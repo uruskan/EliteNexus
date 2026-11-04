@@ -230,9 +230,8 @@ impl WhereToGet {
             crate::widgets::footnote(
                 ui,
                 &format!(
-                    "There, other {} materials of {} trade for it. The nearest Elite Nexus's market database knows (from the live feed, your journal and the Spansh import): a trader it hasn't heard of isn't here.",
-                    kind.to_lowercase(),
-                    trade_scope(m)
+                    "{} The nearest Elite Nexus's market database knows (from the live feed, your journal and the Spansh import): a trader it hasn't heard of isn't here.",
+                    trade_words(m)
                 ),
             );
         } else {
@@ -334,12 +333,14 @@ fn rich_planets(material: &str, origin: [f64; 3]) -> SearchRequest {
         .size(3)
 }
 
-/// What a trader swaps for this material without a loss across categories.
-fn trade_scope(m: &Material) -> String {
-    match m.raw_category() {
-        Some(c) => format!("category {c}"),
-        None => format!("the {} family", m.category),
-    }
+/// What a trader takes for this material: any other of its kind, those of its own category (or family) at the usual
+/// rate and the rest at six times the cost, as the shopping list's "Trade across categories" counts it.
+fn trade_words(m: &Material) -> String {
+    let (own, others) = match m.raw_category() {
+        Some(c) => (format!("category {c}"), "the other categories"),
+        None => (format!("the {} family", m.category), "the other families"),
+    };
+    format!("There, any other {} material trades for it: from {own} at the usual rate, from {others} at six times the cost.", m.kind.label().to_lowercase())
 }
 
 /// Where materials of its kind come from, in general.
@@ -415,9 +416,9 @@ mod tests {
     #[test]
     fn trades_and_sources_in_words() {
         let po = nexus_data::materials::material("polonium").expect("polonium");
-        assert_eq!(trade_scope(po), "category 6");
+        assert_eq!(trade_words(po), "There, any other raw material trades for it: from category 6 at the usual rate, from the other categories at six times the cost.");
         let m = nexus_data::materials::material("chemicalprocessors").expect("chemical processors");
-        assert_eq!(trade_scope(m), "the Chemical family");
+        assert!(trade_words(m).contains("any other manufactured material") && trade_words(m).contains("from the Chemical family at the usual rate, from the other families"), "{}", trade_words(m));
         assert!(other_sources(m).starts_with("Manufactured"));
     }
 }
