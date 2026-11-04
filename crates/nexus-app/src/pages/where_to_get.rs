@@ -215,7 +215,7 @@ impl WhereToGet {
                     for t in &l.traders {
                         let s = &t.station;
                         let pad = s.max_pad.map(|p| format!(" · {p} pad")).unwrap_or_default();
-                        place(ui, &s.name, &s.system, &format!("{:.0} ly{pad}", t.distance_ly));
+                        place(ui, &s.name, &s.system, &format!("{:.0} ly{pad}", t.distance_ly), None);
                     }
                 }
                 Some(Ok(_)) => quiet(ui, &format!("No {} material trader Elite Nexus knows of has a pad your ship fits.", kind.to_lowercase())),
@@ -246,7 +246,7 @@ impl WhereToGet {
                 Some(Ok(p)) if !p.list.is_empty() => {
                     for b in &p.list {
                         let g = b.gravity_g.map(|g| format!(" · {g:.2} g")).unwrap_or_default();
-                        place(ui, &b.body, &b.system, &format!("{:.0} ly · {:.1} % {}{g}", b.distance_ly, b.share, m.name));
+                        place(ui, &b.body, &b.system, &format!("{:.0} ly · {:.1} % {}{g}", b.distance_ly, b.share, m.name), None);
                     }
                     if p.matched > p.list.len() as u64 {
                         quiet(ui, &format!("{} of {} landable planets with it.", p.list.len(), group(p.matched)));
@@ -291,12 +291,13 @@ impl WhereToGet {
             for h in &l.markets {
                 let (age, _) = crate::pages::market::age(h.updated_unix);
                 let d = h.distance_ly.map(|d| format!("{d:.0} ly · ")).unwrap_or_default();
-                place(ui, &h.station, &h.system, &format!("{d}{} Cr · {} t · {age} ago", nexus_data::names::group_digits(h.price), nexus_data::names::group_digits(h.quantity)));
+                let figures = format!("{d}{} Cr · {} t · {age} ago", nexus_data::names::group_digits(h.price), nexus_data::names::group_digits(h.quantity));
+                place(ui, &h.station, &h.system, &figures, h.is_carrier.then_some(h.carrier_access.as_deref()));
             }
             if !l.hotspots.is_empty() {
                 crate::widgets::section(ui, "Rings with hotspots for it");
                 for h in &l.hotspots {
-                    place(ui, &h.body_name, &h.system, &format!("{:.0} ly · {} hotspot{}", h.distance_ly, h.count, if h.count == 1 { "" } else { "s" }));
+                    place(ui, &h.body_name, &h.system, &format!("{:.0} ly · {} hotspot{}", h.distance_ly, h.count, if h.count == 1 { "" } else { "s" }), None);
                 }
             }
         }
@@ -313,7 +314,10 @@ impl WhereToGet {
         });
         crate::widgets::footnote(
             ui,
-            "The nearest Elite Nexus's market database knows: markets as someone last reported them, and rings someone scanned. A market or ring nobody reported isn't here.",
+            &format!(
+                "The nearest Elite Nexus's market database knows: markets as someone last reported them, and rings someone scanned. A market or ring nobody reported isn't here. A fleet carrier ({}) says who may dock, as last reported.",
+                icon::ANCHOR
+            ),
         );
         goto
     }
@@ -347,11 +351,20 @@ fn other_sources(m: &Material) -> &'static str {
     }
 }
 
-/// A place as one line: its name, its system (click to copy), and the figures after them.
-fn place(ui: &mut Ui, name: &str, system: &str, figures: &str) {
+/// A place as one line: its name, its system (click to copy), and the figures after them. A fleet carrier (`carrier`:
+/// who may dock, as last reported; `Some(None)` when that was never reported) is marked as the Market lists mark it.
+fn place(ui: &mut Ui, name: &str, system: &str, figures: &str, carrier: Option<Option<&str>>) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
-        ui.label(RichText::new(name).color(pal::TEXT));
+        match carrier {
+            Some(access) => {
+                ui.label(RichText::new(format!("{} {name}", icon::ANCHOR)).color(pal::TEXT)).on_hover_text("Fleet carrier: its owner sets the prices and who may dock");
+                crate::pages::market::access_badge(ui, access);
+            }
+            None => {
+                ui.label(RichText::new(name).color(pal::TEXT));
+            }
+        }
         if ui.add(egui::Label::new(RichText::new(system).color(pal::ACCENT_SOFT)).sense(egui::Sense::click())).on_hover_text("Click to copy the system").clicked() {
             ui.ctx().copy_text(system.to_string());
         }

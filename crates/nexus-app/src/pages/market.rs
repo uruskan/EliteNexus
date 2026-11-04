@@ -1821,7 +1821,7 @@ fn access_key(a: &str) -> String {
 
 /// A fleet carrier's docking access as a small badge: open, friends, squadron, owner only, or "?" when it was never
 /// reported. The tooltip has it in words, and says it's as last reported.
-fn access_badge(ui: &mut Ui, access: Option<&str>) -> egui::Response {
+pub(crate) fn access_badge(ui: &mut Ui, access: Option<&str>) -> egui::Response {
     let (text, col) = access_badge_text(access);
     let tip = match access {
         Some(a) => format!("Docking: {}, as last reported with its market. Its owner can change that at any time, so it may differ when you get there.", carrier_access(a)),
