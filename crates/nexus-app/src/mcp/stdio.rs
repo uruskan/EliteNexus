@@ -33,6 +33,9 @@ const INSTRUCTIONS: &str = "Elite Nexus is a companion app for the game Elite Da
 
 const NOT_RUNNING: &str = "Elite Nexus isn't answering: it isn't running, or Settings › AI agents is off. Start Elite Nexus and switch AI agents on, then ask again.";
 
+/// Said when what answers under Elite Nexus' name belongs to another account: nothing is sent to it.
+const NOT_YOURS: &str = "Something that isn't this user's Elite Nexus answers under its name on this computer, so nothing was sent to it. Start Elite Nexus and switch Settings › AI agents on, then ask again.";
+
 /// What the main loop is told.
 pub enum Event {
     /// A line from stdin.
@@ -60,7 +63,8 @@ pub fn run() -> i32 {
         return 1;
     }
     let mut out = std::io::stdout().lock();
-    let mut s = Session::new(super::endpoint(), tx);
+    // No endpoint (Windows wouldn't say whose this is): every call is told Elite Nexus isn't answering.
+    let mut s = Session::new(super::endpoint().unwrap_or_default(), tx);
     loop {
         let ev = match s.deadline() {
             Some(at) => match rx.recv_deadline(at) {
@@ -346,7 +350,7 @@ fn send(out: &mut impl Write, msg: &Value) {
 
 /// One call to the running app: a line of JSON there, a line back.
 fn ask_app(endpoint: &str, name: &str, args: &Value) -> Result<Value, String> {
-    let mut conn = connect(endpoint).map_err(|_| NOT_RUNNING.to_string())?;
+    let mut conn = connect(endpoint).map_err(|e| if e.kind() == std::io::ErrorKind::PermissionDenied { NOT_YOURS.to_string() } else { NOT_RUNNING.to_string() })?;
     let mut call = serde_json::to_string(&WireCall { tool: name.to_string(), arguments: args.clone() }).map_err(|e| e.to_string())?;
     call.push('\n');
     conn.write_all(call.as_bytes()).and_then(|()| conn.flush()).map_err(|e| format!("Lost the connection to Elite Nexus: {e}"))?;
@@ -362,18 +366,26 @@ fn ask_app(endpoint: &str, name: &str, args: &Value) -> Result<Value, String> {
     }
 }
 
-/// Opens the app's pipe, waiting a moment when every instance of it is busy.
+/// Opens the app's pipe, waiting a moment when every instance of it is busy. At identification level, so whoever
+/// answers can't act as the user; and only a pipe the user owns is used ([`super::win`]).
 #[cfg(windows)]
 fn connect(endpoint: &str) -> std::io::Result<impl Read + Write> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::AsRawHandle;
     // ERROR_PIPE_BUSY: the app answers another connection right now.
     const PIPE_BUSY: i32 = 231;
     let until = Instant::now() + Duration::from_secs(5);
-    loop {
-        match std::fs::OpenOptions::new().read(true).write(true).open(endpoint) {
+    let pipe = loop {
+        match std::fs::OpenOptions::new().read(true).write(true).security_qos_flags(super::win::SECURITY_IDENTIFICATION).open(endpoint) {
             Err(e) if e.raw_os_error() == Some(PIPE_BUSY) && Instant::now() < until => std::thread::sleep(Duration::from_millis(50)),
-            r => return r,
+            r => break r?,
         }
+    };
+    let user = super::win::user_sid().ok_or_else(|| std::io::Error::other("Windows didn't say which account this is"))?;
+    if !super::win::owned_by(pipe.as_raw_handle(), &user) {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "the pipe isn't the user's"));
     }
+    Ok(pipe)
 }
 
 #[cfg(not(windows))]

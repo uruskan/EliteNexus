@@ -8,6 +8,8 @@
 //! online services), with a Spansh client of its own so agents never hold up the app's own searches.
 
 pub mod stdio;
+#[cfg(windows)]
+mod win;
 
 use crate::ai_tools::{Caller, NexusTools};
 use nexus_ai::ToolHost;
@@ -31,24 +33,27 @@ const MAX_REQUEST: u64 = 256 * 1024;
 const QUEUE: usize = 4;
 
 /// The name of whoever is logged in, as a file-name-safe tag ("user" when the system doesn't say).
+#[cfg(not(windows))]
 fn user_tag() -> String {
     let user = std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default();
     let tag: String = user.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).take(40).collect();
     if tag.is_empty() { "user".into() } else { tag.to_ascii_lowercase() }
 }
 
-/// Where the app listens and `--mcp` connects: a named pipe of this user's, which other computers can't open.
+/// Where the app listens and `--mcp` connects: a named pipe named by this user's SID, which other computers can't open
+/// and no other account shares ([`win`]).
 #[cfg(windows)]
-pub fn endpoint() -> String {
-    format!(r"\\.\pipe\elite-nexus-mcp-{}", user_tag())
+pub fn endpoint() -> Result<String, String> {
+    let user = win::user_sid().ok_or("Windows didn't say which account this is.")?;
+    Ok(format!(r"\\.\pipe\elite-nexus-mcp-{}", user.text))
 }
 
 /// Where the app listens and `--mcp` connects: a socket in this user's private runtime folder (`$XDG_RUNTIME_DIR` on
 /// Linux, the per-user temporary folder on a Mac), readable by this user only.
 #[cfg(not(windows))]
-pub fn endpoint() -> String {
+pub fn endpoint() -> Result<String, String> {
     let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(std::env::temp_dir);
-    dir.join(format!("elite-nexus-mcp-{}.sock", user_tag())).to_string_lossy().into_owned()
+    Ok(dir.join(format!("elite-nexus-mcp-{}.sock", user_tag())).to_string_lossy().into_owned())
 }
 
 /// A pipe or socket of a test's own, which no Elite Nexus answers on.
@@ -155,7 +160,14 @@ impl McpService {
     /// Starts or stops answering agents, as Settings › AI agents says. `tools` is built only to start.
     pub fn apply(&mut self, on: bool, tools: impl FnOnce() -> NexusTools, rt: &tokio::runtime::Handle) {
         match (on, self.running.is_some()) {
-            (true, false) => self.start_at(endpoint(), tools(), rt),
+            (true, false) => match endpoint() {
+                Ok(at) => self.start_at(at, tools(), rt),
+                Err(e) => {
+                    let mut s = self.status.lock();
+                    s.started = true;
+                    s.error = Some(e);
+                }
+            },
             (false, true) => self.stop(),
             _ => {}
         }
@@ -274,14 +286,22 @@ fn work(mut tools: NexusTools, inbox: crossbeam_channel::Receiver<Call>, swaps: 
 /// Waits for agents' connections and answers each in a task of its own.
 #[cfg(windows)]
 async fn listen(name: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<Mutex<Status>>) -> std::io::Result<()> {
-    use tokio::net::windows::named_pipe::ServerOptions;
+    use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+    // Every instance with the user as owner and only the user let in.
+    let user = win::user_sid().ok_or_else(|| std::io::Error::other("Windows didn't say which account this is"))?;
+    let owner_only = win::OwnerOnly::new(&user).ok_or_else(|| std::io::Error::other("the pipe's security descriptor couldn't be made"))?;
+    let create = |first: bool| -> std::io::Result<NamedPipeServer> {
+        let mut attributes = owner_only.attributes();
+        // SAFETY: `attributes` is a valid SECURITY_ATTRIBUTES whose descriptor lives as long as `owner_only`.
+        unsafe { ServerOptions::new().first_pipe_instance(first).reject_remote_clients(true).create_with_security_attributes_raw(name, (&raw mut attributes).cast()) }
+    };
     // The first instance must be ours: another program holding the name can't stand in for Elite Nexus.
-    let mut server = ServerOptions::new().first_pipe_instance(true).reject_remote_clients(true).create(name)?;
+    let mut server = create(true)?;
     status.lock().listening = true;
     loop {
         let connected = server.connect().await;
         // A new instance for the next agent, whatever became of this one.
-        let next = ServerOptions::new().reject_remote_clients(true).create(name)?;
+        let next = create(false)?;
         let conn = std::mem::replace(&mut server, next);
         match connected {
             Ok(()) => drop(tokio::spawn(serve(conn, jobs.clone()))),
@@ -401,12 +421,10 @@ mod tests {
 
     #[test]
     fn the_endpoint_is_this_users_and_local() {
-        let e = endpoint();
-        assert!(e.contains("elite-nexus-mcp-"), "{e}");
+        let e = endpoint().unwrap();
+        assert!(e.contains("elite-nexus-mcp"), "{e}");
         if cfg!(windows) {
-            assert!(e.starts_with(r"\\.\pipe\"), "a local named pipe: {e}");
+            assert!(e.starts_with(r"\\.\pipe\elite-nexus-mcp-S-1-"), "a local named pipe named by the user's SID: {e}");
         }
-        let tag = user_tag();
-        assert!(!tag.is_empty() && tag.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')), "{tag}");
     }
 }

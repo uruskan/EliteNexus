@@ -3826,7 +3826,7 @@ mod tests {
         let exe = std::env::var_os("ELITE_NEXUS_EXE").expect("ELITE_NEXUS_EXE: the program to start");
         let rt = live_runtime();
         let mut service = crate::mcp::McpService::default();
-        service.start_at(crate::mcp::endpoint(), agent_tools(commander(), &rt), rt.handle());
+        service.start_at(crate::mcp::endpoint().unwrap(), agent_tools(commander(), &rt), rt.handle());
         let until = Instant::now() + Duration::from_secs(10);
         while !service.status().listening {
             assert!(Instant::now() < until && service.status().error.is_none(), "{:?}", service.status());

@@ -70,8 +70,9 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   looks an unknown system up on Spansh for Ask, never for an agent. `mcp.rs` is
   Settings › AI agents: `EliteNexus --mcp` (`mcp/stdio.rs`, started by the agent, before any window, lock or log)
   speaks MCP on stdin/stdout, both the 2026-07-28 revision (`server/discover`, `_meta` on every request) and the
-  `initialize` revisions before it, and hands each call to the running app over a per-user named pipe (Unix socket
-  off Windows) as one line of JSON; `McpService` answers with the read-only tools offered to agents, on one worker
+  `initialize` revisions before it, and hands each call to the running app as one line of JSON over a named pipe named
+  by the user's SID (`mcp/win.rs`: created with the user as owner and an owner-only DACL, opened at identification
+  level and used only if the user owns it; a Unix socket off Windows); `McpService` answers with the read-only tools offered to agents, on one worker
   thread, within a deadline and a calls-a-minute limit, with a Spansh client of its own. `finder.rs` holds market lookups shared by pages and tools (sell plan,
   colonisation suppliers). `shopping.rs` is Fleet › Where to buy: it reads a build (SLEF, journal `Loadout`, EDSY or
   Coriolis import link), lists what to buy against the commander's storage, and asks Spansh's outfitting search for
