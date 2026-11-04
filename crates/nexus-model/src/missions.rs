@@ -33,7 +33,10 @@ pub struct Mission {
     pub target: Option<String>,
     pub kill_count: Option<i64>,
     pub kills: i64,
+    /// The commodity, in the game's language (`Commodity_Localised`; the symbol when there's none): to show.
     pub commodity: Option<String>,
+    /// The journal's symbol for it (`$HydrogenFuel_Name;`): what lookups go by, whatever the game's language.
+    pub commodity_symbol: Option<String>,
     pub count: Option<i64>,
     pub passenger_count: Option<i64>,
     pub passenger_type: Option<String>,
@@ -147,6 +150,7 @@ impl Missions {
                 kill_count: a.kill_count,
                 kills: 0,
                 commodity: a.commodity_localised.clone().or_else(|| a.commodity.clone()),
+                commodity_symbol: a.commodity.clone(),
                 count: a.count,
                 passenger_count: a.passenger_count,
                 passenger_type: a.passenger_type.clone(),
@@ -310,5 +314,22 @@ mod tests {
         assert_eq!(stacks[0].kills_total, 5);
         assert_eq!(stacks[0].kills_remaining, 2);
         assert_eq!(stacks[0].total_reward, 30_000_000);
+    }
+
+    /// A German client's mission: the commodity shows in German, lookups go by the journal's symbol.
+    #[test]
+    fn commodity_name_and_symbol() {
+        let mut ms = Missions::default();
+        let a = ev::MissionAccepted {
+            name: "Mission_Collect_Industry".into(),
+            mission_id: 7,
+            commodity: Some("$HydrogenFuel_Name;".into()),
+            commodity_localised: Some("Wasserstoff-Treibstoff".into()),
+            count: Some(12),
+            ..Default::default()
+        };
+        ms.on_accepted(&a, Timestamp(1), "Sys", None);
+        let m = &ms.active[&7];
+        assert_eq!((m.commodity.as_deref(), m.commodity_symbol.as_deref()), (Some("Wasserstoff-Treibstoff"), Some("$HydrogenFuel_Name;")));
     }
 }

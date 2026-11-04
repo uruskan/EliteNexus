@@ -76,12 +76,13 @@ release time that section becomes the new version and the release workflow publi
   only**, as last reported with the carrier's market, or **?** when no report has said. Until now it showed only
   after clicking a row (asked for by hangerhead in GitHub discussion #1). The owner can change it at any time, so
   it may differ when you get there.
-- **Market** › Find commodity: click a fleet carrier's row and it says how long its order's price has stood: "Price
-  unchanged since 23 Oct" (with what the report before had), "Order first reported 2 Nov" when the report before
-  didn't list it, or "unchanged for at least" so long when Elite Nexus's price history reaches no further back. It
-  keeps 30 days of price changes, from the first report of that carrier it received; neither the game nor the live
-  feed says when an order was set up (asked for by hangerhead in GitHub discussion #1). The price history now also
-  records when a commodity first appears on a market.
+- **Market** › Find commodity: click a fleet carrier's row and it says how long its order's price has stood, up to
+  the carrier's latest report: "Price unchanged in every report from 23 Oct to the latest, 4 Nov" (with what the
+  report before had), "For sale" or "Wanted at this price" from a date when the report before had none for sale or
+  no buy order for it, or unchanged as far back as Elite Nexus's price history reaches. It keeps 30 days of price
+  changes, from the first report of that carrier it received; neither the game nor the live feed says when an order
+  was set up (asked for by hangerhead in GitHub discussion #1). The price history now also records when a commodity
+  first appears on a fleet carrier's market.
 - **Market** › Trade routes, while you're docked: **From this station** lists only the routes that start there, what
   to buy at this station and where to sell it within the distance you set (asked for by NetworX on the Frontier
   Forums). Open the commodity market in the game first, so Elite Nexus has the station's latest prices.

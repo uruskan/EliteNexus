@@ -63,9 +63,13 @@ CREATE TABLE IF NOT EXISTS stations (
     market_updated        INTEGER NOT NULL DEFAULT 0,
     n_commodities         INTEGER NOT NULL DEFAULT 0,
     prohibited            TEXT,
-    -- The market report since which every price change and every new commodity at this market is in the price
-    -- history (unix seconds); NULL when its prices aren't followed (history off, or not reported since this column).
-    history_since         INTEGER
+    -- A fleet carrier's: the market report since which every price change and every new commodity at this market is
+    -- in the price history (unix seconds); NULL when its prices aren't followed (a station, history off, or not
+    -- reported since this column).
+    history_since         INTEGER,
+    -- The report this version stored with history_since: an older version stores a report without first appearances
+    -- and leaves both alone, so when market_updated has moved on from this the history has a gap and starts afresh.
+    history_at            INTEGER
 );
 CREATE INDEX IF NOT EXISTS stations_system ON stations(system_id64);
 CREATE INDEX IF NOT EXISTS stations_unlinked ON stations(system_name_lower) WHERE system_id64 IS NULL;
@@ -98,11 +102,6 @@ CREATE TABLE IF NOT EXISTS market (
 CREATE INDEX IF NOT EXISTS market_sellers ON market(commodity_id, buy, stock, updated) WHERE buy > 0 AND stock > 0;
 -- "where can I sell X": stations buying (player sells), best price first (scanned backwards)
 CREATE INDEX IF NOT EXISTS market_buyers ON market(commodity_id, sell, demand, updated) WHERE sell > 0 AND demand > 0;
--- market rows with their commodity's name, category and rare flag: searches over several commodities (rare goods)
-CREATE VIEW IF NOT EXISTS market_goods AS
-SELECT m.market_id, m.commodity_id, m.buy, m.sell, m.mean, m.stock, m.demand, m.updated,
-       c.symbol, c.name, c.category, c.is_rare
-FROM market AS m JOIN commodities AS c ON c.id = m.commodity_id;
 
 CREATE TABLE IF NOT EXISTS system_factions (
     system_id64       INTEGER NOT NULL,
@@ -180,10 +179,14 @@ CREATE INDEX IF NOT EXISTS bodies_name ON bodies(name);
 "#;
 
 /// Columns added to existing tables after they were first created: (table, column, type).
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("bodies", "checked_online", "INTEGER"), ("stations", "history_since", "INTEGER")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] =
+    &[("bodies", "checked_online", "INTEGER"), ("stations", "history_since", "INTEGER"), ("stations", "history_at", "INTEGER")];
+
+/// What earlier versions created and nothing reads any more: `market_goods`, a view whose rare goods queries read
+/// the whole market table.
+const RETIRED: &str = "DROP VIEW IF EXISTS market_goods;";
 
 const DROP_ALL: &str = r#"
-DROP VIEW IF EXISTS market_goods;
 DROP TABLE IF EXISTS systems;
 DROP TABLE IF EXISTS systems_rtree;
 DROP TABLE IF EXISTS stations;
@@ -234,6 +237,7 @@ pub(crate) fn open_writer(path: &std::path::Path) -> Result<Connection> {
         conn.execute_batch(DROP_ALL)?;
     }
     conn.execute_batch(TABLES)?;
+    conn.execute_batch(RETIRED)?;
     // Abnormal-price scans (built once on an existing database, then maintained by SQLite).
     conn.execute_batch(crate::deals::ANOMALY_INDEXES)?;
     add_missing_columns(&conn)?;
@@ -322,6 +326,15 @@ fn seed_commodities(conn: &Connection) -> Result<()> {
     }
     tx.commit()?;
     Ok(())
+}
+
+/// An empty database in memory with every table and index, for tests.
+#[cfg(test)]
+pub(crate) fn memory() -> Connection {
+    let conn = Connection::open_in_memory().expect("open");
+    conn.execute_batch(TABLES).expect("schema");
+    conn.execute_batch(crate::deals::ANOMALY_INDEXES).expect("indexes");
+    conn
 }
 
 #[cfg(test)]

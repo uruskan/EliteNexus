@@ -390,7 +390,8 @@ pub struct CommodityHit {
 pub struct RowCommodity {
     pub symbol: String,
     pub name: String,
-    /// The galactic average this market reports for it (0: none, as on fleet carriers).
+    /// Its galactic average: the one this market reports or, where it reports none (fleet carriers), the one most
+    /// markets report for this good; 0 when no market in the database reports one.
     pub mean: i64,
 }
 
