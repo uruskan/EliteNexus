@@ -66,7 +66,8 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   whether Ask's model or an MCP agent is offered it. Most tools that can say more than their caller takes
   (`NexusTools::budget`) build their reply through `ai_tools::fit`, which keeps the most detail that fits; `knowledge`
   gives each section a share and cuts a long one to the lines about the question. `NexusTools::call` cuts anything
-  still over the budget (`within`), saying so. `mcp.rs` is
+  still over the budget (`within`), saying so. A tool marked offline answers an agent from local data only: `origin()`
+  looks an unknown system up on Spansh for Ask, never for an agent. `mcp.rs` is
   Settings › AI agents: `EliteNexus --mcp` (`mcp/stdio.rs`, started by the agent, before any window, lock or log)
   speaks MCP on stdin/stdout, both the 2026-07-28 revision (`server/discover`, `_meta` on every request) and the
   `initialize` revisions before it, and hands each call to the running app over a per-user named pipe (Unix socket

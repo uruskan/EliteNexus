@@ -171,8 +171,18 @@ impl NexusTools {
         })
     }
 
-    /// Position and name of `near_system` (local database, then Spansh), or the commander's.
+    /// Position and name of `near_system`, or the commander's, for a tool answering from local data: the local database,
+    /// then for Ask only, Spansh. An agent's call stays local, as the tool's `online: false` says, so it counts as one.
     fn origin(&self, args: &Value, me: &Me) -> Result<([f64; 3], String), String> {
+        self.locate(args, me, self.caller == Caller::Ask)
+    }
+
+    /// [`Self::origin`] for a tool that asks Spansh anyway (`online: true`): any caller may look the system up there.
+    fn origin_online(&self, args: &Value, me: &Me) -> Result<([f64; 3], String), String> {
+        self.locate(args, me, true)
+    }
+
+    fn locate(&self, args: &Value, me: &Me, spansh: bool) -> Result<([f64; 3], String), String> {
         if let Some(name) = arg_str(args, "near_system").filter(|n| !n.eq_ignore_ascii_case(&me.system)) {
             if let Some(db) = &self.db
                 && let Ok(Some(s)) = db.system_by_name(&name)
@@ -180,7 +190,13 @@ impl NexusTools {
             {
                 return Ok((p, s.name));
             }
-            let found = self.rt.block_on(self.spansh.system_by_name(&name)).map_err(|e| format!("Spansh: {e}"))?;
+            if !spansh {
+                return Err(format!("\"{name}\" isn't in Elite Nexus' galaxy database, which this tool answers from: give a system near it that has markets, or leave near_system out to search around the commander."));
+            }
+            let found = match self.rt.block_on(async { tokio::time::timeout(SPANSH_TIMEOUT, self.spansh.system_by_name(&name)).await }) {
+                Ok(r) => r.map_err(|e| format!("Spansh: {e}"))?,
+                Err(_) => return Err("Spansh: no answer in time".into()),
+            };
             return found.map(|s| ([s.x, s.y, s.z], s.name)).ok_or_else(|| format!("Unknown system \"{name}\"."));
         }
         me.pos.map(|p| (p, me.system.clone())).ok_or_else(|| "The commander's position is not known yet.".to_string())
@@ -262,7 +278,7 @@ impl NexusTools {
 
     fn untouched_biology(&self, a: &Value) -> Result<Value, String> {
         let me = self.me()?;
-        let (origin, near) = self.origin(a, &me)?;
+        let (origin, near) = self.origin_online(a, &me)?;
         let species = match arg_str(a, "species") {
             Some(n) => nexus_data::exobio::species(&n).ok_or_else(|| format!("Unknown species \"{n}\"."))?,
             None => nexus_data::exobio::species("Stratum Tectonicas").ok_or("Species data missing.")?,
@@ -274,7 +290,9 @@ impl NexusTools {
         let footfalled = move |name: &str| {
             db.as_ref().and_then(|d| d.body_by_name(name).ok().flatten()).is_some_and(|b| b.was_footfalled.is_some_and(|s| s.value))
         };
-        let (mut list, st) = self.rt.block_on(crate::untouched::find(&self.spansh, &q, footfalled))?;
+        // Up to four pages and a search for populated systems: one limit for all of them, so a slow Spansh can't hold an
+        // agent's worker long after it was told the call didn't finish.
+        let (mut list, st) = self.spansh_search(Duration::from_secs(90), crate::untouched::find(&self.spansh, &q, footfalled))?;
         let mapped_never_sampled = list.iter().filter(|c| c.evidence == crate::untouched::Evidence::GenusConfirmed).count();
         list.retain(|c| include_mapped || c.evidence == crate::untouched::Evidence::NoTrace);
         list.truncate(limit);
@@ -3484,6 +3502,15 @@ mod tests {
         assert_eq!(not_fitted, "Not in that build: 5A Thrusters.");
         assert!(tools.call("where_to_buy", &json!({ "ship": "Cutter" })).unwrap_err().contains("No ship of the commander's matches"));
         assert!(tools.call("where_to_buy", &json!({ "build": "not a build" })).is_err());
+    }
+
+    /// An agent's call to a tool that answers from local data stays local: a system the galaxy database doesn't know
+    /// isn't looked up on Spansh, so the call is the offline one its `online: false` (and openWorldHint) says.
+    #[test]
+    fn an_agents_local_tool_never_asks_spansh() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let err = agent_tools(commander(), &rt).call("find_commodity", &json!({ "commodity": "Gold", "near_system": "Nowhere Special" })).unwrap_err();
+        assert!(err.contains("isn't in Elite Nexus' galaxy database"), "{err}");
     }
 
     /// An AI agent over MCP, end to end: `--mcp`'s session passes a call over a pipe (a socket off Windows) of the test's
