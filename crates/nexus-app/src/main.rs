@@ -15,6 +15,7 @@ mod follow;
 mod icon;
 mod jobs;
 mod market;
+mod mcp;
 mod notices;
 mod overlay;
 mod pages;
@@ -105,6 +106,11 @@ fn desktop_entry_cli() -> Option<i32> {
 }
 
 fn main() -> eframe::Result {
+    // An AI agent started this copy to talk MCP on stdin and stdout (Settings › AI agents): no window, no lock, no log,
+    // nothing but MCP on stdout. The running app does the work.
+    if std::env::args().skip(1).any(|a| a == "--mcp") {
+        std::process::exit(mcp::stdio::run());
+    }
     #[cfg(target_os = "linux")]
     if let Some(code) = desktop_entry_cli() {
         std::process::exit(code);

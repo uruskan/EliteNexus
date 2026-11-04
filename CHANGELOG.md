@@ -6,6 +6,12 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
+- **AI agents** (Settings › AI agents, off by default): Claude Code, Claude Desktop and other AI programs that speak
+  MCP can use the tools Ask uses, to read only: your commander, fleet, materials, ranks and engineers, journal, the
+  market database, engineering, where to mine or buy, and Spansh. Copy buttons set them up. The program the agent
+  starts (`EliteNexus --mcp`) opens no window and reaches the Elite Nexus you have running over a pipe on this
+  computer, never the network; it answers one call at a time, at most 30 a minute. The user guide's Data & privacy
+  section lists what an agent can read.
 - **Ask** can be stopped: while it answers, the round button becomes **Stop**, and **New conversation**, now there
   while it works too, stops it as well. A slow model no longer leaves you waiting with no way out, and a stopped
   question changes nothing, not even a route it was planning.

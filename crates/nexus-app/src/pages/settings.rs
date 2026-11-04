@@ -32,6 +32,8 @@ pub struct SettingsCtx<'a> {
     pub overlay_see_through: bool,
     /// What happened to the last screenshot saved as PNG this run.
     pub last_screenshot: Option<crate::screenshots::Outcome>,
+    /// AI agents over MCP: listening, and the calls answered this run.
+    pub agents: crate::mcp::Status,
 }
 
 /// What the Settings page keeps between frames: the folder fields and what checking a folder found.
@@ -185,6 +187,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
             section(ui, "Game");
             game_folder(ui, cx);
             screenshots(ui, cx);
+            agents(ui, cx);
             section(ui, "About");
             group(ui, |g| {
                 g.value("Version", format!("Elite Nexus {}", env!("CARGO_PKG_VERSION")));
@@ -204,6 +207,78 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
             footnote(ui, "Elite Nexus is free software under the GNU GPL, version 3 or later, and comes with no warranty. Source: github.com/uruskan/EliteNexus. Elite Dangerous is a trademark of Frontier Developments plc; Elite Nexus is an unofficial community tool.");
         });
     });
+}
+
+/// Settings › AI agents: AI programs on this computer (MCP clients such as Claude Code) may use the tools Ask uses,
+/// read-only. Off until switched on.
+fn agents(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
+    section(ui, "AI agents");
+    let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "EliteNexus".into());
+    let state = agents_state(&cx.agents);
+    let ai = &mut cx.settings.ai;
+    group(ui, |g| {
+        cx.changed |= g.switch(&mut ai.agents, "Let AI agents read Elite Nexus", "Claude Code, Claude Desktop and other MCP clients on this computer can use the tools Ask uses, to read only.");
+        if ai.agents {
+            g.row("State", "", |ui| {
+                ui.add(egui::Label::new(RichText::new(&state.1).color(state.0)).wrap());
+            });
+        }
+        g.row("Claude Code", "Run this once in a terminal.", |ui| copy_button(ui, "mcp-claude-code", "Copy command", &claude_code_command(&exe)));
+        g.row("Claude Desktop", "Add it under mcpServers in claude_desktop_config.json, then restart Claude Desktop.", |ui| copy_button(ui, "mcp-claude-desktop", "Copy entry", &claude_desktop_entry(&exe)));
+    });
+    footnote(
+        ui,
+        "The agent starts Elite Nexus' own program with --mcp, which hands each call to this window over a pipe on this computer, never the network. An agent reads what Ask reads: your commander, ships, cargo, materials, ranks, engineers, journal, the market database and Spansh. It changes nothing in the game or in Elite Nexus and plans no routes. One call at a time, at most 30 a minute (10 of them from Spansh or EDGalaxyData).",
+    );
+}
+
+/// The agents' state in a line, and its colour.
+fn agents_state(s: &crate::mcp::Status) -> (Color32, String) {
+    if let Some(e) = &s.error {
+        return (pal::BAD, e.clone());
+    }
+    if !s.started {
+        return (pal::DIM, "Not in a screenshot run: agents are answered only when Elite Nexus runs normally.".into());
+    }
+    if !s.listening {
+        return (pal::DIM, "Starting…".into());
+    }
+    let calls = match s.last {
+        Some((tool, at)) if s.answered > 0 => {
+            let secs = at.elapsed().as_secs();
+            let ago = if secs < 60 { format!("{secs} s") } else if secs < 3600 { format!("{} min", secs / 60) } else { format!("{} h", secs / 3600) };
+            format!("{} call{} answered this run, the last ({tool}) {ago} ago", s.answered, if s.answered == 1 { "" } else { "s" })
+        }
+        _ => "no calls yet this run".into(),
+    };
+    let refused = if s.refused > 0 { format!(", {} refused over the limits", s.refused) } else { String::new() };
+    (pal::GOOD, format!("Waiting for agents · {calls}{refused}"))
+}
+
+/// Claude Code's command that adds Elite Nexus for every project of this user.
+fn claude_code_command(exe: &str) -> String {
+    format!("claude mcp add --scope user elite-nexus -- \"{exe}\" --mcp")
+}
+
+/// Claude Desktop's `mcpServers` entry: only the entry, so it goes beside the commander's other servers.
+fn claude_desktop_entry(exe: &str) -> String {
+    let entry = serde_json::json!({ "command": exe, "args": ["--mcp"] });
+    format!("\"elite-nexus\": {}", serde_json::to_string_pretty(&entry).unwrap_or_default())
+}
+
+/// A button that puts `text` on the clipboard and says so for a moment; the text shows on hover.
+fn copy_button(ui: &mut Ui, id: &str, label: &str, text: &str) {
+    let key = egui::Id::new(("copied", id));
+    let now = ui.input(|i| i.time);
+    let copied = ui.ctx().data(|d| d.get_temp::<f64>(key)).is_some_and(|t| now - t < 2.0);
+    let shown = if copied { format!("{} Copied", icon::CHECK) } else { format!("{} {label}", icon::COPY) };
+    if widgets::button(ui, &shown).on_hover_text(text).clicked() {
+        ui.ctx().copy_text(text.to_string());
+        ui.ctx().data_mut(|d| d.insert_temp(key, now));
+    }
+    if copied {
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
+    }
 }
 
 /// Settings › Overlay: the island at the top of the game's screen.

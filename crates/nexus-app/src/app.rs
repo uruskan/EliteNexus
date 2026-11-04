@@ -101,6 +101,10 @@ pub struct NexusApp {
     ask_ui: pages::ask::AskUi,
     /// Routes the assistant planned, moved to the Navigation page each frame.
     ai_routes: std::sync::Arc<parking_lot::Mutex<Option<pages::navigation::PlannedRoute>>>,
+    /// AI agents on this computer, over MCP (Settings › AI agents; off by default), and their own Spansh client: one
+    /// request at a time, so they never hold up the app's own searches.
+    mcp: crate::mcp::McpService,
+    agents_spansh: nexus_spansh::Spansh,
     // Command-line overrides: applied at runtime, never written to settings.json.
     overrides: Overrides,
     shot: Option<ScreenshotJob>,
@@ -168,6 +172,10 @@ impl NexusApp {
         {
             tracing::warn!("--overlay {name}: no such moment (one of {})", crate::overlay::DEMOS.join(", "));
         }
+        let agents_spansh = nexus_spansh::Spansh::builder().max_concurrent_requests(1).build().unwrap_or_else(|_| nexus_spansh::Spansh::new());
+        let mut mcp = crate::mcp::McpService::default();
+        // Screenshot runs never answer agents.
+        mcp.apply(settings.ai.agents && shot.is_none(), || agent_tools(&core, market.db.clone(), rt.handle(), &agents_spansh), rt.handle());
         NexusApp {
             core,
             settings,
@@ -210,6 +218,8 @@ impl NexusApp {
             assistant: if ov.demo && shot.is_some() { crate::assistant::AssistantService::demo() } else { Default::default() },
             ask_ui: pages::ask::AskUi::new(ov.demo && shot.is_some()),
             ai_routes: Default::default(),
+            mcp,
+            agents_spansh,
             overrides: ov,
             shot,
             last_jump_count: None,
@@ -651,6 +661,7 @@ impl NexusApp {
                     voices: self.speaker.voices(),
                     overlay_see_through: self.overlay.see_through(),
                     last_screenshot: self.shots.last(),
+                    agents: self.mcp.status(),
                 };
                 pages::settings::show(ui, &mut cx);
                 settings_changed = cx.changed;
@@ -742,6 +753,7 @@ impl NexusApp {
             voices: self.speaker.voices(),
             overlay_see_through: self.overlay.see_through(),
             last_screenshot: self.shots.last(),
+            agents: self.mcp.status(),
         };
         // Scrolls: with the settings banner above it, a short window would otherwise cut off the folder's buttons.
         egui::ScrollArea::vertical().id_salt(("page", Page::Settings as u8, settings_page)).auto_shrink([false, false]).show(ui, |ui| {
@@ -771,6 +783,8 @@ impl NexusApp {
             self.shots.apply(&self.settings.screenshots);
             self.market.set_watches(&self.settings.price_watches);
             self.market.set_listen(self.settings.accounts.eddn_listen, self.rt.handle());
+            let on = self.settings.ai.agents && self.shot.is_none();
+            self.mcp.apply(on, || agent_tools(&self.core, self.market.db.clone(), self.rt.handle(), &self.agents_spansh), self.rt.handle());
         }
         if test_voice {
             self.speaker.say("Elite Nexus voice check. All systems nominal, commander.");
@@ -780,6 +794,7 @@ impl NexusApp {
             self.sync.attach(&self.core);
             self.shots.attach(&self.core);
             self.market.attach(&self.core);
+            self.mcp.attach(agent_tools(&self.core, self.market.db.clone(), self.rt.handle(), &self.agents_spansh));
             // A new model: Follow my flight starts afresh instead of comparing it with the old one.
             self.flight = Default::default();
         }
@@ -839,6 +854,21 @@ impl NexusApp {
                     ui.add_space(10.0);
                 }
             });
+    }
+}
+
+/// The tools AI agents get over MCP: the commander's model and journal, the market database, a Spansh client of their
+/// own. They plan no routes, so theirs go nowhere.
+fn agent_tools(core: &Core, db: Option<nexus_galaxy::GalaxyDb>, rt: &tokio::runtime::Handle, spansh: &nexus_spansh::Spansh) -> crate::ai_tools::NexusTools {
+    crate::ai_tools::NexusTools {
+        model: core.model.clone(),
+        db,
+        index: core.index.clone(),
+        spansh: spansh.clone(),
+        rt: rt.clone(),
+        routes: Default::default(),
+        caller: crate::ai_tools::Caller::Mcp,
+        budget: crate::ai_tools::Caller::Mcp.budget(),
     }
 }
 

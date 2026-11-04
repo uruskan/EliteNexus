@@ -52,19 +52,18 @@ pub struct NexusTools {
 pub enum Caller {
     /// The built-in assistant, the Ask page.
     Ask,
-    /// An AI agent on this computer, over MCP.
-    #[allow(dead_code)] // until the MCP server calls the tools
+    /// An AI agent on this computer, over MCP (`crate::mcp`).
     Mcp,
 }
 
 impl Caller {
     /// The longest reply this caller takes. Ask passes the model the first 12,000 characters of a tool result
-    /// (`nexus_ai::agent::MAX_RESULT_CHARS`) and cuts the rest mid-JSON; an agent's own limit is larger (Claude Code's
-    /// is 25,000 tokens), so it gets more of a long answer while staying well under that.
+    /// (`nexus_ai::agent::MAX_RESULT_CHARS`) and cuts the rest mid-JSON; an agent takes more (Claude Code warns above
+    /// 10,000 tokens of tool output), so it gets more of a long answer while staying under that.
     pub fn budget(self) -> usize {
         match self {
             Caller::Ask => nexus_ai::agent::MAX_RESULT_CHARS - 500,
-            Caller::Mcp => 40_000,
+            Caller::Mcp => 30_000,
         }
     }
 }
@@ -909,7 +908,11 @@ impl NexusTools {
                 break;
             }
             let p = shown[i];
-            let found = match self.rt.block_on(archive_footfall(http, system_id64, p.id)) {
+            // One request at a time across Ask and AI agents too.
+            let one = EDGD_ONE_AT_A_TIME.lock();
+            let asked = self.rt.block_on(archive_footfall(http, system_id64, p.id));
+            drop(one);
+            let found = match asked {
                 Ok(found) => found,
                 Err(e) => {
                     // unreachable or failing: don't keep knocking
@@ -957,6 +960,8 @@ static SPANSH_SYSTEMS: Mutex<Vec<(u64, Instant, Arc<SpanshSystem>)>> = Mutex::ne
 /// service without published limits, so: a few bodies per call, one request at a time, a day's
 /// cache. Store `false` to switch the lookups off (e.g. from a setting); off in unit tests.
 pub(crate) static ONLINE_FOOTFALL_LOOKUP: AtomicBool = AtomicBool::new(!cfg!(test));
+/// Held during each EDGalaxyData request: Ask and an AI agent never ask it at the same time.
+static EDGD_ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 const EDGD_URL: &str = "https://edgalaxydata.space/eddn-lookup-v2";
 /// `WasFootfalled` first appears in EDDN scans with game 4.2.1.0, on 2025-09-29.
 const FOOTFALL_KEY_SINCE: &str = "2025-09-29T00:00:00Z";
@@ -1600,6 +1605,9 @@ pub struct Tool {
     pub ask: bool,
     /// Offered to AI agents over MCP. Read-only tools only.
     pub mcp: bool,
+    /// Answers from an online service (Spansh, EDGalaxyData) rather than the commander's own data and the local
+    /// database: for agents, MCP's openWorldHint, and the tighter limit on calls a minute.
+    pub online: bool,
     run: fn(&NexusTools, &Value) -> Result<Value, String>,
 }
 
@@ -1647,6 +1655,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: |t, _| t.commander(),
     },
     Tool {
@@ -1672,6 +1681,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::find_commodity,
     },
     Tool {
@@ -1696,6 +1706,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::price_deals,
     },
     Tool {
@@ -1718,6 +1729,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: true,
         run: NexusTools::untouched_biology,
     },
     Tool {
@@ -1729,6 +1741,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::sell_my_cargo,
     },
     Tool {
@@ -1750,6 +1763,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::trade_routes,
     },
     Tool {
@@ -1770,6 +1784,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::nearest_service,
     },
     Tool {
@@ -1791,6 +1806,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::mining_hotspots,
     },
     Tool {
@@ -1810,6 +1826,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::mining_sites,
     },
     Tool {
@@ -1821,6 +1838,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::system_info,
     },
     Tool {
@@ -1840,6 +1858,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: true,
         run: NexusTools::system_bodies,
     },
     Tool {
@@ -1861,6 +1880,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: false,
         ask: true,
         mcp: false,
+        online: true,
         run: NexusTools::plan_route,
     },
     Tool {
@@ -1883,6 +1903,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: false,
         ask: true,
         mcp: false,
+        online: true,
         run: NexusTools::money_routes,
     },
     Tool {
@@ -1894,6 +1915,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: |t, _| t.exobiology_here(),
     },
     Tool {
@@ -1916,6 +1938,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::journal_search,
     },
     Tool {
@@ -1927,6 +1950,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::knowledge,
     },
     Tool {
@@ -1946,6 +1970,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::fleet,
     },
     Tool {
@@ -1957,6 +1982,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: |t, _| t.progress(),
     },
     Tool {
@@ -1976,6 +2002,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::materials,
     },
     Tool {
@@ -1988,6 +2015,7 @@ pub static TOOLS: &[Tool] = &[
         // Rarely asked: not worth its tokens in every Ask request.
         ask: false,
         mcp: true,
+        online: false,
         run: |t, _| t.on_foot(),
     },
     Tool {
@@ -2008,6 +2036,7 @@ pub static TOOLS: &[Tool] = &[
         // Rarely asked: not worth its tokens in every Ask request.
         ask: false,
         mcp: true,
+        online: false,
         run: NexusTools::credit_history,
     },
     Tool {
@@ -2020,6 +2049,7 @@ pub static TOOLS: &[Tool] = &[
         // Rarely asked: not worth its tokens in every Ask request.
         ask: false,
         mcp: true,
+        online: false,
         run: NexusTools::system_factions,
     },
     Tool {
@@ -2043,6 +2073,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: true,
         run: NexusTools::find_material_body,
     },
     Tool {
@@ -2067,6 +2098,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: false,
         run: NexusTools::engineering,
     },
     Tool {
@@ -2093,6 +2125,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: true,
         run: NexusTools::where_to_mine,
     },
     Tool {
@@ -2116,6 +2149,7 @@ pub static TOOLS: &[Tool] = &[
         read_only: true,
         ask: true,
         mcp: true,
+        online: true,
         run: NexusTools::where_to_buy,
     },
 ];
@@ -3260,6 +3294,42 @@ mod tests {
         assert!(tools.call("where_to_buy", &json!({ "build": "not a build" })).is_err());
     }
 
+    /// An AI agent over MCP, end to end: `--mcp`'s session passes a call over a pipe (a socket off Windows) of the test's
+    /// own to the app's listener, which answers from the commander's data; switched off, the agent is told.
+    #[test]
+    fn an_agent_reads_the_commander_over_mcp() {
+        use crate::mcp::stdio::{Event, Session};
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let endpoint = crate::mcp::test_endpoint("e2e");
+        let mut service = crate::mcp::McpService::default();
+        service.start_at(endpoint.clone(), agent_tools(commander(), &rt), rt.handle());
+        let until = Instant::now() + Duration::from_secs(10);
+        while !service.status().listening {
+            assert!(Instant::now() < until && service.status().error.is_none(), "{:?}", service.status());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut session = Session::new(endpoint, tx);
+        let meta = json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} });
+        let mut ask = |id: i64, name: &str| -> Value {
+            let mut out = Vec::new();
+            session.handle(Event::Line(json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": { "name": name, "arguments": {}, "_meta": meta } }).to_string()), &mut out);
+            session.handle(rx.recv_timeout(Duration::from_secs(30)).expect("an answer"), &mut out);
+            serde_json::from_slice(&out).expect("one message")
+        };
+        let reply = ask(1, "commander");
+        assert_eq!((&reply["id"], &reply["result"]["isError"]), (&json!(1), &json!(false)), "{reply}");
+        let answer: Value = serde_json::from_str(reply["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(answer["commander"], "Tester");
+        assert_eq!(service.status().answered, 1);
+        assert_eq!(service.status().last.map(|(t, _)| t), Some("commander"));
+        // Switched off: the agent hears why.
+        service.apply(false, || unreachable!("not started again"), rt.handle());
+        let off = ask(2, "commander");
+        assert_eq!(off["result"]["isError"], true, "{off}");
+        assert!(off["result"]["content"][0]["text"].as_str().unwrap().contains("Settings › AI agents"), "{off}");
+    }
+
     #[test]
     fn new_tools_are_appended_and_old_ones_unchanged() {
         let old = [
@@ -3525,6 +3595,49 @@ mod tests {
         assert!(shares.windows(2).all(|w| w[0] >= w[1]), "richest first: {shares:?}");
         assert!(bodies.iter().all(|b| b["system"].is_string() && b["gravity_g"].as_f64().is_some_and(|g| g <= 1.0)));
         assert!(v["bodies_holding_it"].as_u64().unwrap() > 0);
+    }
+
+    /// The whole chain with a built program, as an agent starts it: `EliteNexus --mcp` with piped stdin and stdout,
+    /// talking to a listener on this user's real pipe that answers from a test commander. Set `ELITE_NEXUS_EXE` to the
+    /// program and run `cargo test -p nexus-app live_agent_chain -- --ignored`, with no Elite Nexus answering agents.
+    #[test]
+    #[ignore]
+    fn live_agent_chain() {
+        use std::io::{BufRead, Write};
+        let exe = std::env::var_os("ELITE_NEXUS_EXE").expect("ELITE_NEXUS_EXE: the program to start");
+        let rt = live_runtime();
+        let mut service = crate::mcp::McpService::default();
+        service.start_at(crate::mcp::endpoint(), agent_tools(commander(), &rt), rt.handle());
+        let until = Instant::now() + Duration::from_secs(10);
+        while !service.status().listening {
+            assert!(Instant::now() < until && service.status().error.is_none(), "{:?}", service.status());
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let piped = std::process::Stdio::piped;
+        let mut child = std::process::Command::new(exe).arg("--mcp").stdin(piped()).stdout(piped()).stderr(piped()).spawn().expect("the program starts");
+        let mut stdin = child.stdin.take().unwrap();
+        let mut stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+        let text = {
+            let mut ask = |msg: Value| -> Value {
+                writeln!(stdin, "{msg}").unwrap();
+                let mut line = String::new();
+                stdout.read_line(&mut line).unwrap();
+                serde_json::from_str(&line).unwrap_or_else(|e| panic!("{e}: {line}"))
+            };
+            let init = ask(json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": { "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": { "name": "test", "version": "1" } } }));
+            assert_eq!(init["result"]["protocolVersion"], "2025-06-18", "{init}");
+            let call = ask(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "commander", "arguments": {} } }));
+            let text = call["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string();
+            assert!(call["result"]["isError"] == false && text.contains("\"Tester\""), "{call}");
+            text
+        };
+        drop(stdin);
+        let status = child.wait().unwrap();
+        assert!(status.success(), "exits when stdin closes: {status}");
+        let mut err = String::new();
+        let _ = std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut err);
+        assert!(err.is_empty(), "nothing on stderr: {err}");
+        println!("{text}");
     }
 
     /// Live: `cargo test -p nexus-app live_where_to_mine -- --ignored --nocapture` (needs the internet; reads Spansh only).
