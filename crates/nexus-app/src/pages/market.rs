@@ -618,8 +618,7 @@ fn commodity_suggestions(all: &[CommodityInfo], recent: &[String], typed: &str) 
 const RARE_GOODS: &str = "Rare Goods";
 /// The category field's entry for no category.
 const ALL_CATEGORIES: &str = "All categories";
-/// Rare goods sold only during past events, which can't be bought any more (the Elite Dangerous wiki's "Removed
-/// Rare Commodities"): left out of the lists.
+/// Rare goods sold only during past events, which can't be bought any more: left out of the lists.
 const RETIRED_RARES: [&str; 2] = ["classifiedexperimentalequipment", "galactictravelguide"];
 
 /// A commodity Find commodity lists: traded on markets ("NonMarketable" isn't), and still sold.
