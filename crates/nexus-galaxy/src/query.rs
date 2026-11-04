@@ -462,23 +462,27 @@ pub(crate) fn commodity_summary(
     };
     let cutoff = age_cutoff(max_age_hours);
     let idx = index.read();
+    // Markets, not rows: a carrier with buy orders for ten rare goods is one market buying them.
+    let mut counted = rustc_hash::FxHashSet::default();
     for selling in [true, false] {
         let mut stmt = conn.prepare_cached(goods.rows(selling))?;
         let mut rows = stmt.query(params![goods.key(), 1, cutoff])?;
         while let Some(r) = rows.next()? {
-            let Some(st) = idx.get(r.get(0)?) else {
+            let market_id: i64 = r.get(0)?;
+            let Some(st) = idx.get(market_id) else {
                 continue;
             };
             let price: i64 = r.get(1)?;
             let updated: i64 = r.get(3)?;
             s.newest_unix = Some(s.newest_unix.map_or(updated, |n| n.max(updated)));
-            let carrier = u32::from(st.is_carrier());
+            let new = u32::from(counted.insert((selling, market_id)));
+            let carrier = new * u32::from(st.is_carrier());
             if selling {
-                s.sellers += 1;
+                s.sellers += new;
                 s.carrier_sellers += carrier;
                 s.lowest_buy = Some(s.lowest_buy.map_or(price, |p| p.min(price)));
             } else {
-                s.buyers += 1;
+                s.buyers += new;
                 s.carrier_buyers += carrier;
                 s.highest_sell = Some(s.highest_sell.map_or(price, |p| p.max(price)));
             }

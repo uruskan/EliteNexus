@@ -1570,7 +1570,7 @@ fn rare_goods_as_one_commodity() {
     assert_eq!((s.category.as_str(), s.is_rare, s.sellers, s.buyers), ("Legal Drugs", true, 2, 1));
     assert_eq!((s.lowest_buy, s.average), (Some(400), Some(2_300)), "the average of 1 600 and 3 000");
     let all = db.rare_goods_summary(None, Some(72.0)).expect("summary").expect("rare goods");
-    assert_eq!((all.sellers, all.buyers, all.highest_sell), (3, 2, Some(12_000)));
+    assert_eq!((all.sellers, all.buyers, all.highest_sell), (2, 2, Some(12_000)), "markets: George Lucas sells two rare goods");
     assert_eq!(all.average, Some(4_533), "each rare good's own counted once: 9 000, 1 600 and 3 000");
 
     // One commodity: no row commodity, as before.
