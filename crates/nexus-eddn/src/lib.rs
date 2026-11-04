@@ -84,12 +84,14 @@ impl EddnSubscriber {
             std::thread::Builder::new()
                 .name("eddn-decoder".into())
                 .spawn(move || {
+                    // The writer counts what it kept: queued isn't stored (most scanned bodies aren't kept).
+                    let stored = stats.stored_counter();
                     let mut dec = decode::Decoder::new(stats, window);
                     // Ends when the socket task drops its sender.
                     while let Ok(frame) = frame_rx.recv() {
                         let items = dec.handle_frame(&frame);
                         if !items.is_empty() {
-                            db.ingest_many(items);
+                            db.ingest_counted(items, stored.clone());
                         }
                     }
                     tracing::debug!("EDDN decoder stopped");

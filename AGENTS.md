@@ -189,7 +189,6 @@ never touches `nexus-data`.
   user's personal key. Developer mode (`Accounts::inara_dev_mode`, sent as `isBeingDeveloped`) is still on by
   default; switch it off after a few weeks of clean syncs.
 * `GalaxyOptions::all_eddn_bodies` (keep every landable EDDN body, not just biology and valuable worlds) is off.
-* Small known issue: the EDDN "updates stored" counter slightly over-counts body updates.
 
 ## Ideas queue
 

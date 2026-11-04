@@ -86,8 +86,8 @@ fn main() {
         s.connects
     );
     println!(
-        "database items queued {}, market snapshots committed {market_updates}",
-        s.ingested
+        "database items queued {}, stored {}, market snapshots committed {market_updates}",
+        s.ingested, s.stored
     );
     println!("per schema:");
     for (schema, n) in &s.per_schema {

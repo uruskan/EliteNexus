@@ -96,6 +96,10 @@ release time that section becomes the new version and the release workflow publi
   **Live** badge stays, with the feed's rate and the database's size beside it.
 
 ### Fixed
+- **Market**: the live feed's "updates stored" counts only what the database kept. It counted every item a message
+  turned into, so every body scanned anywhere, though from the feed Elite Nexus keeps only bodies with biology,
+  Earth-like, water and ammonia worlds and terraformables, and every market report, even one older than the market
+  it already had.
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.

@@ -3171,7 +3171,7 @@ fn database_tab(ui: &mut Ui, svc: &mut MarketService, st: &mut MarketUi, rt: &to
                     RichText::new(format!(
                         "{} received · {} stored · {} duplicates · {} test messages skipped",
                         digits(f.total_messages),
-                        digits(f.ingested),
+                        digits(f.stored),
                         digits(f.duplicates),
                         digits(f.test_dropped)
                     ))

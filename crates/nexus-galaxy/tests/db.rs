@@ -508,6 +508,44 @@ fn how_long_an_order_stood() {
     assert_eq!(sell(db, 21), Some(Stood::Since { since: n - 12 * D, before: n - 20 * D, previous: 50_000 }), "kept");
 }
 
+/// The live feed's "updates stored" counts what changed the database: not a bare rock it doesn't keep, a market
+/// report older than the one stored, or a report that changes nothing.
+#[test]
+fn counted_ingest_counts_what_was_stored() {
+    let t = TempDb::new("counted");
+    let db = t.db();
+    populate(db);
+    let stored = std::sync::Arc::new(AtomicU64::new(0));
+    let body = |id: u32, class: &str, bio: u32| {
+        Ingest::Body(BodyUpdate {
+            system_id64: SYS_A,
+            body_id: id,
+            name: Some(format!("Alpha {id}")),
+            scan: Some(BodyScan { planet_class: class.into(), landable: true, ..Default::default() }),
+            signals: (bio > 0).then(|| BodySignals { bio, ..Default::default() }),
+            timestamp: now() - 100,
+            source: Source::Eddn,
+            ..Default::default()
+        })
+    };
+    let rock = body(3, "Rocky body", 0);
+    let bio = body(4, "Rocky body", 2);
+    let fresh = market(1, "Alpha", "A Port", now() - 10, &[("gold", 9_200, 9_000, 100, 0)]);
+    let stale = market(1, "Alpha", "A Port", now() - 20, &[("gold", 9_300, 9_100, 100, 0)]);
+    db.ingest_counted(vec![rock.clone(), bio.clone(), fresh, stale], stored.clone());
+    db.flush().expect("flush");
+    assert_eq!(stored.load(Ordering::Relaxed), 2, "the biology body and the newer market");
+    // The same bodies again: nothing changes.
+    db.ingest_counted(vec![rock, bio], stored.clone());
+    db.flush().expect("flush");
+    assert_eq!(stored.load(Ordering::Relaxed), 2);
+    // A new system counts; uncounted ingests leave the counter alone.
+    db.ingest_counted(vec![system(SYS_C + 10, "Delta", [5.0, 5.0, 5.0])], stored.clone());
+    db.ingest(system(SYS_C + 11, "Epsilon", [6.0, 6.0, 6.0]));
+    db.flush().expect("flush");
+    assert_eq!(stored.load(Ordering::Relaxed), 3);
+}
+
 /// Without price history, nothing can be said about how long a price stood.
 #[test]
 fn no_history_no_since() {

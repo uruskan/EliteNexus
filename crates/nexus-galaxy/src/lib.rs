@@ -201,7 +201,19 @@ impl GalaxyDb {
         if items.is_empty() {
             return;
         }
-        if self.send(WriterMsg::Ingest(items)).is_err() {
+        if self.send(WriterMsg::Ingest(items, None)).is_err() {
+            tracing::warn!("galaxy writer stopped; dropping ingest");
+        }
+    }
+
+    /// Queues items as [`Self::ingest_many`] does and, once they're committed, adds to `stored` how many of them
+    /// changed the database. A market report older than the stored one, a body the database doesn't keep (see
+    /// [`GalaxyOptions::all_eddn_bodies`]) or a report that changes nothing isn't counted.
+    pub fn ingest_counted(&self, items: Vec<Ingest>, stored: Arc<std::sync::atomic::AtomicU64>) {
+        if items.is_empty() {
+            return;
+        }
+        if self.send(WriterMsg::Ingest(items, Some(stored))).is_err() {
             tracing::warn!("galaxy writer stopped; dropping ingest");
         }
     }

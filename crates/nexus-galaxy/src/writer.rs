@@ -24,7 +24,8 @@ const MAX_BATCH_ITEMS: usize = 20_000;
 const PRUNE_EVERY: Duration = Duration::from_secs(3600);
 
 pub(crate) enum WriterMsg {
-    Ingest(Vec<Ingest>),
+    /// Live items, and a counter to add how many of them changed the database to (once committed).
+    Ingest(Vec<Ingest>, Option<Arc<AtomicU64>>),
     Import(ImportBatch),
     /// Reply once everything sent before it is committed.
     Flush(Sender<()>),
@@ -35,7 +36,7 @@ pub(crate) enum WriterMsg {
 impl WriterMsg {
     fn weight(&self) -> usize {
         match self {
-            WriterMsg::Ingest(v) => v.len(),
+            WriterMsg::Ingest(v, _) => v.len(),
             WriterMsg::Import(b) => b.ops.len(),
             WriterMsg::Flush(_) | WriterMsg::Checkpoint(_) => 0,
         }
@@ -43,7 +44,7 @@ impl WriterMsg {
 
     /// Messages that end the gathering phase immediately.
     fn urgent(&self) -> bool {
-        !matches!(self, WriterMsg::Ingest(_))
+        !matches!(self, WriterMsg::Ingest(..))
     }
 }
 
@@ -232,6 +233,8 @@ impl Writer {
         let mut flushers = Vec::new();
         let mut checkpoints = Vec::new();
         let mut acks: Vec<(Sender<ImportAck>, ImportAck)> = Vec::new();
+        // How many items of a counted message changed the database, added to its counter once committed.
+        let mut counted: Vec<(Arc<AtomicU64>, u64)> = Vec::new();
         let mut outcome = BatchOutcome::default();
         let started = Instant::now();
         let committed = match self
@@ -241,12 +244,16 @@ impl Writer {
             Ok(tx) => {
                 for msg in batch {
                     match msg {
-                        WriterMsg::Ingest(items) => {
+                        WriterMsg::Ingest(items, counter) => {
+                            let mut stored = 0;
                             for item in items {
                                 for it in item.expand() {
                                     self.ctx.shared.ingested.fetch_add(1, Ordering::Relaxed);
-                                    self.ctx.apply_logged(&tx, &it, true, &mut outcome);
+                                    stored += u64::from(self.ctx.apply_logged(&tx, &it, true, &mut outcome));
                                 }
+                            }
+                            if let Some(c) = counter {
+                                counted.push((c, stored));
                             }
                         }
                         WriterMsg::Import(b) => {
@@ -260,7 +267,7 @@ impl Writer {
                             for op in &b.ops {
                                 match op {
                                     ImportOp::Ingest(it) => {
-                                        self.ctx.apply_logged(&tx, it, false, &mut local)
+                                        self.ctx.apply_logged(&tx, it, false, &mut local);
                                     }
                                     ImportOp::FactionPresence(f) => {
                                         if let Err(e) = self
@@ -305,6 +312,9 @@ impl Writer {
         let history_added = self.ctx.history_added.take();
         if committed {
             shared.commits.fetch_add(1, Ordering::Relaxed);
+            for (c, n) in counted {
+                c.fetch_add(n, Ordering::Relaxed);
+            }
             shared.history_rows.fetch_add(history_added, Ordering::Relaxed);
             shared
                 .stale_markets
@@ -720,22 +730,26 @@ fn price_changed(old: i64, new: i64, min_rel: f64) -> bool {
 // ---------------------------------------------------------------------------------------------
 
 impl Ctx {
-    /// Applies one item inside a savepoint, so a failing statement can't leave it half-applied.
-    fn apply_logged(&self, tx: &Transaction, item: &Ingest, live: bool, out: &mut BatchOutcome) {
-        let res = self.savepoint(tx, |ctx| ctx.apply_item(tx, item, live, out));
-        if let Err(e) = res {
-            out.errors += 1;
-            tracing::warn!(error = %e, "galaxy ingest failed");
+    /// Applies one item inside a savepoint, so a failing statement can't leave it half-applied. Returns whether it
+    /// changed the database.
+    fn apply_logged(&self, tx: &Transaction, item: &Ingest, live: bool, out: &mut BatchOutcome) -> bool {
+        match self.savepoint(tx, |ctx| ctx.apply_item(tx, item, live, out)) {
+            Ok(stored) => stored,
+            Err(e) => {
+                out.errors += 1;
+                tracing::warn!(error = %e, "galaxy ingest failed");
+                false
+            }
         }
     }
 
-    fn savepoint(&self, tx: &Transaction, f: impl FnOnce(&Ctx) -> Result<()>) -> Result<()> {
+    fn savepoint<T>(&self, tx: &Transaction, f: impl FnOnce(&Ctx) -> Result<T>) -> Result<T> {
         tx.prepare_cached("SAVEPOINT item")?.execute([])?;
         let history_before = self.history_added.get();
         match f(self) {
-            Ok(()) => {
+            Ok(v) => {
                 tx.prepare_cached("RELEASE item")?.execute([])?;
-                Ok(())
+                Ok(v)
             }
             Err(e) => {
                 tx.execute_batch("ROLLBACK TO item; RELEASE item;")?;
@@ -747,13 +761,15 @@ impl Ctx {
         }
     }
 
+    /// Applies one item; returns whether it changed the database (a market older than the stored one, a body it
+    /// doesn't keep, or a report that changes nothing don't).
     fn apply_item(
         &self,
         tx: &Transaction,
         item: &Ingest,
         live: bool,
         out: &mut BatchOutcome,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         match item {
             Ingest::Market(m) => match self.apply_market(tx, m, live) {
                 Ok(MarketResult::Stored(u)) => {
@@ -761,28 +777,28 @@ impl Ctx {
                     if live {
                         out.updates.push(u);
                     }
-                    Ok(())
+                    Ok(true)
                 }
                 Ok(MarketResult::Stale) => {
                     out.stale += 1;
-                    Ok(())
+                    Ok(false)
                 }
-                Ok(MarketResult::Ignored) => Ok(()),
+                Ok(MarketResult::Ignored) => Ok(false),
                 Err(e) => Err(e),
             },
             Ingest::System(s) => self.apply_system(tx, s),
             Ingest::Station(s) => self.apply_station(tx, s),
             Ingest::RingSignals(r) => self.apply_rings(tx, r),
             Ingest::Body(b) => self.apply_body(tx, b),
-            Ingest::Raw(_) => Ok(()), // expanded before we get here
+            Ingest::Raw(_) => Ok(false), // expanded before we get here
         }
     }
 
     /// Merges one observation of a planet or moon into its row (created only for what
-    /// [`bodies::admits`] keeps); writes only when something changed.
-    fn apply_body(&self, tx: &Transaction, u: &BodyUpdate) -> Result<()> {
+    /// [`bodies::admits`] keeps); writes only when something changed, and says whether it did.
+    fn apply_body(&self, tx: &Transaction, u: &BodyUpdate) -> Result<bool> {
         if u.system_id64 <= 1 || u.system_id64 > i64::MAX as u64 {
-            return Ok(());
+            return Ok(false);
         }
         let existing = bodies::load(tx, u.system_id64, u.body_id)?;
         let mut row = match &existing {
@@ -792,13 +808,14 @@ impl Ctx {
                 body_id: u.body_id,
                 ..BodyInfo::default()
             },
-            None => return Ok(()),
+            None => return Ok(false),
         };
         bodies::merge(&mut row, u);
-        if existing.as_ref() != Some(&row) {
+        let changed = existing.as_ref() != Some(&row);
+        if changed {
             bodies::save(tx, &row)?;
         }
-        Ok(())
+        Ok(changed)
     }
 
     fn commodity_id(&self, tx: &Transaction, symbol: &str) -> Result<i64> {
@@ -1005,11 +1022,14 @@ impl Ctx {
         }))
     }
 
-    fn apply_system(&self, tx: &Transaction, s: &SystemUpdate) -> Result<()> {
+    /// Adds or updates a system; returns whether anything changed (a new system, its name or position, or newer
+    /// state).
+    fn apply_system(&self, tx: &Transaction, s: &SystemUpdate) -> Result<bool> {
         let name = s.name.trim();
         if s.id64 <= 1 || s.id64 > i64::MAX as u64 || name.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
+        let mut changed = false;
         let id = s.id64 as i64;
         let lower = name.to_lowercase();
         let existing: Option<(String, Option<[f64; 3]>, i64)> = tx
@@ -1028,6 +1048,7 @@ impl Ctx {
         };
         match &existing {
             None => {
+                changed = true;
                 let (x, y, z) = split_pos(s.pos);
                 tx.prepare_cached("INSERT INTO systems (id64, name, name_lower, x, y, z, updated) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)")?
                     .execute(params![id, name, lower, x, y, z])?;
@@ -1041,6 +1062,7 @@ impl Ctx {
                 let new_pos = s.pos.or(*old_pos);
                 let pos_changed = new_pos != *old_pos;
                 if old_name != name || pos_changed {
+                    changed = true;
                     let (x, y, z) = split_pos(new_pos);
                     tx.prepare_cached("UPDATE systems SET name = ?2, name_lower = ?3, x = ?4, y = ?5, z = ?6 WHERE id64 = ?1")?
                         .execute(params![id, name, lower, x, y, z])?;
@@ -1065,6 +1087,7 @@ impl Ctx {
         if let Some(d) = &s.details
             && details_newer
         {
+            changed = true;
             tx.prepare_cached(
                 "UPDATE systems SET population = ?2, allegiance = ?3, government = ?4, economy = ?5, second_economy = ?6, \
                  security = ?7, controlling_faction = ?8, controlling_faction_state = ?9, controlling_power = ?10, \
@@ -1113,21 +1136,22 @@ impl Ctx {
                 }
             }
         }
-        Ok(())
+        Ok(changed)
     }
 
-    fn apply_station(&self, tx: &Transaction, st: &StationUpdate) -> Result<()> {
+    /// Adds or updates a station's details; returns whether anything changed.
+    fn apply_station(&self, tx: &Transaction, st: &StationUpdate) -> Result<bool> {
         let name = clean_station_name(&st.name);
         let name = name.as_str();
         if st.market_id == 0 || st.market_id > i64::MAX as u64 || name.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let mid = st.market_id as i64;
         let existing = StationRow::load(tx, mid)?;
         if let Some(e) = &existing
             && st.timestamp < e.updated
         {
-            return Ok(()); // older than what we have
+            return Ok(false); // older than what we have
         }
         let mut row = existing.clone().unwrap_or_else(|| {
             StationRow::new(mid, name, st.system_name.as_deref().unwrap_or_default())
@@ -1202,10 +1226,11 @@ impl Ctx {
         }
         row.updated = row.updated.max(st.timestamp);
         row.recompute_traders();
-        if existing.as_ref() != Some(&row) {
+        let changed = existing.as_ref() != Some(&row);
+        if changed {
             row.save(tx, existing.as_ref(), &mut self.dirty.borrow_mut())?;
         }
-        Ok(())
+        Ok(changed)
     }
 
     fn resolve_signal(&self, raw: &str) -> String {
@@ -1217,10 +1242,11 @@ impl Ctx {
             .unwrap_or_else(|| normalize_symbol(raw))
     }
 
-    fn apply_rings(&self, tx: &Transaction, r: &RingSignalsUpdate) -> Result<()> {
+    /// Replaces a ring's hotspots; returns whether the update was usable (it's always written).
+    fn apply_rings(&self, tx: &Transaction, r: &RingSignalsUpdate) -> Result<bool> {
         let body = r.body_name.trim();
         if r.system_id64 <= 1 || r.system_id64 > i64::MAX as u64 || body.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
         let id = r.system_id64 as i64;
         ensure_system(
@@ -1242,7 +1268,7 @@ impl Ctx {
             }
             ins.execute(params![id, body, sym, count, r.ring_type, r.timestamp])?;
         }
-        Ok(())
+        Ok(true)
     }
 
     fn apply_faction_presence(&self, tx: &Transaction, f: &FactionPresence) -> Result<()> {
