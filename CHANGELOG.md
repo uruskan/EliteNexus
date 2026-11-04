@@ -128,6 +128,11 @@ release time that section becomes the new version and the release workflow publi
   next jump). The game's route now takes over, under the finished tour's summary.
 - The **Anaconda Mk II** is known by name, with its bulkheads, and as a large ship: until now the Fleet page showed
   its raw game name and market searches offered it stations with only small and medium pads.
+- **Fleet: the ship you fly is where you left it, not where you are.** Once you stepped out of it and took an Apex
+  taxi or a dropship, or crewed another commander's ship, the Ships list put your ship wherever you went. It now
+  shows where you left it (on your own or your squadron's fleet carrier, wherever the carrier has jumped since). A
+  ship you transferred showed "In transit" until the game next listed your stored ships; it now arrives when its
+  transfer time is up.
 
 ## [0.7.3-beta.2] - 2026-10-25
 

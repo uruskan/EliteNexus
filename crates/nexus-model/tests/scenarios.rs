@@ -294,6 +294,91 @@ fn stored_ships_in_transit_show_destination() {
     assert!(gs.fleet.ships.contains_key(&22), "current ship is kept");
 }
 
+/// The ship you fly stays where you stepped out of it while an Apex taxi or another commander's ship takes you
+/// elsewhere; a transferred ship has arrived once its time is up.
+#[test]
+fn the_ship_stays_where_you_left_it() {
+    use nexus_model::fleet::ShipPlace;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let place = |m: &Model| {
+        let gs = m.active().unwrap();
+        gs.ship_place(&gs.fleet.ships[&22])
+    };
+    let left_at = |m: &Model| match place(m) {
+        ShipPlace::Left(l) => l.text(),
+        other => panic!("{other:?}"),
+    };
+    let docked = |ts: &str, taxi: bool, system: &str, station: &str, market: u64| {
+        format!(r#"{{ "timestamp":"{ts}", "event":"Docked", "StationName":"{station}", "StationType":"Coriolis", "Taxi":{taxi}, "Multicrew":false, "StarSystem":"{system}", "SystemAddress":100, "MarketID":{market}, "DistFromStarLS":10.0 }}"#)
+    };
+    let step = |event: &str, ts: &str, taxi: bool, system: &str, station: &str, market: u64| {
+        format!(r#"{{ "timestamp":"{ts}", "event":"{event}", "SRV":false, "Taxi":{taxi}, "Multicrew":false, "StarSystem":"{system}", "SystemAddress":100, "Body":"{station}", "BodyID":3, "OnStation":true, "OnPlanet":false, "StationName":"{station}", "StationType":"Coriolis", "MarketID":{market} }}"#)
+    };
+    let lines = [
+        docked("2026-10-01T10:01:00Z", false, "Alpha", "Alpha Port", 5001),
+        step("Disembark", "2026-10-01T10:02:00Z", false, "Alpha", "Alpha Port", 5001),
+    ];
+    feed(&mut m, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(place(&m), ShipPlace::WithYou, "on foot beside it");
+    let lines = [
+        step("Embark", "2026-10-01T10:05:00Z", true, "Alpha", "Alpha Port", 5001),
+        r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"FSDJump", "Taxi":true, "StarSystem":"Beta", "SystemAddress":200, "StarPos":[10.0,0.0,0.0], "Population":0, "JumpDist":10.0, "FuelUsed":0.0, "FuelLevel":0.0 }"#.to_string(),
+        docked("2026-10-01T10:25:00Z", true, "Beta", "Beta Hub", 5002),
+        step("Disembark", "2026-10-01T10:26:00Z", true, "Beta", "Beta Hub", 5002),
+    ];
+    feed(&mut m, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(m.active().unwrap().location.system, "Beta");
+    assert_eq!(left_at(&m).as_deref(), Some("Alpha Port (Alpha)"), "the taxi took you, not your ship");
+    // Back by taxi, and aboard: with you again.
+    let lines = [
+        step("Embark", "2026-10-01T10:30:00Z", true, "Beta", "Beta Hub", 5002),
+        r#"{ "timestamp":"2026-10-01T10:45:00Z", "event":"FSDJump", "Taxi":true, "StarSystem":"Alpha", "SystemAddress":100, "StarPos":[0.0,0.0,0.0], "Population":0, "JumpDist":10.0, "FuelUsed":0.0, "FuelLevel":0.0 }"#.to_string(),
+        docked("2026-10-01T10:50:00Z", true, "Alpha", "Alpha Port", 5001),
+        step("Disembark", "2026-10-01T10:51:00Z", true, "Alpha", "Alpha Port", 5001),
+        step("Embark", "2026-10-01T10:52:00Z", false, "Alpha", "Alpha Port", 5001),
+    ];
+    feed(&mut m, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+    assert_eq!(place(&m), ShipPlace::WithYou);
+    // Crewing another commander's ship: yours stays docked at Alpha Port until you're back aboard it.
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T11:00:00Z", "event":"JoinACrew", "Captain":"Bob", "Telepresence":true }"#,
+            r#"{ "timestamp":"2026-10-01T11:01:00Z", "event":"Location", "Docked":false, "Multicrew":true, "StarSystem":"Gamma", "SystemAddress":300, "StarPos":[20.0,0.0,0.0], "Population":0, "Body":"Gamma", "BodyID":0, "BodyType":"Star" }"#,
+        ],
+    );
+    assert_eq!(left_at(&m).as_deref(), Some("Alpha Port (Alpha)"));
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T11:30:00Z", "event":"QuitACrew", "Captain":"Bob", "Telepresence":true }"#,
+            r#"{ "timestamp":"2026-10-01T11:30:05Z", "event":"Location", "Docked":true, "Multicrew":false, "Taxi":false, "StationName":"Alpha Port", "StationType":"Coriolis", "MarketID":5001, "StarSystem":"Alpha", "SystemAddress":100, "StarPos":[0.0,0.0,0.0], "Population":0, "Body":"Alpha Port", "BodyID":3, "BodyType":"Station" }"#,
+        ],
+    );
+    assert_eq!(place(&m), ShipPlace::WithYou);
+    // In a taxi with no record of where you left your ship: away, somewhere the journal doesn't say.
+    let mut fresh = Model::default();
+    feed(&mut fresh, LOGIN);
+    feed(&mut fresh, &[r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"FSDJump", "Taxi":true, "StarSystem":"Beta", "SystemAddress":200, "StarPos":[10.0,0.0,0.0], "Population":0 }"#]);
+    assert_eq!(place(&fresh), ShipPlace::Away);
+
+    // A transfer: in transit for its 10 minutes, then there, though only a later StoredShips says so.
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T12:00:00Z", "event":"StoredShips", "StationName":"Alpha Port", "MarketID":5001, "StarSystem":"Alpha", "ShipsHere":[ ], "ShipsRemote":[ { "ShipID":5, "ShipType":"python", "Name":"Mule", "StarSystem":"Beta", "ShipMarketID":5002, "TransferPrice":1000, "TransferTime":600, "Value":55000000, "Hot":false } ] }"#,
+            r#"{ "timestamp":"2026-10-01T12:01:00Z", "event":"ShipyardTransfer", "ShipType":"python", "ShipID":5, "System":"Beta", "ShipMarketID":5002, "Distance":10.0, "TransferPrice":1000, "TransferTime":600, "MarketID":5001 }"#,
+        ],
+    );
+    let gs = m.active().unwrap();
+    let ShipPlace::Stored(l) = gs.ship_place(&gs.fleet.ships[&5]) else { panic!() };
+    assert_eq!(l.text().as_deref(), Some("Alpha Port (Alpha)"));
+    let t = |s: &str| nexus_journal::Timestamp::parse(s).unwrap();
+    assert!(l.in_transit_at(t("2026-10-01T12:05:00Z")));
+    assert!(!l.in_transit_at(t("2026-10-01T12:11:01Z")), "arrived after its 600 s");
+}
+
 /// Suit loadouts follow what the game says happened to them: deleted ones go, renames and weapon changes show.
 #[test]
 fn suit_loadouts_follow_deletions_renames_and_weapons() {

@@ -711,6 +711,16 @@ pub struct EmbarkDisembark {
     pub market_id: Option<u64>,
 }
 
+/// `JoinACrew` / `QuitACrew`: the commander joined, or left, another commander's ship (multicrew).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct CrewSession {
+    #[serde(rename = "Captain")]
+    pub captain: String,
+    #[serde(rename = "Telepresence")]
+    pub telepresence: Option<bool>,
+}
+
 /// `LaunchSRV`, `DockSRV`, `LaunchFighter`, `DockFighter`, `SRVDestroyed`, `FighterDestroyed`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -2954,6 +2964,8 @@ journal_events! {
     ApproachSettlement => ApproachSettlement,
     Embark => EmbarkDisembark,
     Disembark => EmbarkDisembark,
+    JoinACrew => CrewSession,
+    QuitACrew => CrewSession,
     LaunchSRV => VehicleEvent,
     DockSRV => VehicleEvent,
     SRVDestroyed => VehicleEvent,

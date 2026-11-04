@@ -5,7 +5,8 @@ use crate::widgets::{self, badge, badge_size, card, card_with, empty, footnote, 
 use egui::{Grid, Label, RichText, Sense, TextEdit, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
-use nexus_model::fleet::{Ship, ShipModule};
+use nexus_journal::Timestamp;
+use nexus_model::fleet::{Ship, ShipModule, ShipPlace};
 use nexus_model::GameState;
 use nexus_spansh::{Coords, Reference, Spansh};
 
@@ -209,17 +210,15 @@ fn ship_tile(ui: &mut Ui, gs: &GameState, s: &Ship, selected: bool, st: &mut Fle
                     ui.label(RichText::new(format!("{} {}", icon::WRENCH, s.engineered_modules())).color(pal::PURPLE));
                 }
             });
-            let loc = if current {
-                gs.location.situation()
-            } else {
-                match (&s.location.system, &s.location.station, s.location.in_transit) {
-                    (Some(sys), Some(stn), true) => format!("{} In transit → {} ({})", icon::TRUCK, stn, sys),
-                    (Some(sys), Some(stn), false) => format!("{} {} ({})", icon::MAP_PIN, stn, sys),
-                    (Some(sys), None, _) => format!("{} {}", icon::MAP_PIN, sys),
-                    _ => "Location unknown".into(),
-                }
+            let loc = match gs.ship_place(s) {
+                ShipPlace::WithYou => gs.location.situation(),
+                ShipPlace::Left(l) => format!("{} Left at {}", icon::MAP_PIN, l.text().unwrap_or_else(|| "a place your journal doesn't name".into())),
+                ShipPlace::Away => format!("{} Not with you: your journal doesn't say where you left it", icon::MAP_PIN),
+                ShipPlace::Stored(l) if l.in_transit_at(Timestamp::now()) => format!("{} In transit → {}", icon::TRUCK, l.text().unwrap_or_default()),
+                ShipPlace::Stored(l) => format!("{} {}", icon::MAP_PIN, l.text().unwrap_or_default()),
+                ShipPlace::Unknown => "Location unknown".into(),
             };
-            ui.label(RichText::new(loc).small().color(pal::DIM));
+            ui.add(Label::new(RichText::new(loc).small().color(pal::DIM)).wrap());
         })
         .response
         .interact(Sense::click());

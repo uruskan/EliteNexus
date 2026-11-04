@@ -7,7 +7,7 @@ use crate::colonisation::Colonisation;
 use crate::commander::{Commander, PowerplayStatus, Squadron};
 use crate::exobio::{ExoBio, ScanOutcome};
 use crate::exploration::{interesting, Exploration, Interest};
-use crate::fleet::Fleet;
+use crate::fleet::{Fleet, Ship, ShipLocation, ShipPlace};
 use crate::history::{DeathRecord, DockRecord, History, JumpRecord, LedgerCategory};
 use crate::inventory::{Inventory, MaterialCategory};
 use crate::location::{ArrivalKind, Location};
@@ -267,6 +267,7 @@ impl GameState {
             // ---------------------------------------------------------------- travel
             Event::Location(a) => {
                 self.location.on_arrival(a, ts, ArrivalKind::Location);
+                self.ship_follows(a, false);
                 self.history.visit(a.system_address, &a.star_system, a.star_pos, ts);
                 self.exobio.on_system(a.system_address);
                 self.mining.at_body(a.system_address, a.body_id);
@@ -275,6 +276,7 @@ impl GameState {
             }
             Event::FSDJump(a) => {
                 self.location.on_arrival(a, ts, ArrivalKind::Jump);
+                self.ship_follows(a, false);
                 let dist = a.jump_dist.unwrap_or(0.0);
                 self.history.jump(JumpRecord {
                     ts,
@@ -314,6 +316,7 @@ impl GameState {
             }
             Event::CarrierJump(a) => {
                 self.location.on_arrival(a, ts, ArrivalKind::CarrierJump);
+                self.ship_follows(a, true);
                 self.history.jump(JumpRecord {
                     ts,
                     system: a.star_system.clone(),
@@ -417,15 +420,50 @@ impl GameState {
                 self.location.on_foot = false;
                 self.location.in_srv = e.srv;
                 self.location.in_taxi = e.taxi;
+                self.location.multicrew = e.multicrew;
+                // Back aboard their own ship (not an SRV, a taxi or another commander's ship): it's where they are.
+                if !e.srv && !e.taxi && !e.multicrew {
+                    self.fleet.left_at = None;
+                }
             }
             Event::Disembark(d) => {
                 self.location.on_foot = true;
                 self.location.in_srv = false;
+                self.location.in_taxi = false;
+                // Out of their own ship: it stays here while they walk, or ride and crew elsewhere.
+                if !d.srv && !d.taxi && !d.multicrew {
+                    self.fleet.left_at = Some(ShipLocation {
+                        system: Some(d.star_system.clone()).filter(|s| !s.is_empty()),
+                        station: d.station_name.as_deref().filter(|_| d.on_station).map(clean_station_name),
+                        market_id: d.market_id.filter(|_| d.on_station),
+                        body: d.body.clone().filter(|_| !d.on_station),
+                        updated: ts,
+                        ..Default::default()
+                    });
+                }
                 if d.on_planet && !d.on_station
                     && let Some(body_id) = d.body_id {
                         self.exploration.on_footfall(d.system_address, body_id);
                     }
             }
+            Event::JoinACrew(_) => {
+                // Their own ship stays where they were when they joined.
+                if self.fleet.left_at.is_none() && self.fleet.current_ship_id.is_some() {
+                    let loc = &self.location;
+                    let station = loc.station.as_ref().filter(|_| loc.docked);
+                    self.fleet.left_at = Some(ShipLocation {
+                        system: Some(loc.system.clone()).filter(|s| !s.is_empty()),
+                        station: station.map(|s| s.name.clone()),
+                        market_id: station.map(|s| s.market_id),
+                        body: loc.body.clone().filter(|_| station.is_none()),
+                        updated: ts,
+                        ..Default::default()
+                    });
+                }
+                self.location.multicrew = true;
+            }
+            // Back to their own ship: the next arrival (Location) says where it is.
+            Event::QuitACrew(_) => self.location.multicrew = false,
             Event::LaunchSRV(v) => {
                 self.location.in_srv = true;
                 self.location.srv_type = v.srv_type.clone();
@@ -1250,7 +1288,53 @@ impl GameState {
         self.prev_flags = st.flags;
     }
 
+    /// An arrival says where the commander is. Aboard their own ship (no taxi, no other commander's ship, not on
+    /// foot), that's where the ship is too. A carrier the ship was left on takes it along when it jumps.
+    fn ship_follows(&mut self, a: &ev::SystemArrival, carrier_jump: bool) {
+        if carrier_jump
+            && let Some(l) = self.fleet.left_at.as_mut()
+            && l.market_id.is_some()
+            && l.market_id == a.market_id
+        {
+            l.system = Some(a.star_system.clone());
+        }
+        if a.taxi != Some(true) && a.multicrew != Some(true) && a.on_foot != Some(true) {
+            self.fleet.left_at = None;
+        }
+    }
+
     // ---------------------------------------------------------------- convenience queries
+
+    /// Where `s`, one of the commander's ships, is as far as the journal tells. The ship they fly is where they are,
+    /// unless they stepped out of it and are elsewhere now (an Apex taxi or a dropship, another commander's ship).
+    pub fn ship_place(&self, s: &Ship) -> ShipPlace {
+        // Docked on a carrier the commander or their squadron owns, which may have jumped since.
+        let on_carrier = |mut l: ShipLocation| {
+            if let Some(c) = [&self.carrier, &self.squadron_carrier].into_iter().find(|c| c.id.is_some() && c.id == l.market_id)
+                && let Some(system) = &c.system
+            {
+                l.system = Some(system.clone());
+            }
+            l
+        };
+        let loc = &self.location;
+        if self.fleet.current_ship_id == Some(s.id) {
+            let away = loc.in_taxi || loc.multicrew;
+            return match &self.fleet.left_at {
+                // On foot beside it, at the station or on the body where they stepped out.
+                Some(l) if !away && l.system.as_deref() == Some(loc.system.as_str()) && (l.station.is_none() || loc.station.as_ref().map(|st| &st.name) == l.station.as_ref()) => {
+                    ShipPlace::WithYou
+                }
+                Some(l) => ShipPlace::Left(on_carrier(l.clone())),
+                None if away => ShipPlace::Away,
+                None => ShipPlace::WithYou,
+            };
+        }
+        if s.location.system.is_none() && s.location.station.is_none() {
+            return ShipPlace::Unknown;
+        }
+        ShipPlace::Stored(on_carrier(s.location.clone()))
+    }
 
     pub fn current_body_radius(&self) -> Option<f64> {
         self.status.as_ref().and_then(|s| s.planet_radius)
