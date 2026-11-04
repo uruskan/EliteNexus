@@ -577,6 +577,115 @@ fn surface_mining_remembers_the_location() {
     assert!(alerts.is_empty(), "the ship landing itself (recalled), in the session that worked it");
 }
 
+/// One way Chequers2's runs (discussion 5) could have come out "location not named". Dismissed from the Rhino, the
+/// ship lifts off with no position and, recalled, lands with none: the location the landing named holds for the whole
+/// run. Lifting off yourself leaves it: a Rhino dropped later from the hovering ship, or after landing far from every
+/// location, isn't named.
+#[test]
+fn surface_mining_keeps_the_location_when_the_ship_is_dismissed() {
+    use nexus_model::mining::SiteKey;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let unpiloted = |event: &str, ts: &str, nearest: Option<&str>| {
+        let nearest = nearest.map(|n| format!(r#", "NearestDestination":"{n}""#)).unwrap_or_default();
+        format!(r#"{{ "timestamp":"{ts}", "event":"{event}", "PlayerControlled":false, "Taxi":false, "Multicrew":false, "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 1", "BodyID":1, "OnStation":false, "OnPlanet":true{nearest} }}"#)
+    };
+    let touchdown = landing("Touchdown", "2026-10-01T10:03:00Z", 9, 10.0, 20.0, true);
+    let dismissed = unpiloted("Liftoff", "2026-10-01T10:05:00Z", None);
+    let recalled = unpiloted("Touchdown", "2026-10-01T10:40:00Z", Some(""));
+    let (first, second) = (refined("2026-10-01T10:10:00Z", "iridium", "Iridium"), refined("2026-10-01T10:45:00Z", "iridium", "Iridium"));
+    feed(&mut m, &[touchdown.as_str(), RHINO_OUT, dismissed.as_str(), first.as_str(), recalled.as_str(), second.as_str()]);
+    let named = SiteKey { system_address: 100, body_id: 1, location: Some(9) };
+    let sites: Vec<SiteKey> = m.active().unwrap().mining.sites.keys().copied().collect();
+    assert_eq!(sites, [named], "both tonnes at mining location 9");
+    assert_eq!(m.active().unwrap().mining.sites[&named].total(), 2);
+
+    // Lifted off and flew on: the Rhino dropped from the hovering ship (no landing at all) isn't credited to location 9.
+    let liftoff = landing("Liftoff", "2026-10-01T11:00:00Z", 9, 10.0, 20.0, true);
+    let third = refined("2026-10-01T11:20:00Z", "iridium", "Iridium");
+    feed(&mut m, &[RHINO_IN, liftoff.as_str(), RHINO_OUT, third.as_str()]);
+    let unnamed = SiteKey { location: None, ..named };
+    assert_eq!(m.active().unwrap().mining.sites.keys().copied().collect::<Vec<_>>(), [unnamed, named]);
+    // Nor is a run after setting down somewhere the game names no location.
+    let far = r#"{ "timestamp":"2026-10-01T11:40:00Z", "event":"Touchdown", "PlayerControlled":true, "Taxi":false, "Multicrew":false, "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 1", "BodyID":1, "OnStation":false, "OnPlanet":true, "Latitude":-30.0, "Longitude":100.0, "NearestDestination":"" }"#;
+    let fourth = refined("2026-10-01T11:50:00Z", "iridium", "Iridium");
+    feed(&mut m, &[RHINO_IN, far, RHINO_OUT, fourth.as_str()]);
+    assert_eq!((m.active().unwrap().mining.sites[&unnamed].total(), m.active().unwrap().mining.sites.len()), (2, 2));
+}
+
+/// A Rhino dropped from a hovering ship (out of glide and under 30 m) has no Touchdown, so the game names
+/// no location: the run takes the planetary mining location targeted then (Status.json, live) and records it. Read
+/// again on a later start with the recorded drops, the journal names the run the same; without them (runs from before),
+/// it isn't named. A ship flown down far from every location takes nothing from a target.
+#[test]
+fn surface_mining_names_a_hover_drop_from_the_target() {
+    use nexus_model::mining::SiteKey;
+    let status = |m: &mut Model, destination: Option<&str>| {
+        let destination = destination.map(|n| format!(r#", "Destination":{{ "System":100, "Body":1, "Name":"{n}" }}"#)).unwrap_or_default();
+        let text = format!(
+            r#"{{ "timestamp":"2026-10-01T10:02:30Z", "event":"Status", "Flags":18874368, "Flags2":0, "Latitude":10.0, "Longitude":20.0, "Heading":90, "Altitude":25, "BodyName":"Alpha 1", "PlanetRadius":1000000.0{destination} }}"#
+        );
+        let st = nexus_journal::Companion::parse(nexus_journal::CompanionKind::Status, &text).expect("Status.json");
+        m.apply_companion(&st, true, &mut Alerts::live());
+    };
+    let launch = |ts: &str| format!(r#"{{ "timestamp":"{ts}", "event":"LaunchSRV", "SRVType":"mev_rhino", "SRVType_Localised":"Rhino MEV", "Loadout":"default", "ID":53, "PlayerControlled":true }}"#);
+    let replay = |m: &mut Model, lines: &[&str]| {
+        let mut quiet = Alerts::disabled();
+        for line in lines {
+            let (ts, name) = scan_line(line).expect("valid journal line");
+            let ev = Event::parse(name, line).expect("typed parse");
+            m.apply(&EventCtx { ts, name, line, live: false }, &ev, &mut quiet);
+        }
+    };
+    let signals = r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"FSSBodySignals", "BodyName":"Alpha 1", "BodyID":1, "SystemAddress":100, "Signals":[ { "Type":"$PlanetaryMiningLocation_Name;", "Type_Localised":"Planetary Mining Location", "Count":13 } ] }"#;
+    let approach = r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"ApproachBody", "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 1", "BodyID":1 }"#;
+    let (out, iridium) = (launch("2026-10-01T10:04:00Z"), refined("2026-10-01T10:10:00Z", "iridium", "Iridium"));
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(&mut m, &[signals, approach]);
+    status(&mut m, Some("$SAA_Unknown_Signal:#type=$PlanetaryMiningLocation_Name;:#index=6;"));
+    status(&mut m, None);
+    feed(&mut m, &[out.as_str(), iridium.as_str()]);
+    let six = SiteKey { system_address: 100, body_id: 1, location: Some(6) };
+    let gs = m.active().unwrap();
+    assert_eq!(gs.mining.sites.keys().copied().collect::<Vec<_>>(), [six], "the target holds though deselected on arrival");
+    assert_eq!((gs.mining.drops.values().copied().collect::<Vec<_>>(), gs.mining.drops_rev), (vec![six], 1));
+    let drops = gs.mining.drops.clone();
+
+    // A second drop from the same hover with no record (Elite Nexus wasn't running): the ship may have flown on.
+    let (out2, more) = (launch("2026-10-01T10:35:00Z"), refined("2026-10-01T10:36:00Z", "iridium", "Iridium"));
+    let journal: Vec<&str> = LOGIN.iter().copied().chain([signals, approach, out.as_str(), iridium.as_str(), RHINO_IN, out2.as_str(), more.as_str()]).collect();
+    let mut again = Model::with_mining_drops(drops);
+    replay(&mut again, &journal);
+    let unnamed = SiteKey { location: None, ..six };
+    let tonnes = |m: &Model| m.active().unwrap().mining.sites.iter().map(|(k, s)| (*k, s.total())).collect::<Vec<_>>();
+    assert_eq!(tonnes(&again), [(unnamed, 1), (six, 1)], "read again: the recorded drop named, the other not");
+    let mut before = Model::default();
+    replay(&mut before, &journal);
+    assert_eq!(tonnes(&before), [(unnamed, 2)], "no drop recorded");
+
+    // Live, back aboard the hovering ship and out again: the target still holds and the new drop is recorded too.
+    feed(&mut m, &[RHINO_IN, launch("2026-10-01T10:30:30Z").as_str()]);
+    assert_eq!((m.active().unwrap().mining.drops.len(), m.active().unwrap().mining.here.as_ref().map(|h| h.key)), (2, Some(six)));
+
+    // Back aboard, off and over to another location: targeted the bare way Status.json may write it, on a body whose
+    // scans found mining locations.
+    let liftoff = landing("Liftoff", "2026-10-01T10:31:00Z", 6, 10.0, 20.0, true);
+    feed(&mut m, &[RHINO_IN, liftoff.as_str()]);
+    status(&mut m, Some("$SAA_Unknown_Signal:#index=8;"));
+    feed(&mut m, &[launch("2026-10-01T10:40:00Z").as_str(), refined("2026-10-01T10:45:00Z", "iridium", "Iridium").as_str()]);
+    let eight = SiteKey { location: Some(8), ..six };
+    assert!(m.active().unwrap().mining.sites.contains_key(&eight));
+
+    // Flown down far from every location (the game named none within 50 km): a target doesn't place the Rhino.
+    let far = r#"{ "timestamp":"2026-10-01T11:00:00Z", "event":"Touchdown", "PlayerControlled":true, "Taxi":false, "Multicrew":false, "StarSystem":"Alpha", "SystemAddress":100, "Body":"Alpha 1", "BodyID":1, "OnStation":false, "OnPlanet":true, "Latitude":-30.0, "Longitude":100.0 }"#;
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:50:00Z", "event":"DockSRV", "SRVType":"mev_rhino", "ID":53 }"#, far]);
+    status(&mut m, Some("$SAA_Unknown_Signal:#type=$PlanetaryMiningLocation_Name;:#index=6;"));
+    feed(&mut m, &[launch("2026-10-01T11:01:00Z").as_str(), refined("2026-10-01T11:05:00Z", "iridium", "Iridium").as_str()]);
+    let gs = m.active().unwrap();
+    assert_eq!((gs.mining.sites[&unnamed].total(), gs.mining.drops.len()), (1, 3));
+}
+
 /// Logging out in the Rhino and back in keeps the location the landing named; logging in on another body drops it.
 #[test]
 fn surface_mining_location_survives_a_relog_on_the_same_body() {

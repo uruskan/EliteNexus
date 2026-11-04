@@ -112,8 +112,9 @@ pub struct NexusApp {
     /// When this frame's work began, and when a slow frame was last logged.
     frame_started: Option<Instant>,
     slow_frame_logged: Option<Instant>,
-    /// The commander and their model's `mining.spots_rev` when the Rhino's deposits were last copied into the settings.
-    deposits_rev: (String, u64),
+    /// The commander and their model's `mining.spots_rev` and `drops_rev` when the Rhino's deposits and hover drops
+    /// were last copied into the settings.
+    deposits_rev: (String, u64, u64),
 }
 
 impl NexusApp {
@@ -136,7 +137,7 @@ impl NexusApp {
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("nexus-net").enable_all().build().expect("tokio runtime");
         let mut market = crate::market::MarketService::open(&data_dir, &cc.egui_ctx);
         market.set_watches(&settings.price_watches);
-        let core = start_core(&cc.egui_ctx, ov.journal_dir.as_ref().or(settings.journal_dir.as_ref()), market.history_sink());
+        let core = start_core(&cc.egui_ctx, ov.journal_dir.as_ref().or(settings.journal_dir.as_ref()), market.history_sink(), &settings.mining);
         market.attach(&core);
         market.set_listen(settings.accounts.eddn_listen, rt.handle());
         // Test runs (CLI journal folder, screenshots) never upload: replayed journals must not reach the services.
@@ -206,18 +207,20 @@ impl NexusApp {
             frame_started: None,
             // The first frames load fonts and textures: nothing is logged in the first 10 seconds.
             slow_frame_logged: Some(Instant::now()),
-            deposits_rev: (String::new(), 0),
+            deposits_rev: (String::new(), 0, 0),
         }
     }
 
-    /// Keeps the deposits the Rhino refined at: their positions come from Status.json, so only a live run has them.
+    /// Keeps the deposits the Rhino refined at and the locations of Rhinos dropped from a hover: both come from
+    /// Status.json, so only a live run has them.
     fn remember_deposits(&mut self) {
         let model = self.core.model.read();
         let Some(gs) = model.active() else { return };
-        if self.deposits_rev.0 == gs.cmdr.fid && self.deposits_rev.1 == gs.mining.spots_rev {
+        let rev = (gs.cmdr.fid.clone(), gs.mining.spots_rev, gs.mining.drops_rev);
+        if self.deposits_rev == rev {
             return;
         }
-        self.deposits_rev = (gs.cmdr.fid.clone(), gs.mining.spots_rev);
+        self.deposits_rev = rev;
         if pages::mining::remember(gs, &mut self.settings.mining) {
             self.settings_dirty = Some(Instant::now());
         }
@@ -713,7 +716,7 @@ impl NexusApp {
             self.speaker.say("Elite Nexus voice check. All systems nominal, commander.");
         }
         if restart {
-            self.core = start_core(ctx, self.overrides.journal_dir.as_ref().or(self.settings.journal_dir.as_ref()), self.market.history_sink());
+            self.core = start_core(ctx, self.overrides.journal_dir.as_ref().or(self.settings.journal_dir.as_ref()), self.market.history_sink(), &self.settings.mining);
             self.sync.attach(&self.core);
             self.market.attach(&self.core);
         }
@@ -776,9 +779,9 @@ impl NexusApp {
     }
 }
 
-fn start_core(ctx: &egui::Context, journal_dir: Option<&PathBuf>, history: Option<crate::core::HistorySink>) -> Core {
+fn start_core(ctx: &egui::Context, journal_dir: Option<&PathBuf>, history: Option<crate::core::HistorySink>, mining: &pages::mining::MiningPrefs) -> Core {
     let repaint_ctx = ctx.clone();
-    Core::start(journal_dir.cloned(), move || repaint_ctx.request_repaint(), history)
+    Core::start(journal_dir.cloned(), move || repaint_ctx.request_repaint(), history, pages::mining::drops(mining))
 }
 
 #[derive(Clone, Copy)]

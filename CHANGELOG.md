@@ -15,6 +15,13 @@ release time that section becomes the new version and the release workflow publi
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
 - **Fleet** shows the landing pad each ship needs (S, M or L), in the ship list and on its Loadout card (asked for by
   Alvarrune on the Frontier Forums).
+- **Mining** › Surface radar numbers the deposits (an idea from Chequers2): 1, 2, 3… on each body in the order the
+  Rhino records them, kept between runs, beside each deposit on the radar, in the list under it and on the overlay's
+  radar. Each deposit in the list takes a note of your own, such as how many rigs fit, so two deposits of the same
+  commodity can be told apart. Deposits kept by 0.7.3-beta.1 are numbered too, oldest first.
+- **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
+  the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
+  for later starts.
 
 ### Changed
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
@@ -60,6 +67,15 @@ release time that section becomes the new version and the release workflow publi
   or two, and nothing said so. It can now search a period you name ("where did I go from 22 to 29 October?") and page
   back through it, says when it left older matches out and from which day your journal folder starts, and gives times
   in your local time.
+- **Mining** › Surface mining sites: a Rhino run in which you sent your ship away (or called it back) is credited to
+  the mining location your landing named. When the ship lifted off or landed by itself without naming a location,
+  Elite Nexus took that for a landing far from every location and listed the run as "location not named". The list
+  is read from the journal, so earlier runs move to their location too. The game names a location only when the ship
+  touches down or lifts off within 50 km of one, so a Rhino dropped from a hovering ship gets no number from the
+  journal (it takes your target instead, see Added). An unnamed site now says so: target the location, or touch down
+  by it, before you deploy. A drop after you lifted off is no longer credited to the location you left. A body you
+  mined where the game named no location no longer says "you've worked 0": it says "at least 1". Reported by
+  Chequers2.
 
 ## [0.7.3-beta.2] - 2026-10-25
 

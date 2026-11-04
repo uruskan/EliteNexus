@@ -104,6 +104,9 @@ pub enum LiveMsg {
 /// commander's own stations, systems and hotspots).
 pub type HistorySink = Box<dyn FnMut(&str, &str) + Send>;
 
+/// Rhino launches with the mining location recorded for them, by the launch's journal time.
+pub type Drops = std::collections::BTreeMap<nexus_journal::Timestamp, nexus_model::mining::SiteKey>;
+
 pub struct Core {
     pub model: Arc<RwLock<Model>>,
     /// Every journal event (24 bytes each; JSON read from disk on demand).
@@ -115,7 +118,9 @@ pub struct Core {
 }
 
 impl Core {
-    pub fn start(journal_dir: Option<PathBuf>, repaint: impl Fn() + Send + 'static, history_sink: Option<HistorySink>) -> Core {
+    /// `drops`: Rhino launches recorded on earlier runs ([`nexus_model::mining::Mining::drops`]), given to the model
+    /// before it reads the journals.
+    pub fn start(journal_dir: Option<PathBuf>, repaint: impl Fn() + Send + 'static, history_sink: Option<HistorySink>, drops: Drops) -> Core {
         let model = Arc::new(RwLock::new(Model::default()));
         let index = Arc::new(RwLock::new(JournalIndex::default()));
         let status = Arc::new(RwLock::new(CoreStatus::default()));
@@ -126,7 +131,7 @@ impl Core {
             let (model, index, status, subscribers, stop) = (model.clone(), index.clone(), status.clone(), subscribers.clone(), stop.clone());
             std::thread::Builder::new()
                 .name("nexus-core".into())
-                .spawn(move || run(journal_dir, model, index, status, subscribers, alert_tx, stop, repaint, history_sink))
+                .spawn(move || run(journal_dir, model, index, status, subscribers, alert_tx, stop, repaint, history_sink, drops))
                 .expect("spawn core thread");
         }
         Core { model, index, status, alerts: alert_rx, subscribers, stop }
@@ -163,6 +168,7 @@ fn run(
     stop: Arc<AtomicBool>,
     repaint: impl Fn(),
     mut history_sink: Option<HistorySink>,
+    drops: Drops,
 ) {
     let Some(dir) = journal_dir.or_else(nexus_journal::default_journal_dir) else {
         tracing::warn!("no journal folder found");
@@ -197,7 +203,7 @@ fn run(
         st.phase = Phase::Loading { done: 0, total };
     }
     repaint();
-    let mut local = Model::default();
+    let mut local = Model::with_mining_drops(drops);
     let mut idx = JournalIndex::default();
     let mut quiet = Alerts::disabled();
     let mut resume: Option<(PathBuf, u64)> = None;
