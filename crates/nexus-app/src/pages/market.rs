@@ -761,7 +761,13 @@ fn pad_rank(p: Option<char>) -> u8 {
 pub(crate) fn age(updated_unix: i64) -> (String, egui::Color32) {
     let s = (nexus_journal::Timestamp::now().0 - updated_unix).max(0);
     let col = if s < 3600 { pal::GOOD } else if s < 6 * 3600 { pal::CYAN } else if s < 48 * 3600 { pal::WARN } else { pal::FAINT };
-    let txt = if s < 60 {
+    (span(s), col)
+}
+
+/// A stretch of time in its largest whole unit: "40s", "5m", "3h", "2d".
+fn span(secs: i64) -> String {
+    let s = secs.max(0);
+    if s < 60 {
         format!("{s}s")
     } else if s < 3600 {
         format!("{}m", s / 60)
@@ -769,8 +775,7 @@ pub(crate) fn age(updated_unix: i64) -> (String, egui::Color32) {
         format!("{}h", s / 3600)
     } else {
         format!("{}d", s / 86_400)
-    };
-    (txt, col)
+    }
 }
 
 fn cr(v: i64) -> String {
@@ -1932,20 +1937,20 @@ fn pick_card(ui: &mut Ui, d: &PickDetail, (symbol, name): (&str, &str), origin: 
                     }
                     ui.add_space(6.0);
                     // A carrier's order: how long it has stood at this price, as far as the price history tells.
-                    let since = |ui: &mut Ui, s: Option<Stood>| {
+                    let since = |ui: &mut Ui, s: Option<Stood>, selling: bool, last: i64| {
                         if let Some(s) = s.filter(|_| st.is_carrier) {
-                            ui.add(egui::Label::new(RichText::new(stood_words(s)).size(size::FOOTNOTE).color(pal::DIM)).wrap());
+                            ui.add(egui::Label::new(RichText::new(stood_words(s, selling, last)).size(size::FOOTNOTE).color(pal::DIM)).wrap());
                         }
                     };
                     match m.items.iter().find(|r| r.symbol == symbol) {
                         Some(r) => {
                             if r.buy > 0 && r.stock > 0 {
                                 ui.label(RichText::new(format!("Sells {} for {} · {} in stock", name, cr(r.buy), nexus_data::names::group_digits(r.stock))).color(pal::CYAN));
-                                since(ui, d.since.and_then(|s| s.buy));
+                                since(ui, d.since.and_then(|s| s.buy), true, r.updated_unix);
                             }
                             if r.sell > 0 && r.demand > 0 {
                                 ui.label(RichText::new(format!("Buys {} for {} · {} wanted", name, cr(r.sell), nexus_data::names::group_digits(r.demand))).color(pal::GOOD));
-                                since(ui, d.since.and_then(|s| s.sell));
+                                since(ui, d.since.and_then(|s| s.sell), false, r.updated_unix);
                             }
                             let (a, col) = age(r.updated_unix);
                             ui.label(RichText::new(format!("Updated {a} ago · {} goods on this market", m.items.len())).size(size::FOOTNOTE).color(col));
@@ -1962,23 +1967,34 @@ fn pick_card(ui: &mut Ui, d: &PickDetail, (symbol, name): (&str, &str), origin: 
     action
 }
 
-/// How long a carrier's order has stood at its price, in words. The price history is all there is to go by: neither
-/// the game nor the live feed says when an order was set up, only what a market listed each time it was reported.
-fn stood_words(s: Stood) -> String {
+/// How long a carrier's order has stood at its price, in words: what it sells for (`selling`) or what it pays, up to
+/// its latest report (`last`), the newest anyone sent: nothing is known after it. The price history is all there is
+/// to go by: neither the game nor the live feed says when an order was set up, only what a market listed each time
+/// it was reported.
+fn stood_words(s: Stood, selling: bool, last: i64) -> String {
     let when = |t: i64| nexus_journal::Timestamp(t).to_local_string("%d %b %H:%M");
-    let ago = |t: i64| age(t).0;
+    let reports = |from: i64| format!("in every report from {} to the latest, {} ({})", when(from), when(last), span(last - from));
+    // The report before: what it had on this side (a buy order may have been a sale before, or the other way round).
+    let had = |previous: i64| match previous {
+        0 if selling => "had none for sale".to_string(),
+        0 => "had no buy order for it".to_string(),
+        p => format!("had {}", cr(p)),
+    };
+    let new = if selling { "For sale" } else { "Wanted" };
     match s {
-        Stood::Since { since, before, previous: 0 } => {
-            format!("Order first reported {} ({} ago): the report before, {}, didn't list it.", when(since), ago(since), when(before))
+        Stood::Since { since, before, previous } if since < last => {
+            let head = if previous == 0 { format!("{new} at this price") } else { "Price unchanged".to_string() };
+            format!("{head} {}. The report before, {}, {}.", reports(since), when(before), had(previous))
         }
-        Stood::Since { since, before, previous } => {
-            format!("Price unchanged since {} ({} ago). The report before, {}, had {}.", when(since), ago(since), when(before), cr(previous))
+        Stood::Since { before, previous, .. } => {
+            let head = if previous == 0 { format!("{new} since the latest report") } else { "Price changed in the latest report".to_string() };
+            format!("{head}, {}. The report before, {}, {}.", when(last), when(before), had(previous))
         }
-        Stood::AtLeast { since } => format!(
-            "Price unchanged for at least {} (since {}). Elite Nexus can't see further back: it keeps 30 days of price changes, from the first report of this market it received.",
-            ago(since),
-            when(since)
+        Stood::AtLeast { since } if since < last => format!(
+            "Price unchanged {}. Elite Nexus can't see further back: it keeps 30 days of price changes, from the first report of this market it received.",
+            reports(since)
         ),
+        Stood::AtLeast { .. } => format!("Only the latest report, {}, is on record for this price: how long it stood before that isn't known.", when(last)),
         Stood::Unknown => "How long this price has stood isn't known: Elite Nexus follows this market's prices from its next report.".to_string(),
     }
 }
@@ -3676,6 +3692,28 @@ mod tests {
         assert_eq!(word(Some("something new")), "?");
         assert_eq!(carrier_access("Squadron Friends"), "squadron and friends");
         assert_eq!(carrier_access("none"), "nobody but the owner");
+    }
+
+    /// How long an order stood, in words: up to the latest report, never to now, and per side (a buy order the report
+    /// before didn't have may have been a sale then).
+    #[test]
+    fn how_long_an_order_stood_in_words() {
+        const D: i64 = 86_400;
+        let last = 100 * D;
+        let since = |s, selling| stood_words(s, selling, last);
+        let changed = since(Stood::Since { since: 88 * D, before: 82 * D, previous: 50_000 }, false);
+        assert!(changed.starts_with("Price unchanged in every report from ") && changed.contains("to the latest") && changed.contains("(12d)"), "{changed}");
+        assert!(changed.ends_with(&format!("had {}.", cr(50_000))), "{changed}");
+        let wanted = since(Stood::Since { since: 95 * D, before: 90 * D, previous: 0 }, false);
+        assert!(wanted.starts_with("Wanted at this price") && wanted.ends_with("had no buy order for it."), "{wanted}");
+        let for_sale = since(Stood::Since { since: last, before: 90 * D, previous: 0 }, true);
+        assert!(for_sale.starts_with("For sale since the latest report") && for_sale.ends_with("had none for sale."), "{for_sale}");
+        let kept = since(Stood::AtLeast { since: 75 * D }, false);
+        assert!(kept.contains("(25d)") && kept.contains("can't see further back"), "{kept}");
+        // One report on record (or one older than the history kept): nothing about how long.
+        for one in [Stood::AtLeast { since: last }, Stood::AtLeast { since: last + 5 * D }] {
+            assert!(since(one, false).starts_with("Only the latest report"), "{one:?}");
+        }
     }
 
     #[test]
