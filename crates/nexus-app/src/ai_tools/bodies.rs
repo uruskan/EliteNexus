@@ -304,7 +304,7 @@ impl NexusTools {
             let stops = sf::route_stops(&found, asked);
             return Ok(shape_route(&from, &to, &q, &found, &stops, asked, &own_runs(), self.budget));
         }
-        let (origin, near) = self.origin(a, &me)?;
+        let (origin, near) = self.origin_online(a, &me)?;
         let q = Query { around: Around::Here(origin), radius_ly: radius(100.0), class, volcanism, min_locations, max_ls };
         let found = self.spansh_search(SPANSH_TIMEOUT, sf::near(&self.spansh, &q))?;
         let mut list: Vec<&Candidate> = found.list.iter().collect();
@@ -340,7 +340,7 @@ impl NexusTools {
         let radius_ly = arg_f64(a, "max_distance_ly").unwrap_or(100.0).clamp(1.0, f64::from(*crate::tours::limits::RADIUS_LY.end()));
         let order = if arg_str(a, "sort").is_some_and(|s| s.eq_ignore_ascii_case("nearest")) { Order::Nearest } else { Order::Richest };
         let me = self.me()?;
-        let (origin, near) = self.origin(a, &me)?;
+        let (origin, near) = self.origin_online(a, &me)?;
         let mut s = BodySearch { near: &near, material, radius_ly, max_gravity_g, max_ls, order, matched: 0 };
         let found = self.spansh_call(self.spansh.search_bodies(&request(origin, &s)))?;
         s.matched = found.count;

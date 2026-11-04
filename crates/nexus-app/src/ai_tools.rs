@@ -171,8 +171,18 @@ impl NexusTools {
         })
     }
 
-    /// Position and name of `near_system` (local database, then Spansh), or the commander's.
+    /// Position and name of `near_system`, or the commander's, for a tool answering from local data: the local database,
+    /// then for Ask only, Spansh. An agent's call stays local, as the tool's `online: false` says, so it counts as one.
     fn origin(&self, args: &Value, me: &Me) -> Result<([f64; 3], String), String> {
+        self.locate(args, me, self.caller == Caller::Ask)
+    }
+
+    /// [`Self::origin`] for a tool that asks Spansh anyway (`online: true`): any caller may look the system up there.
+    fn origin_online(&self, args: &Value, me: &Me) -> Result<([f64; 3], String), String> {
+        self.locate(args, me, true)
+    }
+
+    fn locate(&self, args: &Value, me: &Me, spansh: bool) -> Result<([f64; 3], String), String> {
         if let Some(name) = arg_str(args, "near_system").filter(|n| !n.eq_ignore_ascii_case(&me.system)) {
             if let Some(db) = &self.db
                 && let Ok(Some(s)) = db.system_by_name(&name)
@@ -180,7 +190,13 @@ impl NexusTools {
             {
                 return Ok((p, s.name));
             }
-            let found = self.rt.block_on(self.spansh.system_by_name(&name)).map_err(|e| format!("Spansh: {e}"))?;
+            if !spansh {
+                return Err(format!("\"{name}\" isn't in Elite Nexus' galaxy database, which this tool answers from: give a system near it that has markets, or leave near_system out to search around the commander."));
+            }
+            let found = match self.rt.block_on(async { tokio::time::timeout(SPANSH_TIMEOUT, self.spansh.system_by_name(&name)).await }) {
+                Ok(r) => r.map_err(|e| format!("Spansh: {e}"))?,
+                Err(_) => return Err("Spansh: no answer in time".into()),
+            };
             return found.map(|s| ([s.x, s.y, s.z], s.name)).ok_or_else(|| format!("Unknown system \"{name}\"."));
         }
         me.pos.map(|p| (p, me.system.clone())).ok_or_else(|| "The commander's position is not known yet.".to_string())
@@ -262,7 +278,7 @@ impl NexusTools {
 
     fn untouched_biology(&self, a: &Value) -> Result<Value, String> {
         let me = self.me()?;
-        let (origin, near) = self.origin(a, &me)?;
+        let (origin, near) = self.origin_online(a, &me)?;
         let species = match arg_str(a, "species") {
             Some(n) => nexus_data::exobio::species(&n).ok_or_else(|| format!("Unknown species \"{n}\"."))?,
             None => nexus_data::exobio::species("Stratum Tectonicas").ok_or("Species data missing.")?,
@@ -274,7 +290,9 @@ impl NexusTools {
         let footfalled = move |name: &str| {
             db.as_ref().and_then(|d| d.body_by_name(name).ok().flatten()).is_some_and(|b| b.was_footfalled.is_some_and(|s| s.value))
         };
-        let (mut list, st) = self.rt.block_on(crate::untouched::find(&self.spansh, &q, footfalled))?;
+        // Up to four pages and a search for populated systems: one limit for all of them, so a slow Spansh can't hold an
+        // agent's worker long after it was told the call didn't finish.
+        let (mut list, st) = self.spansh_search(Duration::from_secs(90), crate::untouched::find(&self.spansh, &q, footfalled))?;
         let mapped_never_sampled = list.iter().filter(|c| c.evidence == crate::untouched::Evidence::GenusConfirmed).count();
         list.retain(|c| include_mapped || c.evidence == crate::untouched::Evidence::NoTrace);
         list.truncate(limit);
@@ -586,21 +604,53 @@ impl NexusTools {
         let Some(sys) = gs.exploration.systems.get(&gs.location.system_address) else {
             return Ok(json!({ "message": "No scans of the current system yet: FSS-scan it first." }));
         };
-        let bodies: Vec<Value> = sys
+        // The most valuable bodies first, each with its likely species, worked out once.
+        let mut bodies: Vec<(i64, Value, Vec<Value>)> = sys
             .bodies
             .values()
             .filter(|b| b.bio_signals > 0)
             .map(|b| {
-                json!({
+                let value = b.predicted_value(b.was_footfalled == Some(false));
+                let body = json!({
                     "body": b.name, "biological_signals": b.bio_signals, "distance_ls": b.distance_ls.round(),
                     "genera_from_dss": b.genuses,
                     "sampled": b.organics.iter().map(|o| json!({ "species": o.species, "samples": o.samples, "analysed": o.analysed })).collect::<Vec<_>>(),
-                    "likely_species": b.likely_species().iter().take(8).map(|p| json!({ "species": p.species, "value_cr": p.value, "likelihood_pct": (p.likelihood * 100.0).round(), "colony_range_m": p.colony_range_m })).collect::<Vec<_>>(),
-                    "expected_value_cr": b.predicted_value(b.was_footfalled == Some(false)),
-                })
+                    "expected_value_cr": value,
+                });
+                let species = b.likely_species().iter().take(8).map(|p| json!({ "species": p.species, "value_cr": p.value, "likelihood_pct": (p.likelihood * 100.0).round(), "colony_range_m": p.colony_range_m })).collect();
+                (value, body, species)
             })
             .collect();
-        Ok(json!({ "system": sys.name, "bio_bodies": bodies, "unsold_exobiology_data_cr": gs.exobio.unsold_value() }))
+        bodies.sort_by_key(|(value, _, _)| std::cmp::Reverse(*value));
+        let unsold = gs.exobio.unsold_value();
+        // What gives way when the reply is too long for the caller: the less likely species of each body, then the
+        // least valuable bodies, one by one, down to the first.
+        const SPECIES: [usize; 3] = [8, 3, 1];
+        let (out, _) = fit(self.budget, SPECIES.len() + bodies.len().saturating_sub(1), |level| {
+            let species = SPECIES[level.min(SPECIES.len() - 1)];
+            let shown = bodies.len() - level.saturating_sub(SPECIES.len() - 1).min(bodies.len().saturating_sub(1));
+            let listed: Vec<Value> = bodies[..shown]
+                .iter()
+                .map(|(_, body, likely)| {
+                    let mut b = body.clone();
+                    b["likely_species"] = json!(likely.iter().take(species).collect::<Vec<_>>());
+                    b
+                })
+                .collect();
+            let mut out = json!({ "system": sys.name, "bio_bodies": listed, "unsold_exobiology_data_cr": unsold });
+            let mut notes = Vec::new();
+            if species < SPECIES[0] {
+                notes.push(format!("Only the {species} likeliest species of each body, to fit."));
+            }
+            if shown < bodies.len() {
+                notes.push(format!("The {} least valuable bodies left out to fit.", bodies.len() - shown));
+            }
+            if !notes.is_empty() {
+                out["notes"] = json!(notes);
+            }
+            out
+        });
+        Ok(out)
     }
 
     /// Journal lines holding a text, newest first, in a period if one is given. It returns at most `limit` of them, and
@@ -1566,11 +1616,99 @@ fn strip_nulls(v: &mut Value) {
     }
 }
 
+/// `s` cut to at most `max` bytes, on a character boundary.
+fn clip_at(s: &str, max: usize) -> &str {
+    let mut end = max.min(s.len());
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// A knowledge section cut to about `cap` characters around what was asked: the lines holding most of the question's
+/// words, in their order, "…" where lines were left out; a line longer than what's left shows the stretch around its
+/// first match. Whole when it fits. Returns the text and whether it was cut.
+fn excerpt(text: &str, query: &str, cap: usize) -> (String, bool) {
+    if text.len() <= cap {
+        return (text.to_string(), false);
+    }
+    let words: Vec<String> = query.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() >= 3).map(str::to_lowercase).collect();
+    let lines: Vec<&str> = text.lines().collect();
+    let found = |l: &str| {
+        let low = l.to_lowercase();
+        words.iter().filter_map(|w| low.find(w.as_str())).collect::<Vec<usize>>()
+    };
+    let mut ranked: Vec<(usize, usize)> = lines.iter().enumerate().map(|(i, l)| (found(l).len(), i)).collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut kept: Vec<Option<String>> = vec![None; lines.len()];
+    let mut left = cap;
+    for (hits, i) in ranked {
+        let line = lines[i];
+        if line.len() < left {
+            left -= line.len() + 1;
+            kept[i] = Some(line.to_string());
+        } else if hits > 0 && left >= 400 {
+            // The stretch of a long line (a row of the user guide's tables) around what was asked.
+            let at = found(line).into_iter().min().unwrap_or(0);
+            let start = clip_at(line, at.saturating_sub(left / 4)).len();
+            let piece = clip_at(&line[start..], left - 2);
+            kept[i] = Some(format!("{}{piece}{}", if start > 0 { "…" } else { "" }, if start + piece.len() < line.len() { "…" } else { "" }));
+            left = 0;
+        }
+    }
+    let mut out = String::new();
+    let mut gap = false;
+    for k in kept {
+        match k {
+            Some(l) => {
+                if gap && !out.is_empty() {
+                    out.push_str("…\n");
+                }
+                out.push_str(&l);
+                out.push('\n');
+                gap = false;
+            }
+            None => gap = true,
+        }
+    }
+    if gap {
+        out.push('…');
+    }
+    (out, true)
+}
+
+/// The last word on length: a reply still over the caller's budget is cut, and says so. No tool should need it.
+fn within(v: Value, budget: usize) -> Value {
+    let len = json_len(&v);
+    if len <= budget {
+        return v;
+    }
+    let text = v.to_string();
+    let note = format!("This answer was {len} characters, more than the {budget} this caller takes: here is its beginning, cut off. Ask for less to get all of it.");
+    // Quotes in the text are escaped once more inside the string: the longest beginning that still fits.
+    fit(budget, 20, |level| json!({ "partial_json": clip_at(&text, budget * (20 - level) / 20), "note": note })).0
+}
+
 impl NexusTools {
     fn knowledge(&self, a: &Value) -> Result<Value, String> {
         let q = arg_str(a, "query").ok_or("query is required")?;
         let hits = nexus_ai::knowledge::search(&q, 4);
-        Ok(json!({ "sections": hits.into_iter().map(|(t, x)| json!({ "title": t, "text": x })).collect::<Vec<_>>() }))
+        // Each section gets an equal share of the caller's length; a longer one is cut to what was asked about.
+        let share = self.budget.saturating_sub(1_000) / hits.len().max(1);
+        let mut cut = false;
+        let sections: Vec<Value> = hits
+            .into_iter()
+            .map(|(title, text)| {
+                let (text, c) = excerpt(&text, &q, share);
+                cut |= c;
+                json!({ "title": title, "text": text })
+            })
+            .collect();
+        let mut out = json!({ "sections": sections });
+        if cut {
+            out["note"] = json!("Long sections are cut to the lines about what was asked (… marks what was left out): ask a narrower question for more of one.");
+        }
+        Ok(out)
     }
 }
 
@@ -1581,7 +1719,7 @@ impl ToolHost for NexusTools {
 
     fn call(&self, name: &str, args: &Value) -> Result<Value, String> {
         match tool(name) {
-            Some(t) if t.offered_to(self.caller) => (t.run)(self, args),
+            Some(t) if t.offered_to(self.caller) => (t.run)(self, args).map(|v| within(v, self.budget)),
             _ => Err(format!("Unknown tool \"{name}\".")),
         }
     }
@@ -2397,6 +2535,41 @@ mod tests {
         assert_eq!(json_len(&json!({ "a": "é" })), r#"{"a":"é"}"#.len());
     }
 
+    /// A long section keeps the lines about what was asked, and the stretch of a long line around its match.
+    #[test]
+    fn long_knowledge_sections_keep_what_was_asked() {
+        let rows: Vec<String> = (0..200).map(|i| format!("| Page {i} | something about page {i} and its many settings |")).collect();
+        let text = format!("{}\n| Fleet | Where to buy a build: the nearest stations |\n{}", rows[..100].join("\n"), rows[100..].join("\n"));
+        let (cut, was_cut) = excerpt(&text, "where to buy", 1_000);
+        assert!(was_cut && cut.len() <= 1_100, "{} characters", cut.len());
+        assert!(cut.contains("| Fleet | Where to buy a build"), "{cut}");
+        assert!(cut.contains('…'), "says where lines were left out");
+        let long = format!("{} the AI agents switch {}", "x".repeat(3_000), "y".repeat(3_000));
+        let (stretch, _) = excerpt(&long, "agents", 1_000);
+        assert!(stretch.contains("the AI agents switch") && stretch.len() <= 1_100, "{stretch}");
+        assert_eq!(excerpt("short", "anything", 1_000), ("short".to_string(), false));
+    }
+
+    /// The user guide's Pages section alone is longer than an agent takes: knowledge answers within the caller's budget,
+    /// and the last guard cuts anything still over it.
+    #[test]
+    fn knowledge_and_every_reply_fit_the_callers_budget() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = agent_tools(commander(), &rt);
+        for budget in [Caller::Mcp.budget(), Caller::Ask.budget()] {
+            let tools = NexusTools { budget, ..agent_tools(commander(), &rt) };
+            let k = tools.call("knowledge", &json!({ "query": "Settings AI agents copy command Claude Code" })).unwrap();
+            assert!(json_len(&k) <= budget, "{} over {budget}", json_len(&k));
+            assert!(k["sections"].as_array().unwrap().iter().any(|s| s["text"].as_str().unwrap().contains("AI agents")), "{k}");
+        }
+        drop(tools);
+        let big = json!({ "rows": vec!["\"quoted\" text"; 5_000] });
+        let cut = within(big, 2_000);
+        assert!(json_len(&cut) <= 2_000 && cut["partial_json"].as_str().unwrap().starts_with("{\"rows\""), "{cut}");
+        assert!(cut["note"].as_str().unwrap().contains("more than the 2000 this caller takes"));
+        assert_eq!(within(json!({ "a": 1 }), 2_000), json!({ "a": 1 }), "a reply that fits is left alone");
+    }
+
     /// "Which systems did I pass through from 22 to 29 October?" (GitHub issue #4): any period of the journal, page by
     /// page, never more than the model is passed.
     #[test]
@@ -2651,11 +2824,16 @@ mod tests {
         let mcp = tools.call("fleet", &json!({})).unwrap();
         assert_eq!(mcp["ships"][0]["engineered"].as_array().map(Vec::len), Some(8), "{}", mcp["notes"]);
         assert!(mcp.get("notes").is_none() && mcp.to_string().len() <= Caller::Mcp.budget());
-        // And the other way: a caller that takes little gets the least detailed reply, never an error.
+        // And the other way: a caller that takes little gets fewer ships, the one being flown first…
+        tools.budget = 2_000;
+        let small = tools.call("fleet", &json!({})).unwrap();
+        let kept = small["ships"].as_array().map_or(0, Vec::len);
+        assert!((1..15).contains(&kept) && small["ships_omitted"] == json!(15 - kept) && json_len(&small) <= 2_000, "{small}");
+        assert_eq!(small["ships"][0]["current"], true, "{small}");
+        // …and one that takes less than even one ship gets the beginning, cut, and is told so: never an error.
         tools.budget = 500;
         let tiny = tools.call("fleet", &json!({})).unwrap();
-        assert_eq!(tiny["ships"].as_array().map(Vec::len), Some(1), "down to the ship being flown");
-        assert_eq!(tiny["ships_omitted"], 14);
+        assert!(json_len(&tiny) <= 500 && tiny["note"].as_str().unwrap().contains("this caller takes"), "{tiny}");
     }
 
     #[test]
@@ -3326,6 +3504,76 @@ mod tests {
         assert!(tools.call("where_to_buy", &json!({ "build": "not a build" })).is_err());
     }
 
+    /// Waits until a service listens, or says why it doesn't.
+    fn listening(service: &crate::mcp::McpService) -> Result<(), String> {
+        let until = Instant::now() + Duration::from_secs(10);
+        loop {
+            let s = service.status();
+            if s.listening {
+                return Ok(());
+            }
+            if let Some(e) = s.error {
+                return Err(e);
+            }
+            if Instant::now() > until {
+                return Err("neither listening nor failed after 10 s".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// A second copy (another data folder) can't answer where the first does, and stopping it leaves the first's pipe or
+    /// socket alone: agents still reach the first.
+    #[test]
+    fn a_second_copy_leaves_the_first_answering() {
+        use crate::mcp::stdio::{Event, Session};
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let endpoint = crate::mcp::test_endpoint("two");
+        let mut first = crate::mcp::McpService::default();
+        first.start_at(endpoint.clone(), agent_tools(commander(), &rt), rt.handle());
+        listening(&first).unwrap();
+        let mut second = crate::mcp::McpService::default();
+        second.start_at(endpoint.clone(), agent_tools(commander(), &rt), rt.handle());
+        assert!(listening(&second).unwrap_err().contains("Another program already answers"));
+        drop(second);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut session = Session::new(endpoint, tx);
+        let mut out = Vec::new();
+        let meta = json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} });
+        session.handle(Event::Line(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "commander", "_meta": meta } }).to_string()), &mut out);
+        session.handle(rx.recv_timeout(Duration::from_secs(30)).unwrap(), &mut out);
+        let reply: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        drop(first);
+    }
+
+    /// Switched off while an agent's connection is open, and on again at once: the connection is closed, so the name is
+    /// free and the app listens again.
+    #[cfg(windows)]
+    #[test]
+    fn off_and_on_again_with_a_connection_open() {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let endpoint = crate::mcp::test_endpoint("again");
+        let mut service = crate::mcp::McpService::default();
+        service.start_at(endpoint.clone(), agent_tools(commander(), &rt), rt.handle());
+        listening(&service).unwrap();
+        // An agent that connected and hasn't sent its call yet: its instance would otherwise stay taken for 10 s.
+        let held = std::fs::OpenOptions::new().read(true).write(true).open(&endpoint).unwrap();
+        service.apply(false, || unreachable!("on: not started"), rt.handle());
+        service.start_at(endpoint, agent_tools(commander(), &rt), rt.handle());
+        listening(&service).unwrap();
+        drop(held);
+    }
+
+    /// An agent's call to a tool that answers from local data stays local: a system the galaxy database doesn't know
+    /// isn't looked up on Spansh, so the call is the offline one its `online: false` (and openWorldHint) says.
+    #[test]
+    fn an_agents_local_tool_never_asks_spansh() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let err = agent_tools(commander(), &rt).call("find_commodity", &json!({ "commodity": "Gold", "near_system": "Nowhere Special" })).unwrap_err();
+        assert!(err.contains("isn't in Elite Nexus' galaxy database"), "{err}");
+    }
+
     /// An AI agent over MCP, end to end: `--mcp`'s session passes a call over a pipe (a socket off Windows) of the test's
     /// own to the app's listener, which answers from the commander's data; switched off, the agent is told.
     #[test]
@@ -3639,7 +3887,7 @@ mod tests {
         let exe = std::env::var_os("ELITE_NEXUS_EXE").expect("ELITE_NEXUS_EXE: the program to start");
         let rt = live_runtime();
         let mut service = crate::mcp::McpService::default();
-        service.start_at(crate::mcp::endpoint(), agent_tools(commander(), &rt), rt.handle());
+        service.start_at(crate::mcp::endpoint().unwrap(), agent_tools(commander(), &rt), rt.handle());
         let until = Instant::now() + Duration::from_secs(10);
         while !service.status().listening {
             assert!(Instant::now() < until && service.status().error.is_none(), "{:?}", service.status());

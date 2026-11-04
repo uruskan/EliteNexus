@@ -148,6 +148,10 @@ release time that section becomes the new version and the release workflow publi
   it already had.
 - **Ask**: the line under an answer names each source once. Two tools that use the same source (Spansh) made it read
   "Spansh · your journal · Spansh".
+- **Ask** answers questions about a page of Elite Nexus from that page's part of the user guide. The guide's section on
+  the pages is longer than an answer may be, so Ask was handed only its first part, and most pages' rows never reached
+  it. Long sections are now cut to the lines about what was asked. A system with many planets with biology no longer
+  makes "Exobiology where you are" too long either: the most valuable come first.
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.

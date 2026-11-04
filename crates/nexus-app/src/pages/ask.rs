@@ -375,10 +375,10 @@ fn lower_first(s: &str) -> String {
 /// it reads, what it asks online services, what it changes, and what AI agents may read besides. True when closed.
 fn capabilities(ui: &mut Ui) -> bool {
     use crate::ai_tools::{Caller, TOOLS, Tool};
-    let groups: [(&str, Pick); 3] = [
-        ("Reads your game and Elite Nexus' own database", |t| t.read_only && !t.online),
-        ("Asks Spansh and EDGalaxyData", |t| t.read_only && t.online),
-        ("Changes something in Elite Nexus", |t| !t.read_only),
+    let groups: [(&str, Pick, &str); 3] = [
+        ("Reads your game and Elite Nexus' own database", |t| t.read_only && !t.online, "A system the galaxy database doesn't know is looked up on Spansh."),
+        ("Asks Spansh and EDGalaxyData", |t| t.read_only && t.online, ""),
+        ("Changes something in Elite Nexus", |t| !t.read_only, ""),
     ];
     let mut closed = false;
     widgets::card_frame().show(ui, |ui| {
@@ -389,7 +389,7 @@ fn capabilities(ui: &mut Ui) -> bool {
         });
         ui.add(Label::new(RichText::new("Every answer comes from these tools, and the line under it names the ones it used. Hover over one for what the model is told about it.").size(size::FOOTNOTE).color(pal::DIM)).wrap());
         let cols = if ui.available_width() > 620.0 { 2 } else { 1 };
-        for (heading, pick) in groups {
+        for (heading, pick, note) in groups {
             let tools: Vec<&Tool> = TOOLS.iter().filter(|t| t.offered_to(Caller::Ask) && pick(t)).collect();
             if tools.is_empty() {
                 continue;
@@ -406,6 +406,10 @@ fn capabilities(ui: &mut Ui) -> bool {
                     });
                 }
             });
+            if !note.is_empty() {
+                ui.add_space(4.0);
+                widgets::footnote(ui, note);
+            }
         }
         let agents: Vec<String> = TOOLS.iter().filter(|t| t.offered_to(Caller::Mcp) && !t.offered_to(Caller::Ask)).map(|t| lower_first(t.title)).collect();
         if !agents.is_empty() {
