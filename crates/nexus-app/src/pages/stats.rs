@@ -10,8 +10,6 @@ use nexus_journal::Timestamp;
 use nexus_model::GameState;
 use nexus_model::history::LedgerCategory;
 
-const DAY: f64 = 86_400.0;
-
 /// The periods the page can show: (days, label); 0 = all time.
 const RANGES: [(u32, &str); 4] = [(7, "7 days"), (30, "30 days"), (90, "90 days"), (0, "All time")];
 
@@ -20,26 +18,26 @@ fn range_start(days: u32, now: i64, first: Option<i64>) -> i64 {
     if days == 0 { first.unwrap_or(now) } else { now - i64::from(days) * 86_400 }
 }
 
-/// The balance as a step line over [`start`, `now`]: it starts at the balance held when the period
-/// began (the last sample before it) and runs to today at `current`.
-pub(crate) fn credit_steps(samples: &[(Timestamp, i64)], start: i64, now: i64, current: i64) -> Vec<[f64; 2]> {
-    let mut pts: Vec<[f64; 2]> = Vec::new();
+/// The balance as a step line over [`start`, `now`], as (unix seconds, credits): it starts at the balance held when
+/// the period began (the last sample before it) and runs to today at `current`.
+pub(crate) fn credit_steps(samples: &[(Timestamp, i64)], start: i64, now: i64, current: i64) -> Vec<(i64, i64)> {
+    let mut pts: Vec<(i64, i64)> = Vec::new();
     let before = samples.iter().rev().find(|(t, _)| t.0 < start).map(|(_, v)| *v);
     let mut last = before;
     if let Some(v) = before {
-        pts.push([start as f64 / DAY, v as f64]);
+        pts.push((start, v));
     }
     for (t, v) in samples.iter().filter(|(t, _)| t.0 >= start && t.0 <= now) {
         if let Some(prev) = last {
-            pts.push([t.0 as f64 / DAY, prev as f64]);
+            pts.push((t.0, prev));
         }
-        pts.push([t.0 as f64 / DAY, *v as f64]);
+        pts.push((t.0, *v));
         last = Some(*v);
     }
     if let Some(prev) = last {
-        pts.push([now as f64 / DAY, prev as f64]);
+        pts.push((now, prev));
         if prev != current {
-            pts.push([now as f64 / DAY, current as f64]);
+            pts.push((now, current));
         }
     }
     pts
@@ -141,7 +139,7 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
     let deaths = h.deaths.iter().filter(|d| d.ts.0 >= start).count();
     let steps = credit_steps(&h.credit_samples, start, now, gs.cmdr.credits);
     let change = match (steps.first(), steps.last()) {
-        (Some(a), Some(b)) => Some(b[1] as i64 - a[1] as i64),
+        (Some(a), Some(b)) => Some(b.1 - a.1),
         _ => None,
     };
 
@@ -182,8 +180,11 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
                     }
                     let log = log.get();
                     // On the log scale the line holds log10 of the balance (below 1 Cr counts as 1 Cr).
-                    let y = |v: f64| if log { v.max(1.0).log10() } else { v };
-                    let shown: Vec<[f64; 2]> = steps.iter().map(|p| [p[0], y(p[1])]).collect();
+                    let y = |v: i64| if log { (v.max(1) as f64).log10() } else { v as f64 };
+                    // Along the commander's calendar days, as Jumps per day: each midnight falls under its date. (Unix
+                    // time over 86,400 put UTC midnight there, which west of UTC is the evening before that date.)
+                    let mut calendar = LocalDays::default();
+                    let shown: Vec<[f64; 2]> = steps.iter().map(|&(t, v)| [calendar.at(Timestamp(t)), y(v)]).collect();
                     let (lo, hi) = shown.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p[1]), hi.max(p[1])));
                     let (bottom, top) = credit_y_range(lo, hi, log);
                     let credits = move |v: f64| if log { 10f64.powf(v) } else { v };
@@ -194,16 +195,16 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
                         .allow_scroll(false)
                         .allow_drag(false)
                         .allow_zoom(false)
-                        .include_x(start as f64 / DAY)
-                        .include_x(now as f64 / DAY)
+                        .include_x(calendar.at(since))
+                        .include_x(calendar.at(Timestamp(now)))
                         .include_y(bottom)
                         .include_y(top)
-                        .x_axis_formatter(|m, _| Timestamp((m.value * DAY) as i64).to_local_string("%d %b"))
+                        .x_axis_formatter(crate::widgets::day_axis)
                         .y_grid_spacer(credit_marks((bottom, top), log))
                         .y_axis_formatter(move |m, _| nexus_data::names::compact_credits(credits(m.value).round() as i64))
                         .label_formatter(move |h| {
                             let (x, v) = crate::widgets::hover_xy(h);
-                            Some(format!("{}\n{} Cr", Timestamp((x * DAY) as i64).to_local_string("%d %b %H:%M"), nexus_data::names::group_digits(credits(v).round() as i64)))
+                            Some(format!("{}\n{} Cr", LocalDays::instant(x).to_local_string("%d %b %H:%M"), nexus_data::names::group_digits(credits(v).round() as i64)))
                         })
                         .show(ui, |p| {
                             p.line(Line::new("Credits", PlotPoints::from(shown)).color(pal::GOLD).width(2.0));
@@ -368,12 +369,12 @@ mod tests {
         let samples = [(Timestamp(10 * d), 100), (Timestamp(20 * d), 300), (Timestamp(25 * d), 200)];
         // From day 15: starts at the balance held then (100), steps at days 20 and 25, runs to today.
         let pts = credit_steps(&samples, 15 * d, 30 * d, 250);
-        let days: Vec<(f64, f64)> = pts.iter().map(|p| (p[0], p[1])).collect();
-        assert_eq!(days, vec![(15.0, 100.0), (20.0, 100.0), (20.0, 300.0), (25.0, 300.0), (25.0, 200.0), (30.0, 200.0), (30.0, 250.0)]);
+        let days: Vec<(i64, i64)> = pts.iter().map(|&(t, v)| (t / d, v)).collect();
+        assert_eq!(days, vec![(15, 100), (20, 100), (20, 300), (25, 300), (25, 200), (30, 200), (30, 250)]);
         // All time: from the first sample.
         let pts = credit_steps(&samples, 10 * d, 30 * d, 200);
-        assert_eq!(pts.first(), Some(&[10.0, 100.0]));
-        assert_eq!(pts.last(), Some(&[30.0, 200.0]));
+        assert_eq!(pts.first(), Some(&(10 * d, 100)));
+        assert_eq!(pts.last(), Some(&(30 * d, 200)));
         // Nothing before or in the period: nothing to draw.
         assert!(credit_steps(&[], 0, 30 * d, 5).is_empty());
         assert_eq!(range_start(7, 100 * d, Some(3)), 93 * d);

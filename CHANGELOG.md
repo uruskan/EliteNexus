@@ -97,6 +97,9 @@ release time that section becomes the new version and the release workflow publi
   labels. The charts are now marked in round steps (1, 2, 2.5 or 5 times ten, a hundred, …), as fine as their labels
   have room for. On the Credits chart's **Log scale**, a balance that stayed between two powers of ten (2 to 5
   billion, say) had no label at all; it now gets 2 B, 3 B, 4 B and 5 B.
+- **Statistics: the Credits chart's dates are your own.** Its dates stood at midnight UTC, which west of UTC (the
+  Americas) is the evening before: your balance from the morning of the 3rd showed just after the mark for the 2nd.
+  Each date now marks your own midnight, as on Jumps per day.
 - **Statistics and BGS & Powerplay: a bar's number is no longer cut off** (GitHub issue #4, with a screenshot).
   Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
   edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always
