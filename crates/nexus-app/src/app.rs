@@ -618,6 +618,8 @@ impl NexusApp {
                         spansh: self.spansh.clone(),
                         rt: self.rt.handle().clone(),
                         routes: self.ai_routes.clone(),
+                        caller: crate::ai_tools::Caller::Ask,
+                        budget: crate::ai_tools::Caller::Ask.budget(),
                     };
                     let context = crate::ai_tools::context_line(gs);
                     self.assistant.ask(question, self.settings.ai.provider(), tools, context, ui.ctx());

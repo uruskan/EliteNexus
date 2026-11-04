@@ -60,8 +60,11 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
 
 * `app.rs` owns the services: `Core` (journal → model), `SyncService` (sync.rs → nexus-uplink),
   `MarketService` (market.rs → nexus-galaxy + nexus-eddn, price alerts, Spansh import), `AssistantService`
-  (assistant.rs → nexus-ai on a worker thread; `ai_tools.rs` implements its 16 tools over the model, galaxy DB,
-  journal and Spansh), Spansh client, TTS. `finder.rs` holds market lookups shared by pages and tools (sell plan,
+  (assistant.rs → nexus-ai on a worker thread; `ai_tools.rs` implements its tools over the model, galaxy DB,
+  journal and Spansh), Spansh client, TTS. `ai_tools::TOOLS` describes each tool once: name, description, argument
+  schema, the words Ask shows while it runs and under an answer, whether it only reads, whether it goes online, and
+  whether Ask's model or an MCP agent is offered it. A tool that can say more than its caller takes
+  (`NexusTools::budget`) builds its reply through `ai_tools::fit`, which keeps the most detail that fits. `finder.rs` holds market lookups shared by pages and tools (sell plan,
   colonisation suppliers). `shopping.rs` is Fleet › Where to buy: it reads a build (SLEF, journal `Loadout`, EDSY or
   Coriolis import link), lists what to buy against the commander's storage, and asks Spansh's outfitting search for
   stations that sell all of it, checking each result's exact module symbols (Spansh filters on name, class and rating

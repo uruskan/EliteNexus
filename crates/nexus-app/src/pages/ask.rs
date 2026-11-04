@@ -1,7 +1,7 @@
 //! "Ask": the built-in assistant. One question box; setup is a single pasted key (other providers
 //! and the model choice are tucked away under a disclosure).
 
-use crate::assistant::{AssistantService, tool_noun};
+use crate::assistant::AssistantService;
 use crate::secrets;
 use crate::settings::AiSettings;
 use crate::theme::{bold, display, pal};
@@ -258,7 +258,7 @@ fn chat(ui: &mut Ui, svc: &mut AssistantService, st: &mut AskUi) -> AskAction {
                                 Some(Ok(text)) => {
                                     markdown(ui, text);
                                     if !ex.tools.is_empty() {
-                                        let mut nouns: Vec<&str> = ex.tools.iter().map(|t| tool_noun(t)).collect();
+                                        let mut nouns: Vec<&str> = ex.tools.iter().map(|t| crate::ai_tools::noun(t)).collect();
                                         nouns.dedup();
                                         ui.add_space(2.0);
                                         ui.label(RichText::new(format!("{} {}", icon::CHECK, nouns.join(" · "))).size(12.0).color(pal::FAINT)).on_hover_text(format!(

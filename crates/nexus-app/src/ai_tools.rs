@@ -1,5 +1,9 @@
 //! The assistant's tools: thin wrappers over the app's own data (game model, galaxy database,
 //! journal, Spansh). Each returns compact JSON for the model.
+//!
+//! [`TOOLS`] lists every tool once: its name, description and arguments, the words Ask shows while it runs and under
+//! an answer, and who it's offered to (Ask's model, AI agents over MCP). [`fit`] keeps a reply within the length the
+//! caller allows ([`NexusTools::budget`]).
 
 use crate::finder;
 use crate::pages::navigation::{PlannedRoute, from_spansh};
@@ -31,6 +35,78 @@ pub struct NexusTools {
     pub rt: Handle,
     /// Routes the assistant planned, picked up by the Navigation page.
     pub routes: Arc<Mutex<Option<PlannedRoute>>>,
+    /// Who calls: decides which tools are offered.
+    pub caller: Caller,
+    /// The longest reply the caller takes, in characters of JSON (usually [`Caller::budget`]): tools that could say
+    /// more give up detail to fit, and say what they left out.
+    pub budget: usize,
+}
+
+/// Who calls the tools.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Caller {
+    /// The built-in assistant, the Ask page.
+    Ask,
+    /// An AI agent on this computer, over MCP.
+    #[allow(dead_code)] // until the MCP server calls the tools
+    Mcp,
+}
+
+impl Caller {
+    /// The longest reply this caller takes. Ask passes the model the first 12,000 characters of a tool result
+    /// (`nexus_ai::agent::MAX_RESULT_CHARS`) and cuts the rest mid-JSON; an agent's own limit is larger (Claude Code's
+    /// is 25,000 tokens), so it gets more of a long answer while staying well under that.
+    pub fn budget(self) -> usize {
+        match self {
+            Caller::Ask => nexus_ai::agent::MAX_RESULT_CHARS - 500,
+            Caller::Mcp => 40_000,
+        }
+    }
+}
+
+/// The length of `v` as the compact JSON a caller is sent, without building the text.
+pub(crate) fn json_len(v: &Value) -> usize {
+    struct Count(usize);
+    impl std::io::Write for Count {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0 += b.len();
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut n = Count(0);
+    let _ = serde_json::to_writer(&mut n, v);
+    n.0
+}
+
+/// Keeps a reply within `budget` characters of JSON. `make(level)` builds the reply at a level of detail, 0 the most
+/// detailed and each level no longer than the one before; `levels` says how many there are (at least 1). Returns the
+/// most detailed reply that fits, with its level, or the last level when none does. Only a few levels are built:
+/// the first, the last, and a binary search between them.
+pub(crate) fn fit(budget: usize, levels: usize, mut make: impl FnMut(usize) -> Value) -> (Value, usize) {
+    let first = make(0);
+    if levels <= 1 || json_len(&first) <= budget {
+        return (first, 0);
+    }
+    let last_level = levels - 1;
+    let last = make(last_level);
+    if json_len(&last) > budget {
+        return (last, last_level);
+    }
+    // `lo` doesn't fit, `hi` does.
+    let (mut lo, mut hi, mut best) = (0, last_level, last);
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        let v = make(mid);
+        if json_len(&v) <= budget {
+            (hi, best) = (mid, v);
+        } else {
+            lo = mid;
+        }
+    }
+    (best, hi)
 }
 
 /// The commander facts the tools need, read under one short lock.
@@ -524,7 +600,7 @@ impl NexusTools {
     }
 
     /// Journal lines holding a text, newest first, in a period if one is given. It returns at most `limit` of them, and
-    /// only as many as fit what the model is passed (`MAX_RESULT_CHARS`), says when older matches were left out, and
+    /// only as many as fit the caller's reply ([`NexusTools::budget`]), says when older matches were left out, and
     /// `skip` pages past them, so any stretch of the history can be read.
     fn journal_search(&self, a: &Value) -> Result<Value, String> {
         use nexus_journal::Timestamp;
@@ -557,8 +633,8 @@ impl NexusTools {
             let files: Vec<_> = idx.files.iter().zip(wanted).filter(|(_, w)| *w).map(|(p, _)| p.clone()).collect();
             (files, idx.entries.first().map(|e| e.ts))
         };
-        // Room for the rest of the answer under the cut the agent makes.
-        let budget = nexus_ai::agent::MAX_RESULT_CHARS - 1_000;
+        // Room for the rest of the answer within the caller's length.
+        let budget = self.budget.saturating_sub(1_000);
         let (mut hits, mut size, mut skipped, mut more) = (Vec::new(), 0, 0, false);
         'files: for path in files.iter().rev() {
             let Ok(text) = std::fs::read_to_string(path) else { continue };
@@ -692,6 +768,7 @@ impl NexusTools {
         entries.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.2.total_cmp(&b.2)));
         let listed = entries.len();
         entries.truncate(MAX_BODIES);
+        let bodies: Vec<Value> = entries.into_iter().map(|e| e.3).collect();
         if looked_up > 0 {
             notes.push(format!("Footfall of {looked_up} biology bodies looked up in archived EDDN scans (EDGalaxyData); cached for a day."));
         }
@@ -706,13 +783,18 @@ impl NexusTools {
         } else if total == 0 {
             notes.push("No landable planets, biology or Earth-like/water/ammonia/terraformable worlds known in this system yet.".into());
         }
-        if listed > entries.len() {
-            notes.push(format!("{} more bodies not shown; ask about one by name.", listed - entries.len()));
-        }
         let dist = my_pos.zip(place.pos).map(|(a, b)| r1(((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()));
-        let mut out = json!({
-            "system": place.name, "distance_ly": dist, "population": place.population, "region": region,
-            "relevant_bodies": total, "bodies": entries.into_iter().map(|e| e.3).collect::<Vec<_>>(), "notes": notes,
+        // The least interesting bodies give way when the reply is too long for the caller.
+        let (mut out, _) = fit(self.budget, bodies.len().max(1), |cut| {
+            let kept = bodies.len().saturating_sub(cut);
+            let mut notes = notes.clone();
+            if listed > kept {
+                notes.push(format!("{} more bodies not shown; ask about one by name.", listed - kept));
+            }
+            json!({
+                "system": place.name, "distance_ly": dist, "population": place.population, "region": region,
+                "relevant_bodies": total, "bodies": &bodies[..kept], "notes": notes,
+            })
         });
         strip_nulls(&mut out);
         Ok(out)
@@ -855,7 +937,7 @@ impl NexusTools {
 /// use them; the exobiology rules use BioScan's slightly different constants.
 pub(crate) const STANDARD_G: f64 = 9.80665;
 pub(crate) const STANDARD_ATM: f64 = 101_325.0;
-/// Bodies listed by `system_bodies` (the agent cuts tool results at 12 000 characters).
+/// Bodies listed by `system_bodies` at most (fewer when they don't fit the caller's reply).
 const MAX_BODIES: usize = 20;
 const SPANSH_TIMEOUT: Duration = Duration::from_secs(25);
 const SPANSH_CACHE_TTL: Duration = Duration::from_secs(600);
@@ -1474,50 +1556,99 @@ fn strip_nulls(v: &mut Value) {
     }
 }
 
+impl NexusTools {
+    fn knowledge(&self, a: &Value) -> Result<Value, String> {
+        let q = arg_str(a, "query").ok_or("query is required")?;
+        let hits = nexus_ai::knowledge::search(&q, 4);
+        Ok(json!({ "sections": hits.into_iter().map(|(t, x)| json!({ "title": t, "text": x })).collect::<Vec<_>>() }))
+    }
+}
+
 impl ToolHost for NexusTools {
     fn tools(&self) -> Vec<ToolSpec> {
-        specs()
+        specs(self.caller)
     }
 
     fn call(&self, name: &str, args: &Value) -> Result<Value, String> {
-        match name {
-            "commander" => self.commander(),
-            "find_commodity" => self.find_commodity(args),
-            "price_deals" => self.price_deals(args),
-            "untouched_biology" => self.untouched_biology(args),
-            "sell_my_cargo" => self.sell_my_cargo(args),
-            "trade_routes" => self.trade_routes(args),
-            "nearest_service" => self.nearest_service(args),
-            "mining_hotspots" => self.mining_hotspots(args),
-            "mining_sites" => self.mining_sites(args),
-            "system_info" => self.system_info(args),
-            "system_bodies" => self.system_bodies(args),
-            "plan_route" => self.plan_route(args),
-            "money_routes" => self.money_routes(args),
-            "exobiology_here" => self.exobiology_here(),
-            "journal_search" => self.journal_search(args),
-            "knowledge" => {
-                let q = arg_str(args, "query").ok_or("query is required")?;
-                let hits = nexus_ai::knowledge::search(&q, 4);
-                Ok(json!({ "sections": hits.into_iter().map(|(t, x)| json!({ "title": t, "text": x })).collect::<Vec<_>>() }))
-            }
-            other => Err(format!("Unknown tool \"{other}\".")),
+        match tool(name) {
+            Some(t) if t.offered_to(self.caller) => (t.run)(self, args),
+            _ => Err(format!("Unknown tool \"{name}\".")),
         }
     }
 }
 
-/// The tool list sent to the model. Kept stable (providers cache it).
-pub fn specs() -> Vec<ToolSpec> {
-    vec![
-        ToolSpec {
-            name: "commander",
-            description: "The commander's current state: location, docked station, ship (type, landing pad, cargo capacity, jump range, fuel, rebuy), cargo hold, credits, fleet carrier and squadron carrier, ranks, unsold exploration and exobiology data.",
-            parameters: schema(json!({}), &[]),
-        },
-        ToolSpec {
-            name: "find_commodity",
-            description: "Where to buy or sell one commodity near a system, from the live market database (EDDN, refreshed in real time). Results respect the ship's landing pad size.",
-            parameters: schema(
+/// One tool, everything about it in one place.
+pub struct Tool {
+    pub name: &'static str,
+    /// What the model reads to decide when to call it.
+    pub description: &'static str,
+    /// Its arguments, as a JSON schema.
+    pub params: fn() -> Value,
+    /// Ask's status line while it runs.
+    pub working: &'static str,
+    /// What Ask's "used" line under an answer calls it.
+    pub noun: &'static str,
+    /// Only reads: it changes nothing in Elite Nexus or the game (caching what it looked up aside).
+    pub read_only: bool,
+    /// Offered to Ask's model. Every offered tool's description and schema go with every question, so only the tools
+    /// that earn those tokens.
+    pub ask: bool,
+    /// Offered to AI agents over MCP. Read-only tools only.
+    pub mcp: bool,
+    run: fn(&NexusTools, &Value) -> Result<Value, String>,
+}
+
+impl Tool {
+    pub fn offered_to(&self, caller: Caller) -> bool {
+        match caller {
+            Caller::Ask => self.ask,
+            Caller::Mcp => self.mcp && self.read_only,
+        }
+    }
+
+    pub fn spec(&self) -> ToolSpec {
+        ToolSpec { name: self.name, description: self.description, parameters: (self.params)() }
+    }
+}
+
+/// The tool called `name`.
+pub fn tool(name: &str) -> Option<&'static Tool> {
+    TOOLS.iter().find(|t| t.name == name)
+}
+
+/// Ask's status line while a tool runs.
+pub fn working(name: &str) -> &'static str {
+    tool(name).map_or("Working…", |t| t.working)
+}
+
+/// What Ask's "used" line calls a tool.
+pub fn noun(name: &str) -> &'static str {
+    tool(name).map_or("tools", |t| t.noun)
+}
+
+/// The tools a caller is offered, in the order of [`TOOLS`]. Kept stable: providers cache the list.
+pub fn specs(caller: Caller) -> Vec<ToolSpec> {
+    TOOLS.iter().filter(|t| t.offered_to(caller)).map(Tool::spec).collect()
+}
+
+/// Every tool, in the order the model sees them.
+pub static TOOLS: &[Tool] = &[
+    Tool {
+        name: "commander",
+        description: "The commander's current state: location, docked station, ship (type, landing pad, cargo capacity, jump range, fuel, rebuy), cargo hold, credits, fleet carrier and squadron carrier, ranks, unsold exploration and exobiology data.",
+        params: || schema(json!({}), &[]),
+        working: "Checking your ship…",
+        noun: "your ship",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: |t, _| t.commander(),
+    },
+    Tool {
+        name: "find_commodity",
+        description: "Where to buy or sell one commodity near a system, from the live market database (EDDN, refreshed in real time). Results respect the ship's landing pad size.",
+        params: || {
+            schema(
                 json!({
                     "commodity": { "type": "string", "description": "Commodity name, e.g. Tritium, Gold, Low Temperature Diamonds." },
                     "mode": { "type": "string", "enum": ["buy", "sell"], "description": "buy = stations selling it (you buy); sell = stations buying it (you sell)." },
@@ -1529,12 +1660,20 @@ pub fn specs() -> Vec<ToolSpec> {
                     "limit": { "type": "integer" }
                 }),
                 &["commodity"],
-            ),
+            )
         },
-        ToolSpec {
-            name: "price_deals",
-            description: "Best deals and abnormal prices right now: stations and fleet carriers paying far above the galactic average for any commodity (mode sell) or selling far below it (mode buy), ranked by what one full hold of the commander's ship earns. The fastest way to find unusually profitable trades. For abnormal prices anywhere (most are fleet-carrier orders, e.g. a carrier paying 100× the normal price), use max_distance_ly 0 and min_ratio 2 or more.",
-            parameters: schema(
+        working: "Searching markets…",
+        noun: "markets",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::find_commodity,
+    },
+    Tool {
+        name: "price_deals",
+        description: "Best deals and abnormal prices right now: stations and fleet carriers paying far above the galactic average for any commodity (mode sell) or selling far below it (mode buy), ranked by what one full hold of the commander's ship earns. The fastest way to find unusually profitable trades. For abnormal prices anywhere (most are fleet-carrier orders, e.g. a carrier paying 100× the normal price), use max_distance_ly 0 and min_ratio 2 or more.",
+        params: || {
+            schema(
                 json!({
                     "mode": { "type": "string", "enum": ["sell", "buy"] },
                     "near_system": { "type": "string", "description": NEAR },
@@ -1545,12 +1684,20 @@ pub fn specs() -> Vec<ToolSpec> {
                     "limit": { "type": "integer" }
                 }),
                 &[],
-            ),
+            )
         },
-        ToolSpec {
-            name: "untouched_biology",
-            description: "Find planets where a valuable exobiology species should grow (default Stratum Tectonicas, 19 M Cr, 95 M with the first-logged bonus) and that no data-sharing commander has DSS-mapped or sampled, so the ×5 first-logged bonus is likely still available. Searches Spansh around a system, leaves out populated systems and planets known to be footfalled, ranks by expected bonus value and distance.",
-            parameters: schema(
+        working: "Looking for deals…",
+        noun: "deals",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::price_deals,
+    },
+    Tool {
+        name: "untouched_biology",
+        description: "Find planets where a valuable exobiology species should grow (default Stratum Tectonicas, 19 M Cr, 95 M with the first-logged bonus) and that no data-sharing commander has DSS-mapped or sampled, so the ×5 first-logged bonus is likely still available. Searches Spansh around a system, leaves out populated systems and planets known to be footfalled, ranks by expected bonus value and distance.",
+        params: || {
+            schema(
                 json!({
                     "species": { "type": "string", "description": "e.g. Stratum Tectonicas (default), Concha Biconcavis, Tussock Stigmasis, Fonticulua Segmentatus, Fonticulua Fluctus." },
                     "near_system": { "type": "string", "description": NEAR },
@@ -1559,17 +1706,31 @@ pub fn specs() -> Vec<ToolSpec> {
                     "limit": { "type": "integer" }
                 }),
                 &[],
-            ),
+            )
         },
-        ToolSpec {
-            name: "sell_my_cargo",
-            description: "Where to sell everything currently in the hold: the best single stations (limited by their demand) and the best buyer for each item.",
-            parameters: schema(json!({ "max_distance_ly": { "type": "number", "description": "Default 60." }, "near_system": { "type": "string", "description": NEAR } }), &[]),
-        },
-        ToolSpec {
-            name: "trade_routes",
-            description: "Best buy-here-sell-there trade routes near a system, sized to the ship's cargo capacity and the commander's credits.",
-            parameters: schema(
+        working: "Looking for untouched planets…",
+        noun: "untouched planets",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::untouched_biology,
+    },
+    Tool {
+        name: "sell_my_cargo",
+        description: "Where to sell everything currently in the hold: the best single stations (limited by their demand) and the best buyer for each item.",
+        params: || schema(json!({ "max_distance_ly": { "type": "number", "description": "Default 60." }, "near_system": { "type": "string", "description": NEAR } }), &[]),
+        working: "Planning your cargo sale…",
+        noun: "your cargo",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::sell_my_cargo,
+    },
+    Tool {
+        name: "trade_routes",
+        description: "Best buy-here-sell-there trade routes near a system, sized to the ship's cargo capacity and the commander's credits.",
+        params: || {
+            schema(
                 json!({
                     "near_system": { "type": "string", "description": NEAR },
                     "radius_ly": { "type": "number", "description": "Both stations within this distance, default 40." },
@@ -1577,24 +1738,40 @@ pub fn specs() -> Vec<ToolSpec> {
                     "limit": { "type": "integer" }
                 }),
                 &[],
-            ),
+            )
         },
-        ToolSpec {
-            name: "nearest_service",
-            description: "Nearest stations with a service, for the commander's landing pad size.",
-            parameters: schema(
+        working: "Finding trade routes…",
+        noun: "trade routes",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::trade_routes,
+    },
+    Tool {
+        name: "nearest_service",
+        description: "Nearest stations with a service, for the commander's landing pad size.",
+        params: || {
+            schema(
                 json!({
                     "service": { "type": "string", "enum": ["raw_material_trader", "manufactured_material_trader", "encoded_material_trader", "human_tech_broker", "guardian_tech_broker", "interstellar_factors", "universal_cartographics", "vista_genomics", "shipyard", "outfitting", "black_market", "refuel", "repair"] },
                     "near_system": { "type": "string", "description": NEAR },
                     "limit": { "type": "integer" }
                 }),
                 &["service"],
-            ),
+            )
         },
-        ToolSpec {
-            name: "mining_hotspots",
-            description: "Known planetary-ring hotspots for a mineable commodity near a system, plus the best nearby places to sell it.",
-            parameters: schema(
+        working: "Finding stations…",
+        noun: "stations",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::nearest_service,
+    },
+    Tool {
+        name: "mining_hotspots",
+        description: "Known planetary-ring hotspots for a mineable commodity near a system, plus the best nearby places to sell it.",
+        params: || {
+            schema(
                 json!({
                     "commodity": { "type": "string", "description": "e.g. Platinum, Painite, Low Temperature Diamonds, Void Opal, Tritium." },
                     "near_system": { "type": "string", "description": NEAR },
@@ -1602,51 +1779,90 @@ pub fn specs() -> Vec<ToolSpec> {
                     "limit": { "type": "integer" }
                 }),
                 &["commodity"],
-            ),
+            )
         },
-        ToolSpec {
-            name: "mining_sites",
-            description: "Planetary mining locations the commander worked with the Rhino SRV (surface mining), newest first: system, body, the location's number as the game's navigation panel shows it, tonnes refined per commodity (by-products included), visits and the last visit. Use for \"where did I mine …\" or \"where was that site\" questions.",
-            parameters: schema(
+        working: "Finding hotspots…",
+        noun: "hotspots",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::mining_hotspots,
+    },
+    Tool {
+        name: "mining_sites",
+        description: "Planetary mining locations the commander worked with the Rhino SRV (surface mining), newest first: system, body, the location's number as the game's navigation panel shows it, tonnes refined per commodity (by-products included), visits and the last visit. Use for \"where did I mine …\" or \"where was that site\" questions.",
+        params: || {
+            schema(
                 json!({
                     "commodity": { "type": "string", "description": "Only locations that gave this, e.g. Iridium." },
                     "limit": { "type": "integer", "description": "Default 10." }
                 }),
                 &[],
-            ),
+            )
         },
-        ToolSpec {
-            name: "system_info",
-            description: "Facts about a star system from the local database: distance from the commander, population, economy, security, factions and their states, powerplay, stations.",
-            parameters: schema(json!({ "system": { "type": "string" } }), &["system"]),
-        },
-        ToolSpec {
-            name: "system_bodies",
-            description: "The planets and moons of a star system worth landing on or scanning: type, distance, gravity, atmosphere, biological and geological signals, genera, the most likely species with their values and whether the ×5 first-logged bonus looks likely, plus discovery and footfall status: whether anyone has set foot on a body. No public site tracks footfall; it comes from the game's flag in the commander's own journal, in scans other commanders shared over EDDN, and in archived EDDN scans looked up online for biology bodies (EDGalaxyData), each with its age; \"probably unclaimed\" means Spansh has no data on the body since before Odyssey (a rule of thumb). Use it for any question about a planet, its biology or first footfall.",
-            parameters: schema(
+        working: "Reading your mining sites…",
+        noun: "your mining sites",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::mining_sites,
+    },
+    Tool {
+        name: "system_info",
+        description: "Facts about a star system from the local database: distance from the commander, population, economy, security, factions and their states, powerplay, stations.",
+        params: || schema(json!({ "system": { "type": "string" } }), &["system"]),
+        working: "Looking up the system…",
+        noun: "system data",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::system_info,
+    },
+    Tool {
+        name: "system_bodies",
+        description: "The planets and moons of a star system worth landing on or scanning: type, distance, gravity, atmosphere, biological and geological signals, genera, the most likely species with their values and whether the ×5 first-logged bonus looks likely, plus discovery and footfall status: whether anyone has set foot on a body. No public site tracks footfall; it comes from the game's flag in the commander's own journal, in scans other commanders shared over EDDN, and in archived EDDN scans looked up online for biology bodies (EDGalaxyData), each with its age; \"probably unclaimed\" means Spansh has no data on the body since before Odyssey (a rule of thumb). Use it for any question about a planet, its biology or first footfall.",
+        params: || {
+            schema(
                 json!({
                     "system": { "type": "string", "description": "Star system name." },
                     "body": { "type": "string", "description": "Only this body: its full name, or the part after the system name such as \"A 3\" or \"2 a\"." }
                 }),
                 &["system"],
-            ),
+            )
         },
-        ToolSpec {
-            name: "plan_route",
-            description: "Plans a route with Spansh: the exact plotter uses the commander's real ship (fuel, scooping, neutron boosts); the neutron plotter only needs the jump range. The route is put on the Navigation page and the next system is copied to the clipboard after every jump.",
-            parameters: schema(
+        working: "Checking the planets…",
+        noun: "planets",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::system_bodies,
+    },
+    Tool {
+        name: "plan_route",
+        description: "Plans a route with Spansh: the exact plotter uses the commander's real ship (fuel, scooping, neutron boosts); the neutron plotter only needs the jump range. The route is put on the Navigation page and the next system is copied to the clipboard after every jump.",
+        params: || {
+            schema(
                 json!({
                     "to": { "type": "string", "description": "Destination system." },
                     "from": { "type": "string", "description": "Start system; default: current." },
                     "kind": { "type": "string", "enum": ["exact", "neutron"] }
                 }),
                 &["to"],
-            ),
+            )
         },
-        ToolSpec {
-            name: "money_routes",
-            description: "Plans a money-making exploration trip with Spansh near a system: exobiology (planets where commanders already logged valuable species: certain, but base value only; for the first-logged bonus use untouched_biology), or road-to-riches bodies (earth-likes, water/ammonia worlds, terraformables). Spansh skips populated systems, so from the bubble the search widens itself until it finds something. Returns stops with values, the total and, where known, whether anyone has set foot on the listed bodies; the route goes to the Navigation page.",
-            parameters: schema(
+        working: "Plotting a route with Spansh…",
+        noun: "Spansh",
+        // It replaces the route on the Navigation page.
+        read_only: false,
+        ask: true,
+        mcp: false,
+        run: NexusTools::plan_route,
+    },
+    Tool {
+        name: "money_routes",
+        description: "Plans a money-making exploration trip with Spansh near a system: exobiology (planets where commanders already logged valuable species: certain, but base value only; for the first-logged bonus use untouched_biology), or road-to-riches bodies (earth-likes, water/ammonia worlds, terraformables). Spansh skips populated systems, so from the bubble the search widens itself until it finds something. Returns stops with values, the total and, where known, whether anyone has set foot on the listed bodies; the route goes to the Navigation page.",
+        params: || {
+            schema(
                 json!({
                     "kind": { "type": "string", "enum": ["exobiology", "road_to_riches", "earth_likes", "ammonia_worlds"] },
                     "near_system": { "type": "string", "description": NEAR },
@@ -1654,17 +1870,32 @@ pub fn specs() -> Vec<ToolSpec> {
                     "max_systems": { "type": "integer", "description": "Default 15." }
                 }),
                 &[],
-            ),
+            )
         },
-        ToolSpec {
-            name: "exobiology_here",
-            description: "Bodies with biological signals in the current system: genera found, species already sampled, likely species with their values (predictions), and unsold exobiology data.",
-            parameters: schema(json!({}), &[]),
-        },
-        ToolSpec {
-            name: "journal_search",
-            description: "Searches the commander's own game journal (every journal file in their journal folder; journal_starts is the first day it holds) for lines with a text, newest first, each with its local time. One call returns up to limit matches, fewer when the lines are long; more_matches says when older ones were left out and how to get them. For a period, such as a week of travel, pass from and to. Event names work as text: FSDJump (jumps), Docked, MarketSell, MissionCompleted. Use for questions about past trips, sales, missions, ships, places visited.",
-            parameters: schema(
+        working: "Planning a money route with Spansh…",
+        noun: "Spansh",
+        // It replaces the route on the Navigation page.
+        read_only: false,
+        ask: true,
+        mcp: false,
+        run: NexusTools::money_routes,
+    },
+    Tool {
+        name: "exobiology_here",
+        description: "Bodies with biological signals in the current system: genera found, species already sampled, likely species with their values (predictions), and unsold exobiology data.",
+        params: || schema(json!({}), &[]),
+        working: "Checking the biology here…",
+        noun: "biology",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: |t, _| t.exobiology_here(),
+    },
+    Tool {
+        name: "journal_search",
+        description: "Searches the commander's own game journal (every journal file in their journal folder; journal_starts is the first day it holds) for lines with a text, newest first, each with its local time. One call returns up to limit matches, fewer when the lines are long; more_matches says when older ones were left out and how to get them. For a period, such as a week of travel, pass from and to. Event names work as text: FSDJump (jumps), Docked, MarketSell, MissionCompleted. Use for questions about past trips, sales, missions, ships, places visited.",
+        params: || {
+            schema(
                 json!({
                     "query": { "type": "string", "description": "Text to find, e.g. a system, station, ship, commodity or event name." },
                     "from": { "type": "string", "description": "First day to search, YYYY-MM-DD (the commander's local date)." },
@@ -1673,15 +1904,27 @@ pub fn specs() -> Vec<ToolSpec> {
                     "limit": { "type": "integer", "description": "Default 15, at most 40." }
                 }),
                 &["query"],
-            ),
+            )
         },
-        ToolSpec {
-            name: "knowledge",
-            description: "Searches the built-in knowledge base: game mechanics, money-making strategies, exobiology, mining, engineering, carriers, colonisation, useful websites, and how to use Elite Nexus.",
-            parameters: schema(json!({ "query": { "type": "string" } }), &["query"]),
-        },
-    ]
-}
+        working: "Searching your journal…",
+        noun: "your journal",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::journal_search,
+    },
+    Tool {
+        name: "knowledge",
+        description: "Searches the built-in knowledge base: game mechanics, money-making strategies, exobiology, mining, engineering, carriers, colonisation, useful websites, and how to use Elite Nexus.",
+        params: || schema(json!({ "query": { "type": "string" } }), &["query"]),
+        working: "Reading up…",
+        noun: "knowledge base",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::knowledge,
+    },
+];
 
 /// One line about the commander for each question (location, ship, credits, date).
 pub fn context_line(gs: &GameState) -> String {
@@ -1754,6 +1997,8 @@ mod tests {
             spansh: Spansh::new(),
             rt: rt.handle().clone(),
             routes: Arc::new(Mutex::new(None)),
+            caller: Caller::Ask,
+            budget: Caller::Ask.budget(),
         };
 
         let me = tools.call("commander", &json!({})).unwrap();
@@ -1779,7 +2024,7 @@ mod tests {
         assert!(tools.call("journal_search", &json!({ "query": "gold" })).unwrap()["matches_newest_first"].as_array().unwrap().is_empty());
         assert!(tools.call("nope", &json!({})).is_err());
         assert!(tools.call("find_commodity", &json!({})).is_err(), "missing required argument is an error, not a panic");
-        assert_eq!(specs().len(), 16);
+        assert_eq!(specs(Caller::Ask).len(), 16);
 
         // The full loop with a scripted model: one tool call, then an answer.
         struct Script(parking_lot::Mutex<Vec<nexus_ai::Reply>>);
@@ -1801,6 +2046,73 @@ mod tests {
         let ans = nexus_ai::ask(&script, nexus_ai::SYSTEM_PROMPT, &tools, &mut conv, "Where should I sell my cargo?".into(), &AtomicBool::new(false), |_| {}).unwrap();
         assert!(ans.text.contains("Beta Hub"));
         assert_eq!(ans.tools_used, vec!["sell_my_cargo"]);
+    }
+
+    /// One entry per tool: unique names, Ask's words for it, a schema the providers take, the writers kept from agents,
+    /// and every entry answered by `call`.
+    #[test]
+    fn the_registry_describes_every_tool_once() {
+        let mut names: Vec<&str> = TOOLS.iter().map(|t| t.name).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), TOOLS.len(), "tool names are unique");
+        for t in TOOLS {
+            assert!(!t.description.is_empty() && !t.working.is_empty() && !t.noun.is_empty(), "{}", t.name);
+            let p = (t.params)();
+            assert_eq!(p["type"], "object", "{}", t.name);
+            for r in p["required"].as_array().into_iter().flatten() {
+                assert!(p["properties"].get(r.as_str().unwrap_or_default()).is_some(), "{}: {r} is required but not described", t.name);
+            }
+            assert!(!t.mcp || t.read_only, "{} changes something: not for agents", t.name);
+            assert!(t.ask || t.mcp, "{} is offered to nobody", t.name);
+        }
+        assert_eq!((working("nope"), noun("nope")), ("Working…", "tools"));
+        assert_eq!((working("sell_my_cargo"), noun("sell_my_cargo")), ("Planning your cargo sale…", "your cargo"));
+        // Routes reach the Navigation page: Ask plans them, agents don't.
+        let offered = |c: Caller| specs(c).iter().map(|s| s.name).collect::<Vec<_>>();
+        let (ask, mcp) = (offered(Caller::Ask), offered(Caller::Mcp));
+        assert!(ask.contains(&"plan_route") && ask.contains(&"money_routes"));
+        assert!(!mcp.contains(&"plan_route") && !mcp.contains(&"money_routes") && mcp.contains(&"system_bodies"));
+        // Every tool is answered: with no commander loaded they fail early, offline, but never as an unknown tool. A
+        // tool the caller isn't offered is unknown to it.
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let mut tools = NexusTools {
+            model: Arc::new(RwLock::new(Model::default())),
+            db: None,
+            index: Arc::new(RwLock::new(JournalIndex::default())),
+            spansh: Spansh::builder().base_url("http://127.0.0.1:9").connect_timeout(Duration::from_millis(200)).build().unwrap(),
+            rt: rt.handle().clone(),
+            routes: Arc::new(Mutex::new(None)),
+            caller: Caller::Ask,
+            budget: Caller::Ask.budget(),
+        };
+        for t in TOOLS.iter().filter(|t| t.ask) {
+            if let Err(e) = tools.call(t.name, &json!({})) {
+                assert!(!e.contains("Unknown tool"), "{}: {e}", t.name);
+            }
+        }
+        tools.caller = Caller::Mcp;
+        assert!(tools.call("plan_route", &json!({ "to": "Sol" })).unwrap_err().contains("Unknown tool"));
+        assert_eq!(tools.tools().len(), mcp.len());
+    }
+
+    /// `fit` finds the most detail that fits in a few tries.
+    #[test]
+    fn fit_keeps_the_most_detail_that_fits() {
+        // Level n keeps 10 - n strings of 8 letters: 11 characters each with quotes and comma, so k of them are 11k + 1.
+        let built = std::cell::Cell::new(0);
+        let reply = |level: usize| {
+            built.set(built.get() + 1);
+            json!(vec!["x".repeat(8); 10 - level.min(10)])
+        };
+        assert_eq!(fit(1_000, 10, reply).1, 0, "the whole reply fits");
+        built.set(0);
+        let (v, level) = fit(45, 10, reply);
+        assert_eq!((level, json_len(&v)), (6, 45), "four strings fit, five don't");
+        assert!(built.get() <= 6, "{} replies built for 10 levels", built.get());
+        assert_eq!(fit(5, 10, reply).1, 9, "nothing fits: the last level");
+        assert_eq!(fit(5, 1, reply).1, 0, "one level: that one");
+        assert_eq!(json_len(&json!({ "a": "é" })), r#"{"a":"é"}"#.len());
     }
 
     /// "Which systems did I pass through from 22 to 29 October?" (GitHub issue #4): any period of the journal, page by
@@ -1834,6 +2146,8 @@ mod tests {
             spansh: Spansh::new(),
             rt: rt.handle().clone(),
             routes: Arc::new(Mutex::new(None)),
+            caller: Caller::Ask,
+            budget: Caller::Ask.budget(),
         };
         let search = |args: Value| tools.call("journal_search", &args).unwrap();
         let systems = |v: &Value| -> Vec<String> {
@@ -1894,6 +2208,8 @@ mod tests {
             spansh: Spansh::new(),
             rt: rt.handle().clone(),
             routes: Arc::new(Mutex::new(None)),
+            caller: Caller::Ask,
+            budget: Caller::Ask.budget(),
         };
         let found = tools.call("mining_sites", &json!({ "commodity": "iridium" })).unwrap();
         assert_eq!(found["sites"][0]["body"], "Alpha 1");
@@ -1954,6 +2270,8 @@ mod tests {
             spansh: offline,
             rt: rt.handle().clone(),
             routes: Arc::new(Mutex::new(None)),
+            caller: Caller::Ask,
+            budget: Caller::Ask.budget(),
         };
         let out = tools.call("system_bodies", &json!({ "system": "swoilz mh-w c17-3" })).unwrap();
         assert_eq!(out["system"], "Swoilz MH-W c17-3");
@@ -2115,6 +2433,8 @@ mod real_data {
             spansh: Spansh::new(),
             rt: rt.handle().clone(),
             routes: Arc::new(Mutex::new(None)),
+            caller: Caller::Ask,
+            budget: Caller::Ask.budget(),
         };
         println!("context: {context}");
         for (name, args) in [
@@ -2182,6 +2502,8 @@ mod real_data {
             spansh: Spansh::new(),
             rt: rt.handle().clone(),
             routes: Arc::new(Mutex::new(None)),
+            caller: Caller::Ask,
+            budget: Caller::Ask.budget(),
         };
         ONLINE_FOOTFALL_LOOKUP.store(true, Ordering::Relaxed);
         // The archive lookup itself (TLS 1.3 through rustls): Synuefe BR-L c24-23 3 c has an EDMC scan

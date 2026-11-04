@@ -168,7 +168,7 @@ impl AssistantService {
             match e {
                 Event::Step(Step::Thinking) => self.status = Some("Thinking…".into()),
                 Event::Step(Step::Tool(name)) => {
-                    self.status = Some(tool_label(&name).into());
+                    self.status = Some(crate::ai_tools::working(&name).into());
                     if let Some(last) = self.exchanges.last_mut()
                         && !last.tools.contains(&name)
                     {
@@ -230,48 +230,6 @@ fn fingerprint(cfg: &ProviderConfig) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (format!("{:?}", cfg.kind), cfg.base_url(), &cfg.api_key, &cfg.model).hash(&mut h);
     h.finish()
-}
-
-pub fn tool_label(name: &str) -> &'static str {
-    match name {
-        "commander" => "Checking your ship…",
-        "find_commodity" => "Searching markets…",
-        "price_deals" => "Looking for deals…",
-        "sell_my_cargo" => "Planning your cargo sale…",
-        "trade_routes" => "Finding trade routes…",
-        "nearest_service" => "Finding stations…",
-        "mining_hotspots" => "Finding hotspots…",
-        "system_info" => "Looking up the system…",
-        "system_bodies" => "Checking the planets…",
-        "untouched_biology" => "Looking for untouched planets…",
-        "plan_route" => "Plotting a route with Spansh…",
-        "money_routes" => "Planning a money route with Spansh…",
-        "exobiology_here" => "Checking the biology here…",
-        "journal_search" => "Searching your journal…",
-        "knowledge" => "Reading up…",
-        _ => "Working…",
-    }
-}
-
-/// Short noun for the "used: markets · deals" line under an answer.
-pub fn tool_noun(name: &str) -> &'static str {
-    match name {
-        "commander" => "your ship",
-        "find_commodity" => "markets",
-        "price_deals" => "deals",
-        "sell_my_cargo" => "your cargo",
-        "trade_routes" => "trade routes",
-        "nearest_service" => "stations",
-        "mining_hotspots" => "hotspots",
-        "system_info" => "system data",
-        "system_bodies" => "planets",
-        "untouched_biology" => "untouched planets",
-        "plan_route" | "money_routes" => "Spansh",
-        "exobiology_here" => "biology",
-        "journal_search" => "your journal",
-        "knowledge" => "knowledge base",
-        _ => "tools",
-    }
 }
 
 fn friendly(e: &AiError) -> String {
