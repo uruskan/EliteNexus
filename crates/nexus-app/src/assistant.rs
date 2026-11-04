@@ -2,19 +2,24 @@
 //! app's own data. The UI only polls for progress.
 
 use crate::ai_tools::NexusTools;
+use crate::pages::navigation::PlannedRoute;
 use crossbeam_channel::Receiver;
-use nexus_ai::{AiError, Answer, ProviderConfig, Remote, Step, Turn, Usage};
+use nexus_ai::{AiError, Answer, ProviderConfig, Remote, Step, ToolHost, ToolSpec, Turn, Usage};
 use parking_lot::Mutex;
+use serde_json::Value;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// One question and its answer.
 pub struct Exchange {
     pub question: String,
-    /// None while the assistant is working.
+    /// None while the assistant is working, and after it was stopped.
     pub answer: Option<Result<String, String>>,
     pub tools: Vec<String>,
     pub usage: Usage,
+    /// The commander stopped it before it answered.
+    pub stopped: bool,
 }
 
 enum Event {
@@ -30,6 +35,8 @@ pub struct AssistantService {
     pub model: Option<String>,
     conv: Arc<Mutex<Vec<Turn>>>,
     rx: Option<Receiver<Event>>,
+    /// Set to stop the question being answered (a new flag for each question).
+    stop_flag: Arc<AtomicBool>,
     /// (provider fingerprint, model) so the model list is fetched once per provider/key.
     resolved: Arc<Mutex<Option<(u64, String)>>>,
     http: reqwest::Client,
@@ -43,6 +50,7 @@ impl Default for AssistantService {
             model: None,
             conv: Arc::new(Mutex::new(Vec::new())),
             rx: None,
+            stop_flag: Arc::default(),
             resolved: Arc::new(Mutex::new(None)),
             http: reqwest::Client::builder().user_agent(concat!("EliteNexus/", env!("CARGO_PKG_VERSION"))).build().unwrap_or_default(),
         }
@@ -58,9 +66,12 @@ impl AssistantService {
             answer: Some(Ok("Yes. The exobiology planner (powered by Spansh) targets bodies that typically carry high-value biology such as **Stratum Tectonicas**, worth about 19 M Cr base or about 95 M Cr with the first-logged bonus.\n\nTo get the ×5 bonus:\n- Pick systems a little off the beaten path, where no commander has stamped their name.\n- When you scan a body with the FSS or DSS, check its footfall status before you land; bodies nobody has walked on in unpopulated systems qualify.\n  - Populated systems never pay the bonus, even when the body shows no footfall.\n\nYour route is loaded on the Navigation page. Happy hunting!".into())),
             tools: vec!["money_routes".into(), "knowledge".into()],
             usage: Usage::default(),
+            stopped: false,
         });
-        s.exchanges.push(Exchange { question: "Which of those bodies are still unfootfalled?".into(), answer: None, tools: Vec::new(), usage: Usage::default() });
+        s.exchanges.push(Exchange { question: "Which of those bodies are still unfootfalled?".into(), answer: None, tools: Vec::new(), usage: Usage::default(), stopped: false });
         s.status = Some("Checking the planets…".into());
+        // Busy, as while a question runs (a channel nobody sends on), so the screenshot shows Stop.
+        s.rx = Some(crossbeam_channel::unbounded().1);
         s
     }
 
@@ -68,24 +79,38 @@ impl AssistantService {
         self.rx.is_some()
     }
 
-    /// Starts a new conversation.
-    pub fn clear(&mut self) {
+    /// Stops the question being answered: its answer and a route it was still planning are dropped, and the
+    /// conversation stays as it was before it.
+    pub fn stop(&mut self) {
         if !self.busy() {
-            self.exchanges.clear();
-            self.conv.lock().clear();
+            return;
+        }
+        self.stop_flag.store(true, Ordering::Relaxed);
+        self.rx = None;
+        self.status = None;
+        if let Some(last) = self.exchanges.last_mut() {
+            last.stopped = true;
         }
     }
 
-    pub fn ask(&mut self, question: String, cfg: ProviderConfig, tools: NexusTools, context: String, ctx: &egui::Context) {
+    /// Starts a new conversation, stopping the question being answered.
+    pub fn clear(&mut self) {
+        self.stop();
+        self.exchanges.clear();
+        self.conv.lock().clear();
+    }
+
+    pub fn ask(&mut self, question: String, cfg: ProviderConfig, mut tools: NexusTools, context: String, ctx: &egui::Context) {
         let question = question.trim().to_string();
         if self.busy() || question.is_empty() {
             return;
         }
-        self.exchanges.push(Exchange { question: question.clone(), answer: None, tools: Vec::new(), usage: Usage::default() });
+        self.exchanges.push(Exchange { question: question.clone(), answer: None, tools: Vec::new(), usage: Usage::default(), stopped: false });
         self.status = Some("Thinking…".into());
         let (tx, rx) = crossbeam_channel::unbounded();
         self.rx = Some(rx);
-        let (conv, resolved, http, ctx) = (self.conv.clone(), self.resolved.clone(), self.http.clone(), ctx.clone());
+        self.stop_flag = Arc::default();
+        let (conv, resolved, http, ctx, stop) = (self.conv.clone(), self.resolved.clone(), self.http.clone(), ctx.clone(), self.stop_flag.clone());
         let spawned = std::thread::Builder::new().name("assistant".into()).spawn(move || {
             let send = |e: Event| {
                 let _ = tx.send(e);
@@ -104,11 +129,22 @@ impl AssistantService {
                 send(Event::Done(Err(AiError::NoModel), None));
                 return;
             };
-            let backend = Remote { http: &http, rt: &rt, cfg: &cfg, model: model.clone() };
-            let mut conv = conv.lock();
-            nexus_ai::trim_history(&mut conv, 6);
+            let backend = Remote { http: &http, rt: &rt, cfg: &cfg, model: model.clone(), stop: Some(&stop) };
+            // The tools plan routes into a slot of their own; `Guarded` passes them on unless the question was stopped.
+            let routes = std::mem::take(&mut tools.routes);
+            let host = Guarded { tools: &tools, stop: &stop, routes: &routes };
+            // Answered on a copy: the conversation is never locked for long, and a stopped question leaves it as it was.
+            let mut turns = conv.lock().clone();
+            nexus_ai::trim_history(&mut turns, 6);
             let q = nexus_ai::with_context(&context, &question);
-            let res = nexus_ai::ask(&backend, nexus_ai::SYSTEM_PROMPT, &tools, &mut conv, q, |s| send(Event::Step(s)));
+            let res = nexus_ai::ask(&backend, nexus_ai::SYSTEM_PROMPT, &host, &mut turns, q, &stop, |s| send(Event::Step(s)));
+            {
+                let mut conv = conv.lock();
+                if stop.load(Ordering::Relaxed) {
+                    return; // the commander has moved on: nothing of this question is kept
+                }
+                *conv = turns;
+            }
             if res.is_err() {
                 // A wrong model name or key: look the model up again next time.
                 *resolved.lock() = None;
@@ -161,6 +197,32 @@ impl AssistantService {
             self.rx = None;
             self.status = None;
         }
+    }
+}
+
+/// The tools as one question sees them: a route a tool plans reaches the Navigation page only if the question
+/// wasn't stopped while the tool ran.
+struct Guarded<'a> {
+    tools: &'a NexusTools,
+    stop: &'a AtomicBool,
+    /// The app's route slot (the tools write to one of their own).
+    routes: &'a Mutex<Option<PlannedRoute>>,
+}
+
+impl ToolHost for Guarded<'_> {
+    fn tools(&self) -> Vec<ToolSpec> {
+        self.tools.tools()
+    }
+
+    fn call(&self, name: &str, args: &Value) -> Result<Value, String> {
+        let result = self.tools.call(name, args);
+        let planned = self.tools.routes.lock().take();
+        if let Some(route) = planned
+            && !self.stop.load(Ordering::Relaxed)
+        {
+            *self.routes.lock() = Some(route);
+        }
+        result
     }
 }
 

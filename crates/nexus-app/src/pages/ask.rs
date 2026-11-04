@@ -160,6 +160,9 @@ fn setup(ui: &mut Ui, st: &mut AskUi, ai: &mut AiSettings) -> AskAction {
                         egui::ComboBox::from_id_salt("ai-provider").selected_text(ai.provider.label()).width(300.0).show_ui(ui, |ui| {
                             for k in ProviderKind::ALL {
                                 if ui.selectable_value(&mut ai.provider, k, k.label()).changed() {
+                                    // The address and model belonged to the previous provider.
+                                    ai.base_url.clear();
+                                    ai.model.clear();
                                     action = AskAction::SettingsChanged;
                                 }
                             }
@@ -171,7 +174,7 @@ fn setup(ui: &mut Ui, st: &mut AskUi, ai: &mut AiSettings) -> AskAction {
                             action = AskAction::SettingsChanged;
                         }
                         ui.end_row();
-                        if matches!(ai.provider, ProviderKind::Local | ProviderKind::Custom) {
+                        if ai.provider.takes_address() {
                             ui.label(RichText::new("Address").color(pal::DIM));
                             let hint = match ai.provider.default_base_url() {
                                 "" => "https://…/v1/",
@@ -207,7 +210,7 @@ fn chat(ui: &mut Ui, svc: &mut AssistantService, st: &mut AskUi) -> AskAction {
             if widgets::icon_button(ui, icon::GEAR_SIX, "Assistant settings").clicked() {
                 st.show_setup = true;
             }
-            if !svc.exchanges.is_empty() && !svc.busy() && widgets::icon_button(ui, icon::NOTE_PENCIL, "New conversation").clicked() {
+            if !svc.exchanges.is_empty() && widgets::icon_button(ui, icon::NOTE_PENCIL, "New conversation").clicked() {
                 svc.clear();
             }
         });
@@ -243,6 +246,9 @@ fn chat(ui: &mut Ui, svc: &mut AssistantService, st: &mut AskUi) -> AskAction {
                         ui.vertical(|ui| {
                             ui.set_width(width - 44.0);
                             match &ex.answer {
+                                None if ex.stopped => {
+                                    ui.label(RichText::new(format!("{} Stopped", icon::STOP_CIRCLE)).color(pal::FAINT));
+                                }
                                 None => {
                                     ui.horizontal(|ui| {
                                         typing(ui);
@@ -288,11 +294,22 @@ fn chat(ui: &mut Ui, svc: &mut AssistantService, st: &mut AskUi) -> AskAction {
                         TextEdit::singleline(&mut st.input).frame(Frame::new().inner_margin(Margin::symmetric(2, 4))).hint_text("Ask anything").font(FontId::proportional(15.5)).vertical_align(Align::Center),
                     );
                     let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    let ready = !svc.busy() && !st.input.trim().is_empty();
+                    let busy = svc.busy();
+                    let ready = !busy && !st.input.trim().is_empty();
+                    // Send, or Stop while the assistant works.
                     let (rect, send) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
-                    ui.painter().circle_filled(rect.center(), 17.0, if ready { pal::ACCENT } else { pal::CARD_HI });
-                    ui.painter().text(rect.center(), Align2::CENTER_CENTER, icon::ARROW_UP, FontId::proportional(18.0), if ready { pal::ON_ACCENT } else { pal::FAINT });
-                    if (enter || send.clicked()) && ready {
+                    let (fill, glyph, col) = match (busy, ready) {
+                        (true, _) => (pal::ACCENT, icon::STOP, pal::ON_ACCENT),
+                        (false, true) => (pal::ACCENT, icon::ARROW_UP, pal::ON_ACCENT),
+                        (false, false) => (pal::CARD_HI, icon::ARROW_UP, pal::FAINT),
+                    };
+                    ui.painter().circle_filled(rect.center(), 17.0, fill);
+                    ui.painter().text(rect.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(18.0), col);
+                    if busy {
+                        if send.on_hover_text("Stop").clicked() {
+                            svc.stop();
+                        }
+                    } else if (enter || send.clicked()) && ready {
                         action = AskAction::Ask(std::mem::take(&mut st.input));
                         field.request_focus();
                     }

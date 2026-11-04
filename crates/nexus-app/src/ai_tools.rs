@@ -1730,7 +1730,7 @@ mod tests {
             reply("Sell your 100 t of gold at **Beta Hub** for 5.5M Cr.", vec![]),
         ]));
         let mut conv = Vec::new();
-        let ans = nexus_ai::ask(&script, nexus_ai::SYSTEM_PROMPT, &tools, &mut conv, "Where should I sell my cargo?".into(), |_| {}).unwrap();
+        let ans = nexus_ai::ask(&script, nexus_ai::SYSTEM_PROMPT, &tools, &mut conv, "Where should I sell my cargo?".into(), &AtomicBool::new(false), |_| {}).unwrap();
         assert!(ans.text.contains("Beta Hub"));
         assert_eq!(ans.tools_used, vec!["sell_my_cargo"]);
     }

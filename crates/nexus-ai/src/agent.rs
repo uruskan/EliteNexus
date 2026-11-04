@@ -4,6 +4,7 @@ use crate::chat::{Reply, ToolSpec, Turn, Usage};
 use crate::provider::{AiError, ProviderConfig, ProviderKind};
 use crate::{anthropic, openai};
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::runtime::Handle;
 
 /// Model rounds per question (each round may call several tools).
@@ -28,13 +29,15 @@ pub struct Remote<'a> {
     pub rt: &'a Handle,
     pub cfg: &'a ProviderConfig,
     pub model: String,
+    /// Setting it drops the request in flight (pass the flag given to [`ask`]).
+    pub stop: Option<&'a AtomicBool>,
 }
 
 impl Backend for Remote<'_> {
     fn complete(&self, system: &str, tools: &[ToolSpec], turns: &[Turn]) -> Result<Reply, AiError> {
         match self.cfg.kind {
-            ProviderKind::Claude => anthropic::complete(self.http, self.rt, self.cfg, &self.model, system, tools, turns),
-            _ => openai::complete(self.http, self.rt, self.cfg, &self.model, system, tools, turns),
+            ProviderKind::Claude => anthropic::complete(self, system, tools, turns),
+            _ => openai::complete(self, system, tools, turns),
         }
     }
 }
@@ -55,14 +58,19 @@ pub struct Answer {
 }
 
 /// Answers `question` in the context of `conv`, calling tools as the model requests. On error the
-/// question is removed again, so the conversation stays valid for the next one.
-pub fn ask(backend: &dyn Backend, system: &str, host: &dyn ToolHost, conv: &mut Vec<Turn>, question: String, mut step: impl FnMut(Step)) -> Result<Answer, AiError> {
+/// question is removed again, so the conversation stays valid for the next one. Setting `stop` ends it
+/// before the next model request or tool call with [`AiError::Stopped`], the question removed as well.
+pub fn ask(backend: &dyn Backend, system: &str, host: &dyn ToolHost, conv: &mut Vec<Turn>, question: String, stop: &AtomicBool, mut step: impl FnMut(Step)) -> Result<Answer, AiError> {
     let tools = host.tools();
     let start = conv.len();
     conv.push(Turn::User(question));
     let mut usage = Usage::default();
     let mut used: Vec<String> = Vec::new();
     for _ in 0..MAX_ROUNDS {
+        if stop.load(Ordering::Relaxed) {
+            conv.truncate(start);
+            return Err(AiError::Stopped);
+        }
         step(Step::Thinking);
         let reply = match backend.complete(system, &tools, conv) {
             Ok(r) => r,
@@ -85,6 +93,10 @@ pub fn ask(backend: &dyn Backend, system: &str, host: &dyn ToolHost, conv: &mut 
             return Ok(Answer { text, tools_used: used, usage });
         }
         for c in calls {
+            if stop.load(Ordering::Relaxed) {
+                conv.truncate(start);
+                return Err(AiError::Stopped);
+            }
             step(Step::Tool(c.name.clone()));
             if !used.contains(&c.name) {
                 used.push(c.name.clone());
@@ -168,7 +180,7 @@ mod tests {
         };
         let mut conv = Vec::new();
         let mut steps = Vec::new();
-        let a = ask(&script, "sys", &Host, &mut conv, "Where am I?".into(), |s| steps.push(s)).unwrap();
+        let a = ask(&script, "sys", &Host, &mut conv, "Where am I?".into(), &AtomicBool::new(false), |s| steps.push(s)).unwrap();
         assert_eq!(a.text, "You are in Sol.");
         assert_eq!(a.tools_used, vec!["commander", "nope"]);
         assert_eq!(a.usage.input_tokens, 200);
@@ -185,7 +197,7 @@ mod tests {
     fn errors_roll_back_and_history_trims() {
         let script = Script { replies: RefCell::new(vec![Err(AiError::Http("offline".into()))]), seen: RefCell::new(vec![]) };
         let mut conv = vec![Turn::User("old".into())];
-        assert!(ask(&script, "s", &Host, &mut conv, "new".into(), |_| {}).is_err());
+        assert!(ask(&script, "s", &Host, &mut conv, "new".into(), &AtomicBool::new(false), |_| {}).is_err());
         assert_eq!(conv.len(), 1, "failed question removed");
 
         let mut conv = vec![
@@ -198,5 +210,29 @@ mod tests {
         trim_history(&mut conv, 2);
         assert!(matches!(&conv[0], Turn::User(q) if q == "q2"));
         assert!(clip(&"é".repeat(MAX_RESULT_CHARS)).chars().count() < MAX_RESULT_CHARS);
+    }
+
+    #[test]
+    fn stop_ends_the_question_between_steps() {
+        /// A tool during which the commander presses Stop.
+        struct Stopper<'a>(&'a AtomicBool);
+        impl ToolHost for Stopper<'_> {
+            fn tools(&self) -> Vec<ToolSpec> {
+                Host.tools()
+            }
+            fn call(&self, _name: &str, _args: &Value) -> Result<Value, String> {
+                self.0.store(true, Ordering::Relaxed);
+                Ok(json!("done"))
+            }
+        }
+        let calls = vec![ToolCall { id: "1".into(), name: "commander".into(), args: json!({}) }, ToolCall { id: "2".into(), name: "commander".into(), args: json!({}) }];
+        let script = Script { replies: RefCell::new(vec![reply("", calls), reply("never sent", vec![])]), seen: RefCell::new(vec![]) };
+        let stop = AtomicBool::new(false);
+        let mut conv = vec![Turn::User("old".into())];
+        let mut steps = Vec::new();
+        assert_eq!(ask(&script, "s", &Stopper(&stop), &mut conv, "new".into(), &stop, |s| steps.push(s)), Err(AiError::Stopped));
+        assert_eq!(conv.len(), 1, "the stopped question is removed");
+        assert_eq!(*script.seen.borrow(), vec![2], "no model request after the stop");
+        assert_eq!(steps, vec![Step::Thinking, Step::Tool("commander".into())], "the second tool never ran");
     }
 }

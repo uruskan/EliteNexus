@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -33,6 +34,11 @@ impl ProviderKind {
 
     pub fn needs_key(self) -> bool {
         !matches!(self, ProviderKind::Local)
+    }
+
+    /// The commander sets this provider's address; Gemini and Claude always use their own.
+    pub fn takes_address(self) -> bool {
+        matches!(self, ProviderKind::Local | ProviderKind::Custom)
     }
 
     /// Where users get an API key.
@@ -71,7 +77,7 @@ pub struct ProviderConfig {
     pub api_key: String,
     /// Empty = choose automatically.
     pub model: String,
-    /// Empty = the provider's default address.
+    /// Empty = the provider's default address. Only used where [`ProviderKind::takes_address`].
     pub base_url: String,
 }
 
@@ -87,10 +93,11 @@ impl fmt::Debug for ProviderConfig {
 }
 
 impl ProviderConfig {
-    /// Service address ending in `/`.
+    /// Service address ending in `/`. Gemini and Claude ignore a stored address: one left over from a custom or
+    /// local service would send their requests, and their key, there.
     pub fn base_url(&self) -> String {
         let u = self.base_url.trim();
-        let u = if u.is_empty() { self.kind.default_base_url() } else { u };
+        let u = if u.is_empty() || !self.kind.takes_address() { self.kind.default_base_url() } else { u };
         if u.is_empty() || u.ends_with('/') { u.to_string() } else { format!("{u}/") }
     }
 
@@ -110,6 +117,9 @@ pub enum AiError {
     Parse(String),
     #[error("no model available")]
     NoModel,
+    /// The commander stopped the question.
+    #[error("stopped")]
+    Stopped,
 }
 
 impl AiError {
@@ -120,9 +130,13 @@ impl AiError {
     }
 }
 
-/// One JSON request, retried after rate limits and server errors (at most twice).
-pub(crate) fn send_json(http: &reqwest::Client, rt: &Handle, url: &str, headers: &[(&str, String)], body: Option<&Value>) -> Result<Value, AiError> {
+/// One JSON request, retried after rate limits and server errors (at most twice). Setting `stop` ends it at once,
+/// waits included, with [`AiError::Stopped`].
+pub(crate) fn send_json(http: &reqwest::Client, rt: &Handle, url: &str, headers: &[(&str, String)], body: Option<&Value>, stop: Option<&AtomicBool>) -> Result<Value, AiError> {
     for attempt in 0..3u32 {
+        if is_set(stop) {
+            return Err(AiError::Stopped);
+        }
         let mut req = match body {
             Some(b) => http.post(url).json(b),
             None => http.get(url),
@@ -130,13 +144,21 @@ pub(crate) fn send_json(http: &reqwest::Client, rt: &Handle, url: &str, headers:
         for (k, v) in headers {
             req = req.header(*k, v);
         }
-        let res = rt.block_on(async move {
+        let request = async move {
             let r = req.timeout(Duration::from_secs(120)).send().await?;
             let status = r.status().as_u16();
             let retry_after = r.headers().get("retry-after").and_then(|v| v.to_str().ok()).and_then(|s| s.trim().parse::<u64>().ok());
             let text = r.text().await?;
             Ok::<_, reqwest::Error>((status, retry_after, text))
+        };
+        // Losing the race to `stop` drops the request, which cancels it.
+        let res = rt.block_on(async move {
+            tokio::select! {
+                r = request => Some(r),
+                () = until_set(stop) => None,
+            }
         });
+        let Some(res) = res else { return Err(AiError::Stopped) };
         match res {
             Ok((status, _, text)) if (200..300).contains(&status) => {
                 return serde_json::from_str(&text).map_err(|e| AiError::Parse(e.to_string()));
@@ -144,18 +166,46 @@ pub(crate) fn send_json(http: &reqwest::Client, rt: &Handle, url: &str, headers:
             Ok((status, retry_after, text)) => {
                 let retryable = status >= 500 || (status == 429 && retry_after.is_some());
                 if retryable && attempt < 2 {
-                    std::thread::sleep(Duration::from_secs(retry_after.unwrap_or(2 << attempt).min(20)));
+                    pause(Duration::from_secs(retry_after.unwrap_or(2 << attempt).min(20)), stop);
                     continue;
                 }
                 return Err(AiError::Status { code: status, message: error_message(&text) });
             }
             Err(e) if attempt < 2 && (e.is_timeout() || e.is_connect()) => {
-                std::thread::sleep(Duration::from_secs(1 + u64::from(attempt)));
+                pause(Duration::from_secs(1 + u64::from(attempt)), stop);
             }
             Err(e) => return Err(AiError::Http(e.to_string())),
         }
     }
     Err(AiError::Http("gave up after retries".into()))
+}
+
+fn is_set(stop: Option<&AtomicBool>) -> bool {
+    stop.is_some_and(|s| s.load(Ordering::Relaxed))
+}
+
+/// Resolves once `stop` is set; never without a flag.
+async fn until_set(stop: Option<&AtomicBool>) {
+    match stop {
+        Some(s) => {
+            while !s.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+        None => std::future::pending().await,
+    }
+}
+
+/// Waits `d` before a retry, or less once `stop` is set.
+fn pause(d: Duration, stop: Option<&AtomicBool>) {
+    let end = Instant::now() + d;
+    while !is_set(stop) {
+        let left = end.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        std::thread::sleep(left.min(Duration::from_millis(100)));
+    }
 }
 
 /// The human-readable part of an error body (OpenAI, Gemini and Anthropic shapes).
@@ -172,7 +222,7 @@ fn error_message(body: &str) -> String {
 /// The provider's model IDs (`models/` prefixes removed).
 pub fn list_models(http: &reqwest::Client, rt: &Handle, cfg: &ProviderConfig) -> Result<Vec<String>, AiError> {
     let url = format!("{}models", cfg.base_url());
-    let v = send_json(http, rt, &url, &auth_headers(cfg), None)?;
+    let v = send_json(http, rt, &url, &auth_headers(cfg), None, None)?;
     let ids = v
         .get("data")
         .and_then(Value::as_array)
@@ -232,5 +282,39 @@ mod tests {
         assert_eq!(error_message(r#"[{"error":{"code":400,"message":"API key not valid."}}]"#), "API key not valid.");
         assert_eq!(error_message(r#"{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}"#), "slow down");
         assert!(AiError::Status { code: 400, message: "API key not valid. Please pass a valid API key.".into() }.is_auth());
+    }
+
+    #[test]
+    fn gemini_and_claude_ignore_a_left_over_address() {
+        // Switching from a custom service back to Gemini used to keep sending Gemini's key to the custom address.
+        for kind in [ProviderKind::Gemini, ProviderKind::Claude] {
+            let c = ProviderConfig { kind, base_url: "https://agentrouter.org/v1".into(), ..Default::default() };
+            assert_eq!(c.base_url(), kind.default_base_url(), "{kind:?}");
+        }
+        let local = ProviderConfig { kind: ProviderKind::Local, base_url: "http://localhost:1234/v1".into(), ..Default::default() };
+        assert_eq!(local.base_url(), "http://localhost:1234/v1/", "LM Studio's port is kept");
+    }
+
+    #[test]
+    fn stop_ends_a_request_that_hangs() {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        // A server that takes the connection and never answers.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let _held = listener.accept();
+            std::thread::sleep(Duration::from_secs(30));
+        });
+        let stop = std::sync::Arc::new(AtomicBool::new(false));
+        let flag = stop.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            flag.store(true, Ordering::Relaxed);
+        });
+        let started = Instant::now();
+        let http = reqwest::Client::new();
+        assert_eq!(send_json(&http, rt.handle(), &url, &[], None, Some(&stop)), Err(AiError::Stopped));
+        assert!(started.elapsed() < Duration::from_secs(5), "stopped after {:?}", started.elapsed());
+        assert_eq!(send_json(&http, rt.handle(), &url, &[], None, Some(&stop)), Err(AiError::Stopped), "a set flag sends nothing");
     }
 }

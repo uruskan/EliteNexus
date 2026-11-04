@@ -6,6 +6,9 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
+- **Ask** can be stopped: while it answers, the round button becomes **Stop**, and **New conversation**, now there
+  while it works too, stops it as well. A slow model no longer leaves you waiting with no way out, and a stopped
+  question changes nothing, not even a route it was planning.
 - **Engineering**: Merc blueprints, bought from engineers with Merc Coins, are in the blueprint planner: Extended cargo
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
@@ -15,6 +18,11 @@ release time that section becomes the new version and the release workflow publi
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
+
+### Fixed
+- **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
+  your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
+  key". Switching provider under "Other providers and model" also clears the old provider's address and model.
 
 ## [0.7.3-beta.2] - 2026-10-25
 

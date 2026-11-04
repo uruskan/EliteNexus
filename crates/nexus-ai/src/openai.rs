@@ -1,10 +1,10 @@
 //! OpenAI-compatible Chat Completions with tool calling: Gemini's compatibility endpoint, local
 //! servers (Ollama, LM Studio, llama.cpp) and other compatible services.
 
+use crate::agent::Remote;
 use crate::chat::{Reply, ToolCall, ToolSpec, Turn, Usage};
 use crate::provider::{AiError, ProviderConfig, ProviderKind, auth_headers, send_json};
 use serde_json::{Value, json};
-use tokio::runtime::Handle;
 
 pub(crate) fn request_body(cfg: &ProviderConfig, model: &str, system: &str, tools: &[ToolSpec], turns: &[Turn]) -> Value {
     let mut messages = vec![json!({ "role": "system", "content": system })];
@@ -75,18 +75,11 @@ pub(crate) fn parse_reply(v: &Value) -> Result<Reply, AiError> {
     Ok(Reply { text, calls, raw, usage, truncated })
 }
 
-pub(crate) fn complete(
-    http: &reqwest::Client,
-    rt: &Handle,
-    cfg: &ProviderConfig,
-    model: &str,
-    system: &str,
-    tools: &[ToolSpec],
-    turns: &[Turn],
-) -> Result<Reply, AiError> {
-    let body = request_body(cfg, model, system, tools, turns);
+pub(crate) fn complete(remote: &Remote, system: &str, tools: &[ToolSpec], turns: &[Turn]) -> Result<Reply, AiError> {
+    let cfg = remote.cfg;
+    let body = request_body(cfg, &remote.model, system, tools, turns);
     let url = format!("{}chat/completions", cfg.base_url());
-    let v = send_json(http, rt, &url, &auth_headers(cfg), Some(&body))?;
+    let v = send_json(remote.http, remote.rt, &url, &auth_headers(cfg), Some(&body), remote.stop)?;
     parse_reply(&v)
 }
 
