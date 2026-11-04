@@ -8,6 +8,7 @@ pub mod commodities;
 pub mod engineering;
 pub mod exobio;
 pub mod exploration;
+pub mod grounds;
 pub mod materials;
 pub mod outfitting;
 pub mod names;
