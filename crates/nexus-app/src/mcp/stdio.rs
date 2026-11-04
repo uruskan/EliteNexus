@@ -388,9 +388,15 @@ fn connect(endpoint: &str) -> std::io::Result<impl Read + Write> {
     Ok(pipe)
 }
 
+/// Opens the app's socket, and uses it only if the program at the other end runs as this user.
 #[cfg(not(windows))]
 fn connect(endpoint: &str) -> std::io::Result<impl Read + Write> {
-    std::os::unix::net::UnixStream::connect(endpoint)
+    use std::os::unix::io::AsRawFd;
+    let socket = std::os::unix::net::UnixStream::connect(endpoint)?;
+    if super::unix::peer_uid(socket.as_raw_fd())? != super::unix::euid() {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "the socket isn't the user's"));
+    }
+    Ok(socket)
 }
 
 #[cfg(test)]

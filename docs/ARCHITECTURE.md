@@ -72,7 +72,8 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   speaks MCP on stdin/stdout, both the 2026-07-28 revision (`server/discover`, `_meta` on every request) and the
   `initialize` revisions before it, and hands each call to the running app as one line of JSON over a named pipe named
   by the user's SID (`mcp/win.rs`: created with the user as owner and an owner-only DACL, opened at identification
-  level and used only if the user owns it; a Unix socket off Windows); `McpService` answers with the read-only tools offered to agents, on one worker
+  level and used only if the user owns it; off Windows a Unix socket in /run/user/<euid> or ~/.elite-nexus, found
+  without the environment an MCP client may drop, both ends checking the other's uid: `mcp/unix.rs`); `McpService` answers with the read-only tools offered to agents, on one worker
   thread, within a deadline and a calls-a-minute limit, with a Spansh client of its own. `finder.rs` holds market lookups shared by pages and tools (sell plan,
   colonisation suppliers). `shopping.rs` is Fleet › Where to buy: it reads a build (SLEF, journal `Loadout`, EDSY or
   Coriolis import link), lists what to buy against the commander's storage, and asks Spansh's outfitting search for

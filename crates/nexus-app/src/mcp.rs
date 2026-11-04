@@ -8,6 +8,8 @@
 //! online services), with a Spansh client of its own so agents never hold up the app's own searches.
 
 pub mod stdio;
+#[cfg(not(windows))]
+mod unix;
 #[cfg(windows)]
 mod win;
 
@@ -32,14 +34,6 @@ const MAX_REQUEST: u64 = 256 * 1024;
 /// Calls waiting their turn at most; more are refused as busy.
 const QUEUE: usize = 4;
 
-/// The name of whoever is logged in, as a file-name-safe tag ("user" when the system doesn't say).
-#[cfg(not(windows))]
-fn user_tag() -> String {
-    let user = std::env::var("USERNAME").or_else(|_| std::env::var("USER")).unwrap_or_default();
-    let tag: String = user.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).take(40).collect();
-    if tag.is_empty() { "user".into() } else { tag.to_ascii_lowercase() }
-}
-
 /// Where the app listens and `--mcp` connects: a named pipe named by this user's SID, which other computers can't open
 /// and no other account shares ([`win`]).
 #[cfg(windows)]
@@ -48,12 +42,12 @@ pub fn endpoint() -> Result<String, String> {
     Ok(format!(r"\\.\pipe\elite-nexus-mcp-{}", user.text))
 }
 
-/// Where the app listens and `--mcp` connects: a socket in this user's private runtime folder (`$XDG_RUNTIME_DIR` on
-/// Linux, the per-user temporary folder on a Mac), readable by this user only.
+/// Where the app listens and `--mcp` connects: a socket in a folder only this user can enter ([`unix`]), where both
+/// ends check that the other runs as the same user.
 #[cfg(not(windows))]
 pub fn endpoint() -> Result<String, String> {
-    let dir = std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(std::env::temp_dir);
-    Ok(dir.join(format!("elite-nexus-mcp-{}.sock", user_tag())).to_string_lossy().into_owned())
+    // /run/user/<uid> holds other programs' sockets too: a name that's plainly Elite Nexus'.
+    Ok(unix::socket_dir()?.join("elite-nexus-mcp.sock").to_string_lossy().into_owned())
 }
 
 /// A pipe or socket of a test's own, which no Elite Nexus answers on.
@@ -343,7 +337,13 @@ async fn listen(path: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<M
     status.lock().listening = true;
     loop {
         match listener.accept().await {
-            Ok((conn, _)) => drop(tokio::spawn(serve(conn, jobs.clone(), closing.clone()))),
+            // Only this user's programs: another account's connection is closed unanswered.
+            Ok((conn, _)) => {
+                use std::os::unix::io::AsRawFd;
+                if unix::peer_uid(conn.as_raw_fd()).is_ok_and(|uid| uid == unix::euid()) {
+                    drop(tokio::spawn(serve(conn, jobs.clone(), closing.clone())));
+                }
+            }
             // Out of file handles, say: wait a moment rather than spin, and go on listening.
             Err(e) => {
                 tracing::debug!("MCP: a connection failed: {e}");

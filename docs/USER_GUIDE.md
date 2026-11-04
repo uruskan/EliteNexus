@@ -171,7 +171,8 @@ What the agent does with what it reads is up to that program: one that uses a cl
 company, as Ask does to yours. Other computers can't reach it, and on this computer only programs running under your
 account can (or an administrator, who can reach anything). On Windows the pipe is named after your account and only
 your account may open it; the program the agent starts uses it only when your account owns it, and lets Elite Nexus
-learn who it is but not act as you.
+learn who it is but not act as you. On Linux and macOS the socket is in a folder only your account can enter
+(`/run/user/<your id>`, or `~/.elite-nexus`), and each end checks that the other runs as you.
 
 Your settings are in `settings.json` in the data folder. If that file can't be read (typically after editing it by
 hand: JSON writes every backslash twice, so a network folder is `"\\\\MAINPC\\Elite Dangerous"`), Elite Nexus never
