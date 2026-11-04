@@ -2068,6 +2068,32 @@ pub static TOOLS: &[Tool] = &[
         mcp: true,
         run: NexusTools::engineering,
     },
+    Tool {
+        name: "where_to_mine",
+        description: "Rhino surface mining: landable bodies with planetary mining locations near a system, or the best system in each stretch of the way to to_system, from the scans commanders shared that Spansh holds; and what the commander's own runs gave on each ground (class and volcanism). Nothing says what a location holds.",
+        params: || {
+            schema(
+                json!({
+                    "near_system": { "type": "string", "description": NEAR },
+                    "to_system": { "type": "string", "description": "Search along the way from near_system (default: the commander's) to here instead." },
+                    "class": { "type": "string", "enum": ["metal-rich", "high metal content", "rocky", "rocky ice", "icy"] },
+                    "volcanism": { "type": "string", "description": "e.g. rocky magma, metallic magma, water geysers, or none." },
+                    "min_locations": { "type": "integer", "description": "Default 1." },
+                    "max_distance_ly": { "type": "number", "description": "1 to 1,000. Default 100; along a route, from the line, 25." },
+                    "max_distance_ls": { "type": "number", "description": "From the arrival star. Default: any." },
+                    "sort": { "type": "string", "enum": ["nearest", "most_locations"] },
+                    "stops": { "type": "integer", "description": "Along a route: how many stretches. Default 10." }
+                }),
+                &[],
+            )
+        },
+        working: "Asking Spansh where to mine…",
+        noun: "Spansh",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::where_to_mine,
+    },
 ];
 
 /// One line about the commander for each question (location, ship, credits, date).
@@ -2257,8 +2283,9 @@ mod tests {
         println!("{ask} characters offered to Ask");
         // Raising this is a decision: a tool offered to Ask has to earn its tokens. Tools few commanders ask about are
         // offered to agents only (on_foot, credit_history, system_factions). engineering, which commanders asked Ask for
-        // (GitHub issue #4), took it from 13,500.
-        assert!(ask <= 14_500, "{ask} characters of tool specs go with every Ask question");
+        // (GitHub issue #4), took it from 13,500; where_to_mine, the Mining page's search Ask couldn't run before, to
+        // 15,500.
+        assert!(ask <= 15_500, "{ask} characters of tool specs go with every Ask question");
     }
 
     /// `fit` finds the most detail that fits in a few tries.
@@ -3452,6 +3479,24 @@ mod tests {
         assert!(shares.windows(2).all(|w| w[0] >= w[1]), "richest first: {shares:?}");
         assert!(bodies.iter().all(|b| b["system"].is_string() && b["gravity_g"].as_f64().is_some_and(|g| g <= 1.0)));
         assert!(v["bodies_holding_it"].as_u64().unwrap() > 0);
+    }
+
+    /// Live: `cargo test -p nexus-app live_where_to_mine -- --ignored --nocapture` (needs the internet; reads Spansh only).
+    #[test]
+    #[ignore]
+    fn live_where_to_mine() {
+        let rt = live_runtime();
+        let tools = model_tools(commander(), &rt);
+        let near = tools.call("where_to_mine", &json!({ "near_system": "Sol", "class": "rocky", "sort": "most_locations" })).unwrap();
+        println!("{near:#}");
+        let bodies = near["bodies"].as_array().unwrap();
+        assert!(!bodies.is_empty(), "{near}");
+        let counts: Vec<u64> = bodies.iter().map(|b| b["mining_locations"].as_u64().unwrap()).collect();
+        assert!(counts.windows(2).all(|w| w[0] >= w[1]), "most locations first: {counts:?}");
+        assert!(bodies.iter().all(|b| b["ground"].as_str().unwrap().starts_with("Rocky")), "{near}");
+        let route = tools.call("where_to_mine", &json!({ "near_system": "Sol", "to_system": "Colonia", "stops": 5 })).unwrap();
+        println!("{route:#}");
+        assert!(!route["stops"].as_array().unwrap().is_empty() && route["length_ly"].as_f64().unwrap() > 20_000.0, "{route}");
     }
 }
 

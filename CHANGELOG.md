@@ -22,6 +22,10 @@ release time that section becomes the new version and the release workflow publi
   hold, what you're short of, the material-trader swaps that cover it (as the Blueprint planner does) and which
   engineers offer that grade, how far they are and what unlocking them takes. It starts from the grade your current
   ship's module already has of that blueprint, unless you say otherwise.
+- **Ask** searches where to surface-mine with the Rhino, as Mining › Where to mine does: landable bodies with
+  planetary mining locations near you (nearest first, or the most locations first) or the best system in each stretch
+  of the way to a system, by class and volcanism, with what your own runs gave on each ground. It says where the
+  counts come from and that nothing records what a location holds.
 - **BGS & Powerplay** shows the merits you earned in each system, on the system's card beside its factions'
   influence, bonds, profit and data (asked for by NetworX on the Frontier Forums). The journal doesn't say which
   system a merit award counts for, so each award is placed in the system you were in when the game awarded it. The
