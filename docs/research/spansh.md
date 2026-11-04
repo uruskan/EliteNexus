@@ -545,7 +545,9 @@ The response was `count` 3029: Barnard's Star 5 (A ring Painite ×2), WISE 0855-
 - Within 60 ly of Sol: `count` 1,203; the first five were metal-rich bodies at 1.09 to 1.01 % polonium (Xi Ursae
   Majoris B 1 at 29 ly, 36 Ophiuchi B 1, Alpha Centauri B 1 at 4.4 ly, Capella A 1, Uchaluroja B 2), so the sort is
   by share, not distance. Results carry `materials[{name, share}]` (share in %), `gravity` and `distance`.
-- The app asks for a share of `[0, 100]` (any body with the material) within 100 ly and shows the first three.
+- The app asks for a share of `[0, 100]` (any body with the material) within 100 ly and shows the first three. A
+  lower bound of 0 doesn't match bodies without the material: arsenic within 100 ly of Sol counts 9,368 bodies with
+  `[0, 100]` and with `[0.01, 100]` alike, while every landable body within 100 ly hits the 10,000 cap.
 
 **D. Constructed, not executed.** These are built from the site's builders and the field catalogue:
 
