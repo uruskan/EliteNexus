@@ -135,7 +135,7 @@ const LOADOUT_UNKNOWN: &str = "loadout_known false: the game hasn't reported tha
 
 /// Ships matching what the commander asked for: an id, or a name, ident or type (as written, ignoring case); when
 /// none matches exactly, a name, ident or type that contains it.
-fn find_ships<'a>(gs: &'a GameState, query: &str) -> Vec<&'a Ship> {
+pub(super) fn find_ships<'a>(gs: &'a GameState, query: &str) -> Vec<&'a Ship> {
     let q = query.trim().to_lowercase();
     let is = |s: &Ship, f: fn(&str, &str) -> bool| f(&s.name.to_lowercase(), &q) || f(&s.ident.to_lowercase(), &q) || f(&s.type_name.to_lowercase(), &q);
     let exact: Vec<&Ship> = gs.fleet.ships.values().filter(|s| s.id.to_string() == q || is(s, |a, b| a == b)).collect();

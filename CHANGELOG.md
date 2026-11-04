@@ -26,6 +26,10 @@ release time that section becomes the new version and the release workflow publi
   planetary mining locations near you (nearest first, or the most locations first) or the best system in each stretch
   of the way to a system, by class and volcanism, with what your own runs gave on each ground. It says where the
   counts come from and that nothing records what a location holds.
+- **Ask** finds where to buy a build, as Fleet › Where to buy does: the nearest stations that sell all of one of your
+  ships' builds (the one you fly unless you name another), a pasted build, some of its modules or a hull ("where can
+  I buy a 6A FSD?"), with what it costs there and how old the station's list is; or, when no station has everything,
+  the stops that cover it between them. Modules in your storage and a hull you own aren't searched for.
 - **BGS & Powerplay** shows the merits you earned in each system, on the system's card beside its factions'
   influence, bonds, profit and data (asked for by NetworX on the Frontier Forums). The journal doesn't say which
   system a merit award counts for, so each award is placed in the system you were in when the game awarded it. The

@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 
 mod bodies;
+mod buy;
 mod cmdr;
 mod engineering;
 
@@ -2094,6 +2095,29 @@ pub static TOOLS: &[Tool] = &[
         mcp: true,
         run: NexusTools::where_to_mine,
     },
+    Tool {
+        name: "where_to_buy",
+        description: "The nearest stations that sell a whole ship build (default: the current ship's; modules in storage aren't searched for), or the stops that cover it between them, with cost and data age, from Spansh's outfitting lists. items= narrows it to some modules or a hull, or searches those alone.",
+        params: || {
+            schema(
+                json!({
+                    "ship": { "type": "string", "description": "One of the commander's ships: name, ident, type or id." },
+                    "build": { "type": "string", "description": "Or a build: a SLEF export (EDSY, Coriolis), a journal Loadout or an import link." },
+                    "items": { "type": "array", "items": { "type": "string" }, "description": "Names as outfitting shows them, e.g. 6A Frame Shift Drive, 2A Gimballed Multi-cannon, or a hull, e.g. Mandalay." },
+                    "near_system": { "type": "string", "description": NEAR },
+                    "carriers": { "type": "boolean", "description": "Fleet carriers too. Default true." },
+                    "max_age_days": { "type": "integer", "description": "Leave out stations whose list is older. Default: any age." }
+                }),
+                &[],
+            )
+        },
+        working: "Asking Spansh where to buy it…",
+        noun: "Spansh",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::where_to_buy,
+    },
 ];
 
 /// One line about the commander for each question (location, ship, credits, date).
@@ -2283,9 +2307,9 @@ mod tests {
         println!("{ask} characters offered to Ask");
         // Raising this is a decision: a tool offered to Ask has to earn its tokens. Tools few commanders ask about are
         // offered to agents only (on_foot, credit_history, system_factions). engineering, which commanders asked Ask for
-        // (GitHub issue #4), took it from 13,500; where_to_mine, the Mining page's search Ask couldn't run before, to
-        // 15,500.
-        assert!(ask <= 15_500, "{ask} characters of tool specs go with every Ask question");
+        // (GitHub issue #4), took it from 13,500; where_to_mine and where_to_buy, the Mining and Fleet pages' searches Ask
+        // couldn't run before, to 17,000.
+        assert!(ask <= 17_000, "{ask} characters of tool specs go with every Ask question");
     }
 
     /// `fit` finds the most detail that fits in a few tries.
@@ -3214,6 +3238,28 @@ mod tests {
         }
     }
 
+    /// What a build needs bought, before Spansh is asked: a module in storage isn't searched for, the ship flown is owned,
+    /// and items named with a ship must be on it.
+    #[test]
+    fn where_to_buy_searches_only_what_you_still_need() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let t = at(30);
+        let m = with_lines(
+            commander(),
+            &[format!(r#"{{ "timestamp":"{t}", "event":"StoredModules", "MarketID":5001, "StationName":"Alpha Port", "StarSystem":"Alpha", "Items":[ {{ "Name":"$int_hyperdrive_size6_class5_name;", "Name_Localised":"Frame Shift Drive", "StorageSlot":1, "StarSystem":"Alpha", "MarketID":5001, "TransferCost":0, "TransferTime":0, "BuyPrice":3000000, "Hot":false }} ] }}"#)],
+        );
+        let tools = model_tools(m, &rt);
+        let v = tools.call("where_to_buy", &json!({ "ship": "Anaconda", "items": ["6A FSD"] })).unwrap();
+        assert_eq!(v["to_buy"], json!([]), "{v}");
+        let why = |item: &str| v["not_searched"].as_array().unwrap().iter().find(|n| n["item"] == item).map(|n| n["why"].clone());
+        assert_eq!(why("6A Frame Shift Drive"), Some(json!("In your storage in Alpha")), "{v}");
+        assert!(why("Anaconda").unwrap().as_str().unwrap().starts_with("You own one"), "{v}");
+        let not_fitted = tools.call("where_to_buy", &json!({ "ship": "Anaconda", "items": ["5A Thrusters"] })).unwrap_err();
+        assert_eq!(not_fitted, "Not in that build: 5A Thrusters.");
+        assert!(tools.call("where_to_buy", &json!({ "ship": "Cutter" })).unwrap_err().contains("No ship of the commander's matches"));
+        assert!(tools.call("where_to_buy", &json!({ "build": "not a build" })).is_err());
+    }
+
     #[test]
     fn new_tools_are_appended_and_old_ones_unchanged() {
         let old = [
@@ -3497,6 +3543,19 @@ mod tests {
         let route = tools.call("where_to_mine", &json!({ "near_system": "Sol", "to_system": "Colonia", "stops": 5 })).unwrap();
         println!("{route:#}");
         assert!(!route["stops"].as_array().unwrap().is_empty() && route["length_ly"].as_f64().unwrap() > 20_000.0, "{route}");
+    }
+
+    /// Live: `cargo test -p nexus-app live_where_to_buy -- --ignored --nocapture` (needs the internet; reads Spansh only).
+    #[test]
+    #[ignore]
+    fn live_where_to_buy() {
+        let rt = live_runtime();
+        let tools = model_tools(commander(), &rt);
+        let v = tools.call("where_to_buy", &json!({ "items": ["5A Frame Shift Drive", "5A Thrusters"], "near_system": "Sol" })).unwrap();
+        println!("{v:#}");
+        let first = &v["sell_everything"][0];
+        assert!(first["station"].is_string() && first["cost_cr"].as_u64().unwrap() > 0, "{v}");
+        assert_eq!(v["landing_pad"], "large", "the Anaconda being flown needs a large pad");
     }
 }
 
