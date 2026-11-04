@@ -27,6 +27,12 @@ release time that section becomes the new version and the release workflow publi
   build costs there, with a route button. Spansh can't tell a fixed weapon from a gimballed one, so each station's own
   list is checked for the exact modules. When no station sells everything, it suggests two stops, or the nearest
   seller of each missing piece. Ships › **Where to buy** opens it with that ship's build.
+- **Market** › Find commodity: a **Category** field beside the search, and a ▾ on both that opens the whole list. A
+  category's rare goods are one item, **Rare Goods**, and the category **Rare Goods** holds them all: one page lists
+  every place selling or buying any of them, each row naming its rare good and comparing it with that good's own
+  average. Rare goods are marked ★ in yellow, and the lists name the commodity in their first column. Clicking into
+  either field selects its text; Tab takes the highlighted entry. The retired event rares (Classified Experimental
+  Equipment, Galactic Travel Guide) are left out.
 - **Market** › Trade routes, while you're docked: **From this station** lists only the routes that start there, what
   to buy at this station and where to sell it within the distance you set (asked for by NetworX on the Frontier
   Forums). Open the commodity market in the game first, so Elite Nexus has the station's latest prices.

@@ -95,6 +95,11 @@ CREATE TABLE IF NOT EXISTS market (
 CREATE INDEX IF NOT EXISTS market_sellers ON market(commodity_id, buy, stock, updated) WHERE buy > 0 AND stock > 0;
 -- "where can I sell X": stations buying (player sells), best price first (scanned backwards)
 CREATE INDEX IF NOT EXISTS market_buyers ON market(commodity_id, sell, demand, updated) WHERE sell > 0 AND demand > 0;
+-- market rows with their commodity's name, category and rare flag: searches over several commodities (rare goods)
+CREATE VIEW IF NOT EXISTS market_goods AS
+SELECT m.market_id, m.commodity_id, m.buy, m.sell, m.mean, m.stock, m.demand, m.updated,
+       c.symbol, c.name, c.category, c.is_rare
+FROM market AS m JOIN commodities AS c ON c.id = m.commodity_id;
 
 CREATE TABLE IF NOT EXISTS system_factions (
     system_id64       INTEGER NOT NULL,
@@ -175,6 +180,7 @@ CREATE INDEX IF NOT EXISTS bodies_name ON bodies(name);
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("bodies", "checked_online", "INTEGER")];
 
 const DROP_ALL: &str = r#"
+DROP VIEW IF EXISTS market_goods;
 DROP TABLE IF EXISTS systems;
 DROP TABLE IF EXISTS systems_rtree;
 DROP TABLE IF EXISTS stations;

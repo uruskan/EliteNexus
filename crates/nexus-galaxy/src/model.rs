@@ -376,6 +376,18 @@ pub struct CommodityHit {
     pub updated_unix: i64,
     pub is_carrier: bool,
     pub is_planetary: bool,
+    /// Rare goods searches: which commodity this row is. `None` in a search for one commodity (the row is that one).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commodity: Option<RowCommodity>,
+}
+
+/// The commodity of a row in a search over several (rare goods).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct RowCommodity {
+    pub symbol: String,
+    pub name: String,
+    /// The galactic average this market reports for it (0: none, as on fleet carriers).
+    pub mean: i64,
 }
 
 /// What the database knows about one commodity across the whole galaxy (no distance or station
@@ -422,6 +434,9 @@ pub struct CommodityQuote {
     pub stock: i64,
     pub demand: i64,
     pub updated_unix: i64,
+    /// Rare goods searches: which commodity this row is. `None` in a search for one commodity (the row is that one).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commodity: Option<RowCommodity>,
 }
 
 // ---------------------------------------------------------------------------------------------

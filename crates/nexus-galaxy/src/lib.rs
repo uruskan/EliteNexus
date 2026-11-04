@@ -269,7 +269,19 @@ impl GalaxyDb {
         query::search_commodity(
             &*self.inner.pool.get()?,
             &self.inner.shared.stations,
-            cid,
+            query::Goods::One(cid),
+            q,
+        )
+    }
+
+    /// Rare goods taken as one commodity: those of one category (`Some("Legal Drugs")`) or all of them
+    /// (`None`), searched as [`Self::search_commodity`] does. Each row says which commodity it is;
+    /// `q.commodity` is ignored.
+    pub fn search_rare_goods(&self, category: Option<&str>, q: &CommodityQuery) -> Result<Vec<CommodityHit>> {
+        query::search_commodity(
+            &*self.inner.pool.get()?,
+            &self.inner.shared.stations,
+            query::Goods::Rare(category),
             q,
         )
     }
@@ -287,7 +299,15 @@ impl GalaxyDb {
         let Some(cid) = cache.resolve(commodity) else {
             return Ok(None);
         };
-        query::commodity_summary(&conn, &self.inner.shared.stations, &cache, cid, max_age_hours)
+        query::commodity_summary(&conn, &self.inner.shared.stations, &cache, query::Goods::One(cid), max_age_hours)
+    }
+
+    /// [`Self::commodity_summary`] for rare goods taken as one (see [`Self::search_rare_goods`]). Its
+    /// symbol and name are empty: the caller names it. The average is the mean of what their markets report.
+    pub fn rare_goods_summary(&self, category: Option<&str>, max_age_hours: Option<f64>) -> Result<Option<CommoditySummary>> {
+        let conn = self.inner.pool.get()?;
+        let cache = self.inner.shared.commodities.read();
+        query::commodity_summary(&conn, &self.inner.shared.stations, &cache, query::Goods::Rare(category), max_age_hours)
     }
 
     /// Every market trading one commodity, newest update first, with both its prices (the query's
@@ -300,7 +320,18 @@ impl GalaxyDb {
         query::latest_prices(
             &*self.inner.pool.get()?,
             &self.inner.shared.stations,
-            cid,
+            query::Goods::One(cid),
+            q,
+        )
+    }
+
+    /// [`Self::latest_prices`] for rare goods taken as one (see [`Self::search_rare_goods`]): one row per
+    /// market and rare commodity.
+    pub fn latest_rare_prices(&self, category: Option<&str>, q: &CommodityQuery) -> Result<Vec<CommodityQuote>> {
+        query::latest_prices(
+            &*self.inner.pool.get()?,
+            &self.inner.shared.stations,
+            query::Goods::Rare(category),
             q,
         )
     }

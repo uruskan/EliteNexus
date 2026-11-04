@@ -87,6 +87,11 @@ pub struct MarketPrefs {
     pub planetary: bool,
     /// Find commodity: the filter row is open.
     pub show_options: bool,
+    /// Find commodity: the category chosen ("" = every category, or the pseudo category [`RARE_GOODS`]).
+    pub category: String,
+    /// Find commodity: rare goods taken as one are open instead of `commodity`: one category's
+    /// (`Some("Legal Drugs")`) or all of them (`Some("")`).
+    pub rare_goods: Option<String>,
     /// Trade routes: area and longest hop.
     pub radius: f64,
     pub hop: f64,
@@ -130,6 +135,8 @@ impl Default for MarketPrefs {
             carriers: true,
             planetary: true,
             show_options: false,
+            category: String::new(),
+            rare_goods: None,
             radius: 40.0,
             hop: 25.0,
             routes_here: false,
@@ -258,10 +265,16 @@ fn pin_button(ui: &mut Ui, pinned: bool) -> bool {
     ui.add(egui::Button::new(RichText::new(icon::PUSH_PIN).size(15.0).color(col)).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
 }
 
+/// A row of the commodity page's lists: its market and its commodity (symbol). Rare goods taken as one
+/// can list two rows for one market.
+type PickKey = (u64, String);
+
 /// What a click in one of the commodity page's lists asks for.
 enum RowAction {
-    Select(u64),
+    Select(PickKey),
     Pin(Pin),
+    /// A rare goods row's commodity name: its own page.
+    Open(String),
 }
 
 type Res<T> = Result<Vec<T>, String>;
@@ -299,18 +312,20 @@ pub struct MarketUi {
     pub prefs: MarketPrefs,
     /// Find commodity: what's typed in the search field.
     input: String,
+    /// Find commodity: what's typed in the category field.
+    category_input: String,
     /// The list the page shows; starts at the saved one and may move to a list that has results.
     side: Side,
     /// Every known commodity, for the suggestions (loaded on first use).
     commodities: Vec<CommodityInfo>,
     page: Slot<Result<Option<CommodityPage>, String>>,
-    /// The query the shown page was loaded with: any change (filters, commodity, position) reloads it.
-    page_key: Option<CommodityQuery>,
+    /// The rare goods and query the shown page was loaded with: any change (filters, commodity, position) reloads it.
+    page_key: Option<(Option<String>, CommodityQuery)>,
     /// A new commodity is loading: once it arrives, an empty list may give way to one with results.
     fresh: bool,
     /// Text that matched no commodity.
     not_found: Option<String>,
-    pick: Option<u64>,
+    pick: Option<PickKey>,
     detail: Slot<Result<PickDetail, String>>,
     detail_key: Option<(u64, String)>,
     /// Station tab: a market opened from a list (`None` = the market of the station you're docked at).
@@ -362,7 +377,8 @@ impl MarketUi {
         let prefs = prefs.sanitized();
         MarketUi {
             tab: prefs.tab,
-            input: prefs.commodity.clone(),
+            input: if prefs.rare_goods.is_some() { RARE_GOODS.to_string() } else { prefs.commodity.clone() },
+            category_input: prefs.category.clone(),
             side: prefs.side,
             prefs,
             commodities: Vec::new(),
@@ -417,9 +433,13 @@ impl MarketUi {
             self.not_found = Some(text.trim().to_string());
             return false;
         };
-        if name != self.prefs.commodity {
+        if name != self.prefs.commodity || self.prefs.rare_goods.is_some() {
             self.pick = None;
             self.fresh = true;
+        }
+        self.prefs.rare_goods = None;
+        if let Some(c) = self.commodities.iter().find(|c| c.name == name) {
+            self.prefs.category.clone_from(&c.category);
         }
         self.prefs.remember(&name);
         self.input = name;
@@ -427,6 +447,37 @@ impl MarketUi {
         // Searching again reloads even when nothing changed (fresh prices from the feed).
         self.page_key = None;
         true
+    }
+
+    /// No commodity page: the search field's item is picked afresh.
+    fn close_page(&mut self) {
+        self.prefs.commodity.clear();
+        self.prefs.rare_goods = None;
+        self.pick = None;
+        self.not_found = None;
+    }
+
+    /// Opens rare goods taken as one: one category's, or ("") all of them.
+    fn open_rare_goods(&mut self, category: String) {
+        if self.prefs.rare_goods.as_deref() != Some(category.as_str()) {
+            self.pick = None;
+            self.fresh = true;
+        }
+        self.prefs.category = if category.is_empty() { RARE_GOODS.to_string() } else { category.clone() };
+        self.prefs.rare_goods = Some(category);
+        self.input = RARE_GOODS.to_string();
+        self.not_found = None;
+        self.page_key = None;
+    }
+
+    /// Opens what the search field holds: rare goods taken as one (the chosen category's, or all), or a commodity.
+    fn open_item(&mut self, db: &GalaxyDb, text: &str) {
+        if text.trim().eq_ignore_ascii_case(RARE_GOODS) {
+            let category = if self.prefs.category == RARE_GOODS { String::new() } else { self.prefs.category.clone() };
+            self.open_rare_goods(category);
+        } else {
+            self.open_commodity(db, text);
+        }
     }
 
     fn go(&mut self, db: &GalaxyDb, nav: Nav) {
@@ -545,15 +596,104 @@ fn resolve_commodity(db: &GalaxyDb, all: &[CommodityInfo], text: &str) -> Option
     rank_commodities(all, t, 1).first().map(|c| c.name.clone())
 }
 
+/// A commodity as a suggestion: its category on the right, rare goods starred.
+fn commodity_suggestion(c: &CommodityInfo) -> Suggestion {
+    Suggestion { text: c.name.clone(), detail: if c.is_rare { format!("{} · rare", c.category) } else { c.category.clone() }, starred: c.is_rare }
+}
+
 fn commodity_suggestions(all: &[CommodityInfo], recent: &[String], typed: &str) -> Vec<Suggestion> {
-    let detail = |c: &CommodityInfo| if c.is_rare { format!("{} · rare", c.category) } else { c.category.clone() };
     if typed.trim().is_empty() {
         return recent
             .iter()
-            .map(|r| Suggestion { text: r.clone(), detail: all.iter().find(|c| &c.name == r).map_or_else(|| "recent".into(), |c| format!("recent · {}", detail(c))) })
+            .map(|r| match all.iter().find(|c| &c.name == r) {
+                Some(c) => Suggestion { detail: format!("recent · {}", commodity_suggestion(c).detail), ..commodity_suggestion(c) },
+                None => Suggestion { text: r.clone(), detail: "recent".into(), starred: false },
+            })
             .collect();
     }
-    rank_commodities(all, typed, 40).into_iter().map(|c| Suggestion { text: c.name.clone(), detail: detail(c) }).collect()
+    rank_commodities(all, typed, 40).into_iter().map(commodity_suggestion).collect()
+}
+
+/// The pseudo category, and the pseudo item: rare goods taken as one commodity.
+const RARE_GOODS: &str = "Rare Goods";
+/// The category field's entry for no category.
+const ALL_CATEGORIES: &str = "All categories";
+/// Rare goods sold only during past events, which can't be bought any more (the Elite Dangerous wiki's "Removed
+/// Rare Commodities"): left out of the lists.
+const RETIRED_RARES: [&str; 2] = ["classifiedexperimentalequipment", "galactictravelguide"];
+
+/// A commodity Find commodity lists: traded on markets ("NonMarketable" isn't), and still sold.
+fn listed(c: &CommodityInfo) -> bool {
+    c.category != "NonMarketable" && !RETIRED_RARES.iter().any(|r| c.symbol.eq_ignore_ascii_case(r))
+}
+
+/// A commodity of a category's own item list: every category ("") lists every commodity, a category its
+/// normal goods (its rare goods are one item), the pseudo category none (it has only that item).
+fn in_category(c: &CommodityInfo, category: &str) -> bool {
+    category.is_empty() || (c.category == category && !c.is_rare)
+}
+
+/// The rare goods a category's pseudo item takes as one: every category's ("" or the pseudo category), or its own.
+fn rare_count(all: &[CommodityInfo], category: &str) -> usize {
+    all.iter().filter(|c| listed(c) && c.is_rare && (category.is_empty() || category == RARE_GOODS || c.category == category)).count()
+}
+
+fn rare_goods_item(count: usize) -> Suggestion {
+    Suggestion { text: RARE_GOODS.into(), detail: format!("{count} rare goods"), starred: true }
+}
+
+/// Every category by name, then the pseudo category of rare goods.
+fn commodity_categories(all: &[CommodityInfo]) -> Vec<String> {
+    let mut categories: Vec<String> = all.iter().filter(|c| listed(c)).map(|c| c.category.clone()).collect();
+    categories.sort();
+    categories.dedup();
+    categories.push(RARE_GOODS.into());
+    categories
+}
+
+/// The category field's list, narrowed to what's typed; "All categories" first while nothing is.
+fn category_suggestions(all: &[CommodityInfo], typed: &str) -> Vec<Suggestion> {
+    let q = typed.trim().to_lowercase();
+    let mut out = Vec::new();
+    if q.is_empty() {
+        out.push(Suggestion { text: ALL_CATEGORIES.into(), detail: String::new(), starred: false });
+    }
+    out.extend(commodity_categories(all).into_iter().filter(|c| c.to_lowercase().contains(&q)).map(|c| Suggestion { starred: c == RARE_GOODS, detail: String::new(), text: c }));
+    out
+}
+
+/// A category's items: its commodities by name, then its rare goods as one item (when it has any).
+fn category_items(all: &[CommodityInfo], category: &str) -> Vec<Suggestion> {
+    let mut items: Vec<&CommodityInfo> = all.iter().filter(|c| listed(c) && in_category(c, category)).collect();
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut out: Vec<Suggestion> = items.into_iter().map(commodity_suggestion).collect();
+    let rares = rare_count(all, category);
+    if rares > 0 {
+        out.push(rare_goods_item(rares));
+    }
+    out
+}
+
+/// The search field's list. Nothing typed: the category's items (every category: the recent ones first).
+/// Typed: the best matches among the category's commodities, and its rare goods as one when the words fit.
+fn item_suggestions(all: &[CommodityInfo], recent: &[String], category: &str, typed: &str) -> Vec<Suggestion> {
+    let q = typed.trim().to_lowercase();
+    if q.is_empty() {
+        // A blank entry first: taking it leaves the field empty.
+        let mut out = vec![Suggestion { text: String::new(), detail: String::new(), starred: false }];
+        if category.is_empty() {
+            out.extend(commodity_suggestions(all, recent, ""));
+        }
+        out.extend(category_items(all, category));
+        return out;
+    }
+    let pool: Vec<CommodityInfo> = all.iter().filter(|c| listed(c) && in_category(c, category)).cloned().collect();
+    let mut out: Vec<Suggestion> = rank_commodities(&pool, typed, 40).into_iter().map(commodity_suggestion).collect();
+    let rares = rare_count(all, category);
+    if rares > 0 && RARE_GOODS.to_lowercase().contains(&q) {
+        out.push(rare_goods_item(rares));
+    }
+    out
 }
 
 fn pad_combo(ui: &mut Ui, id: &str, pad: &mut Option<char>) {
@@ -896,11 +1036,34 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
     }
     let origin = gs.location.star_pos;
     let mut look_up: Option<String> = None;
+    // Another category, or the blank item: no page until an item is picked.
+    let mut close = false;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
         let (all, recent) = (&st.commodities, &st.prefs.recent);
-        let c = crate::widgets::autocomplete(ui, "commodity-search", &mut st.input, "Commodity: Tritium, LTD, Thargoid…", 320.0, |t| commodity_suggestions(all, recent, t));
+        // The category narrows what the search field lists; "Rare Goods" holds rare goods taken as one.
+        let c = crate::widgets::combobox(ui, "commodity-category", &mut st.category_input, ALL_CATEGORIES, 180.0, |t| category_suggestions(all, t));
+        let before = st.prefs.category.clone();
         if let Some(p) = c.picked {
+            st.prefs.category = if p == ALL_CATEGORIES { String::new() } else { p };
+        } else if c.submitted {
+            let typed = st.category_input.trim();
+            st.prefs.category = if typed.is_empty() { String::new() } else { category_suggestions(all, typed).into_iter().map(|s| s.text).next().unwrap_or_default() };
+        }
+        // Another category: its items are picked afresh, and the page below waits for one.
+        if st.prefs.category != before {
+            st.input.clear();
+            close = true;
+        }
+        // Not being typed in: it shows the category in use (an open page sets it too).
+        if !c.focused && st.category_input != st.prefs.category {
+            st.category_input.clone_from(&st.prefs.category);
+        }
+        let category = st.prefs.category.as_str();
+        let c = crate::widgets::combobox(ui, "commodity-search", &mut st.input, "Commodity: Tritium, LTD, Thargoid…", 320.0, |t| item_suggestions(all, recent, category, t));
+        if c.picked.as_deref() == Some("") {
+            close = true;
+        } else if let Some(p) = c.picked {
             look_up = Some(p);
         } else if c.submitted {
             look_up = Some(st.input.clone());
@@ -913,10 +1076,13 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
             ui.spinner();
         }
     });
+    if close {
+        st.close_page();
+    }
     if let Some(t) = look_up
         && !t.trim().is_empty()
     {
-        st.open_commodity(db, &t);
+        st.open_item(db, &t);
     }
     if st.prefs.show_options {
         let p = &mut st.prefs;
@@ -961,7 +1127,7 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
 
     // (Re)load whenever the commodity, a filter or the position changes; one query at a time.
     let p = &st.prefs;
-    if p.commodity.trim().is_empty() {
+    if p.commodity.trim().is_empty() && p.rare_goods.is_none() {
         empty(ui, icon::MAGNIFYING_GLASS, "Find the best price for anything", "Type a commodity: where to buy it, where to sell it, and the latest prices, nearest or best first.");
         return None;
     }
@@ -978,10 +1144,11 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
         limit: PAGE_LIMIT,
         sort: p.sort,
     };
-    if st.page_key.as_ref() != Some(&q) && !st.page.busy() {
-        st.page_key = Some(q.clone());
+    let key = (p.rare_goods.clone(), q);
+    if st.page_key.as_ref() != Some(&key) && !st.page.busy() {
+        st.page_key = Some(key.clone());
         let db = db.clone();
-        st.page.run(ui.ctx(), move || load_commodity(&db, &q).map_err(|e| e.to_string()));
+        st.page.run(ui.ctx(), move || load_page(&db, key.0.as_deref(), &key.1).map_err(|e| e.to_string()));
     }
     let page = match &st.page.last {
         None => {
@@ -1035,9 +1202,9 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
     });
     ui.add_space(6.0);
 
-    // The picked market: its details and this commodity's price history there.
-    if let Some(id) = st.pick {
-        let key = (id, page.summary.symbol.clone());
+    // The picked row: its market's details and its commodity's price history there.
+    if let Some((id, symbol)) = st.pick.clone() {
+        let key = (id, symbol.clone());
         if st.detail_key.as_ref() != Some(&key) && !st.detail.busy() {
             st.detail_key = Some(key.clone());
             let db = db.clone();
@@ -1049,7 +1216,7 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
         }
         let current = st.detail_key.as_ref().is_some_and(|k| k.0 == id) && !st.detail.busy();
         match (&st.detail.last, current) {
-            (Some(Ok(d)), true) => match pick_card(ui, d, &page.summary, origin, &st.prefs, st.side == Side::Sell) {
+            (Some(Ok(d)), true) => match pick_card(ui, d, (&symbol, &row_name(page, &st.commodities, &symbol)), origin, &st.prefs, st.side == Side::Sell) {
                 PickAction::None => {}
                 PickAction::Pin(p) => st.prefs.toggle_pin(p),
                 PickAction::Close => st.pick = None,
@@ -1075,7 +1242,7 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
                 }
                 None
             } else {
-                hits_table(ui, "commodity-hits", hits, mode, page.summary.average, st.pick, Some((good, &st.prefs)))
+                hits_table(ui, "commodity-hits", hits, mode, page.summary.average, st.pick.as_ref(), Some((good, &st.prefs, page.summary.is_rare)))
             }
         }
         Side::Latest => {
@@ -1085,26 +1252,51 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
                 }
                 None
             } else {
-                latest_table(ui, &page.latest, page.summary.average, st.pick, good, &st.prefs)
+                latest_table(ui, &page.latest, page.summary.average, st.pick.as_ref(), good, &st.prefs, page.summary.is_rare)
             }
         }
     };
     match action {
-        Some(RowAction::Select(id)) => st.pick = if st.pick == Some(id) { None } else { Some(id) },
+        Some(RowAction::Select(k)) => st.pick = if st.pick.as_ref() == Some(&k) { None } else { Some(k) },
         Some(RowAction::Pin(p)) => st.prefs.toggle_pin(p),
+        Some(RowAction::Open(name)) => {
+            st.open_commodity(db, &name);
+        }
         None => {}
     }
     nav
 }
 
-/// Loads a commodity's page (runs on a worker thread). `Ok(None)`: no such commodity.
-fn load_commodity(db: &GalaxyDb, q: &CommodityQuery) -> nexus_galaxy::Result<Option<CommodityPage>> {
-    let Some(summary) = db.commodity_summary(&q.commodity, q.max_age_hours)? else {
+/// The name of a picked row's commodity: the page's, or (rare goods taken as one) the row's own.
+fn row_name(page: &CommodityPage, all: &[CommodityInfo], symbol: &str) -> String {
+    if page.summary.symbol == symbol {
+        return page.summary.name.clone();
+    }
+    all.iter().find(|c| c.symbol == symbol).map_or_else(|| symbol.to_string(), |c| c.name.clone())
+}
+
+/// Loads a commodity's page, or rare goods taken as one (`rares`: one category's, or "" for all), on a
+/// worker thread. `Ok(None)`: no such commodity.
+fn load_page(db: &GalaxyDb, rares: Option<&str>, q: &CommodityQuery) -> nexus_galaxy::Result<Option<CommodityPage>> {
+    // Some(None): every rare good.
+    let rares = rares.map(|c| (!c.is_empty()).then_some(c));
+    let summary = match rares {
+        Some(category) => db.rare_goods_summary(category, q.max_age_hours)?.map(|s| CommoditySummary { name: RARE_GOODS.to_string(), ..s }),
+        None => db.commodity_summary(&q.commodity, q.max_age_hours)?,
+    };
+    let Some(summary) = summary else {
         return Ok(None);
     };
-    let buy = db.search_commodity(&CommodityQuery { mode: TradeMode::BuyFromStation, ..q.clone() })?;
-    let sell = db.search_commodity(&CommodityQuery { mode: TradeMode::SellToStation, ..q.clone() })?;
-    let latest = db.latest_prices(q)?;
+    let search = |q: &CommodityQuery| match rares {
+        Some(category) => db.search_rare_goods(category, q),
+        None => db.search_commodity(q),
+    };
+    let buy = search(&CommodityQuery { mode: TradeMode::BuyFromStation, ..q.clone() })?;
+    let sell = search(&CommodityQuery { mode: TradeMode::SellToStation, ..q.clone() })?;
+    let latest = match rares {
+        Some(category) => db.latest_rare_prices(category, q)?,
+        None => db.latest_prices(q)?,
+    };
     let nearest = |mode| CommodityQuery {
         mode,
         max_distance_ly: None,
@@ -1117,7 +1309,7 @@ fn load_commodity(db: &GalaxyDb, q: &CommodityQuery) -> nexus_galaxy::Result<Opt
         ..q.clone()
     };
     let hint = |mode, found: bool, any: u32| -> nexus_galaxy::Result<Option<CommodityHit>> {
-        if found || any == 0 { Ok(None) } else { Ok(db.search_commodity(&nearest(mode))?.into_iter().next()) }
+        if found || any == 0 { Ok(None) } else { Ok(search(&nearest(mode))?.into_iter().next()) }
     };
     let buy_hint = hint(TradeMode::BuyFromStation, !buy.is_empty(), summary.sellers)?;
     let sell_hint = hint(TradeMode::SellToStation, !sell.is_empty(), summary.buyers)?;
@@ -1132,15 +1324,20 @@ fn commodity_header(ui: &mut Ui, page: &CommodityPage, p: &MarketPrefs, have_ori
             badge(ui, &s.category, pal::GRAY);
         }
         if s.is_rare {
-            badge(ui, "Rare", pal::PURPLE).on_hover_text("Rare goods are sold only at their home station, in small allocations, and are worth more the farther you carry them.");
+            // Yellow with a ★, as the game and the lists mark rare goods.
+            badge(ui, "★ Rare", pal::GOLD).on_hover_text("Rare goods are sold only at their home station, in small allocations, and are worth more the farther you carry them.");
         }
     });
     ui.add_space(6.0);
     let range = if have_origin { format!(" within {:.0} ly", p.max_dist) } else { String::new() };
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(32.0, 8.0);
-        crate::widgets::stat(ui, "Galactic average", s.average.map_or_else(|| "—".into(), cr), pal::TEXT)
-            .on_hover_text("The average price the game reports for this commodity (the one most stations quote). Fleet carriers don't report one.");
+        let avg_tip = if s.symbol.is_empty() {
+            "Rare goods taken as one: the mean of the galactic averages their markets report. Each rare good's own price differs widely: click a row for which one it is."
+        } else {
+            "The average price the game reports for this commodity (the one most stations quote). Fleet carriers don't report one."
+        };
+        crate::widgets::stat(ui, "Galactic average", s.average.map_or_else(|| "—".into(), cr), pal::TEXT).on_hover_text(avg_tip);
         let cheapest = page.buy.iter().map(|h| h.price).min();
         crate::widgets::stat(ui, &format!("Cheapest{range}"), cheapest.map_or_else(|| "—".into(), cr), pal::CYAN);
         let best = page.sell.iter().map(|h| h.price).max();
@@ -1284,14 +1481,28 @@ fn empty_side(ui: &mut Ui, page: &CommodityPage, side: Side, p: &MarketPrefs, ha
     relax
 }
 
-/// A commodity's (symbol, name) with the pins to compare against.
-type PinCtx<'a> = ((&'a str, &'a str), &'a MarketPrefs);
+/// A commodity's (symbol, name) with the pins to compare against, and whether it's a rare good.
+type PinCtx<'a> = ((&'a str, &'a str), &'a MarketPrefs, bool);
+
+/// A list row's commodity: rare goods behind a yellow ★. On a rare goods page (`own_row`: the row names a commodity
+/// other than the page's) the name opens that commodity's own page.
+fn commodity_cell(ui: &mut Ui, name: &str, own_row: bool, page_rare: bool) -> Option<RowAction> {
+    let text = if own_row || page_rare { RichText::new(format!("★ {name}")).color(pal::GOLD) } else { RichText::new(name).color(pal::TEXT) };
+    if own_row {
+        nav_label(ui, text, "Its own page: where to buy it, where to sell it, latest prices").then(|| RowAction::Open(name.to_string()))
+    } else {
+        ui.add(egui::Label::new(text).truncate());
+        None
+    }
+}
 
 /// Buy or sell offers for one commodity: price (and against the galactic average), quantity, where,
 /// how far, how old; with `pins`, a pin toggle in front. Returns what a click asked for.
-fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, average: Option<i64>, selected: Option<u64>, pins: Option<PinCtx>) -> Option<RowAction> {
+fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, average: Option<i64>, selected: Option<&PickKey>, pins: Option<PinCtx>) -> Option<RowAction> {
     let buying = mode == TradeMode::BuyFromStation;
     let wide = ui.available_width() >= 700.0;
+    // On the commodity page each row names its commodity, as Abnormal prices does.
+    let many = pins.is_some();
     let mut action = None;
     let mut sort = TableSort::load(ui, id);
     let mut table = TableBuilder::new(ui)
@@ -1303,6 +1514,9 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
     if pins.is_some() {
         table = table.column(Column::initial(24.0));
     }
+    if many {
+        table = table.column(Column::initial(180.0).at_least(110.0).clip(true));
+    }
     table = table
         .column(Column::initial(118.0))
         .column(Column::initial(60.0))
@@ -1313,11 +1527,14 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
         table = table.column(Column::initial(36.0));
     }
     table = table.column(Column::initial(60.0));
-    // Sortable columns: 0 price, 1 quantity, 2 station, 3 distance, 4 pad, 5 age. Cheapest first
-    // where you buy, best price first where you sell.
+    // Sortable columns: 0 price, 1 quantity, 2 station, 3 distance, 4 pad, 5 age, 6 commodity. Cheapest
+    // first where you buy, best price first where you sell.
     let mut heads: Heads = Vec::new();
     if pins.is_some() {
         heads.push(("", None));
+    }
+    if many {
+        heads.push(("Commodity", Some((6, false))));
     }
     heads.extend([
         (if buying { "Buy for" } else { "Sell for" }, Some((0, !buying))),
@@ -1337,14 +1554,19 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
         2 => cmp_text(&a.station, &b.station),
         3 => cmp_opt(a.distance_ly, b.distance_ly),
         4 => pad_rank(a.max_pad).cmp(&pad_rank(b.max_pad)),
+        6 => cmp_text(a.commodity.as_ref().map_or("", |c| c.name.as_str()), b.commodity.as_ref().map_or("", |c| c.name.as_str())),
         _ => a.updated_unix.cmp(&b.updated_unix),
     });
     table
         .body(|body| {
             body.rows(40.0, hits.len(), |mut row| {
                 let h = &hits[order[row.index()]];
-                row.set_selected(selected == Some(h.market_id));
-                if let Some(((symbol, name), prefs)) = pins {
+                // The page's commodity, or (rare goods taken as one) the row's own.
+                let page_good = pins.map_or(("", ""), |p| p.0);
+                let page_rare = pins.is_some_and(|p| p.2);
+                let (symbol, name) = h.commodity.as_ref().map_or(page_good, |c| (c.symbol.as_str(), c.name.as_str()));
+                row.set_selected(selected.is_some_and(|k| k.0 == h.market_id && k.1 == symbol));
+                if let Some((_, prefs, _)) = pins {
                     row.col(|ui| {
                         if pin_button(ui, prefs.is_pinned(h.market_id, symbol, !buying)) {
                             action = Some(RowAction::Pin(Pin {
@@ -1362,10 +1584,19 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
                         }
                     });
                 }
+                if many {
+                    row.col(|ui| {
+                        if let Some(open) = commodity_cell(ui, name, h.commodity.is_some(), page_rare) {
+                            action = Some(open);
+                        }
+                    });
+                }
                 row.col(|ui| {
                     ui.label(RichText::new(cr(h.price)).font(display(size::CALLOUT)).color(if buying { pal::CYAN } else { pal::GOOD }));
                 });
-                row.col(|ui| vs_average(ui, h.price, average, buying));
+                // A rare good against its own average (the market reports it), not the one over all of them.
+                let avg = h.commodity.as_ref().map(|c| c.mean).filter(|m| *m > 0).or(average);
+                row.col(|ui| vs_average(ui, h.price, avg, buying));
                 row.col(|ui| {
                     ui.label(RichText::new(nexus_data::names::group_digits(h.quantity)).color(pal::DIM));
                 });
@@ -1383,7 +1614,7 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
                     ui.label(RichText::new(t).color(c));
                 });
                 if row.response().clicked() && action.is_none() {
-                    action = Some(RowAction::Select(h.market_id));
+                    action = Some(RowAction::Select((h.market_id, symbol.to_string())));
                 }
             });
         });
@@ -1391,7 +1622,7 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
 }
 
 /// Every market trading the commodity, newest price first, with both directions. Returns what a click asked for.
-fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, selected: Option<u64>, (symbol, name): (&str, &str), prefs: &MarketPrefs) -> Option<RowAction> {
+fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, selected: Option<&PickKey>, page_good: (&str, &str), prefs: &MarketPrefs, page_rare: bool) -> Option<RowAction> {
     let wide = ui.available_width() >= 760.0;
     let mut action = None;
     const TABLE: &str = "commodity-latest";
@@ -1403,6 +1634,8 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
         .sense(egui::Sense::click())
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::initial(24.0))
+        // Each row names its commodity, as Abnormal prices does.
+        .column(Column::initial(180.0).at_least(110.0).clip(true))
         .column(Column::remainder().at_least(150.0).clip(true))
         .column(Column::initial(104.0));
     if wide {
@@ -1413,9 +1646,9 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
         table = table.column(Column::initial(66.0));
     }
     table = table.column(Column::initial(72.0)).column(Column::initial(60.0));
-    // Sortable columns: 0 station, 1 buy price, 2 stock, 3 sell price, 4 demand, 5 distance, 6 age. A
-    // market that doesn't trade that way sorts after the ones that do.
-    let mut heads: Heads = vec![("", None), ("Station", Some((0, false))), ("Buy for", Some((1, false)))];
+    // Sortable columns: 0 station, 1 buy price, 2 stock, 3 sell price, 4 demand, 5 distance, 6 age,
+    // 7 commodity. A market that doesn't trade that way sorts after the ones that do.
+    let mut heads: Heads = vec![("", None), ("Commodity", Some((7, false))), ("Station", Some((0, false))), ("Buy for", Some((1, false)))];
     if wide {
         heads.push(("Stock", Some((2, true))));
     }
@@ -1435,13 +1668,16 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
         3 => cmp_opt(price(a.sell), price(b.sell)),
         4 => a.demand.cmp(&b.demand),
         5 => cmp_opt(a.distance_ly, b.distance_ly),
+        7 => cmp_text(a.commodity.as_ref().map_or("", |c| c.name.as_str()), b.commodity.as_ref().map_or("", |c| c.name.as_str())),
         _ => a.updated_unix.cmp(&b.updated_unix),
     });
     table
         .body(|body| {
             body.rows(40.0, quotes.len(), |mut row| {
                 let q = &quotes[order[row.index()]];
-                row.set_selected(selected == Some(q.market_id));
+                // The page's commodity, or (rare goods taken as one) the row's own.
+                let (symbol, name) = q.commodity.as_ref().map_or(page_good, |c| (c.symbol.as_str(), c.name.as_str()));
+                row.set_selected(selected.is_some_and(|k| k.0 == q.market_id && k.1 == symbol));
                 let avg = Some(q.mean).filter(|m| *m > 0).or(average);
                 row.col(|ui| {
                     // Pins the side it trades (where it buys, when it does both).
@@ -1461,6 +1697,11 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
                             qty,
                             ..Default::default()
                         }));
+                    }
+                });
+                row.col(|ui| {
+                    if let Some(open) = commodity_cell(ui, name, q.commodity.is_some(), page_rare) {
+                        action = Some(open);
                     }
                 });
                 row.col(|ui| station_cell(ui, &q.station, &q.system, q.is_carrier, q.is_planetary, q.dist_ls));
@@ -1494,7 +1735,7 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
                     ui.label(RichText::new(t).color(c));
                 });
                 if row.response().clicked() && action.is_none() {
-                    action = Some(RowAction::Select(q.market_id));
+                    action = Some(RowAction::Select((q.market_id, symbol.to_string())));
                 }
             });
         });
@@ -1520,8 +1761,8 @@ fn carrier_access(a: &str) -> &str {
     }
 }
 
-/// The picked market: what it is, this commodity there, its price history, and a way to its whole market.
-fn pick_card(ui: &mut Ui, d: &PickDetail, s: &CommoditySummary, origin: Option<[f64; 3]>, prefs: &MarketPrefs, prefer_sell: bool) -> PickAction {
+/// The picked market: what it is, the row's commodity there, its price history, and a way to its whole market.
+fn pick_card(ui: &mut Ui, d: &PickDetail, (symbol, name): (&str, &str), origin: Option<[f64; 3]>, prefs: &MarketPrefs, prefer_sell: bool) -> PickAction {
     let Some(m) = &d.market else {
         ui.label(RichText::new("This market is no longer in the database.").color(pal::DIM));
         return PickAction::Close;
@@ -1542,11 +1783,11 @@ fn pick_card(ui: &mut Ui, d: &PickDetail, s: &CommoditySummary, origin: Option<[
             if crate::widgets::button(ui, &format!("{} Copy system", icon::COPY)).clicked() {
                 ui.ctx().copy_text(st.system.clone());
             }
-            if let Some(r) = m.items.iter().find(|r| r.symbol == s.symbol) {
+            if let Some(r) = m.items.iter().find(|r| r.symbol == symbol) {
                 let (buys, sells) = (r.sell > 0 && r.demand > 0, r.buy > 0 && r.stock > 0);
                 if buys || sells {
                     let sell_here = if buys && sells { prefer_sell } else { buys };
-                    let pinned = prefs.is_pinned(st.market_id, &s.symbol, sell_here);
+                    let pinned = prefs.is_pinned(st.market_id, symbol, sell_here);
                     let label = if pinned { format!("{} Pinned", icon::PUSH_PIN) } else { format!("{} Pin", icon::PUSH_PIN) };
                     if crate::widgets::button(ui, &label).on_hover_text("Keep it on top of the Market page with its latest price; the run planner fills it").clicked() {
                         let (price, qty) = if sell_here { (r.sell, r.demand) } else { (r.buy, r.stock) };
@@ -1555,8 +1796,8 @@ fn pick_card(ui: &mut Ui, d: &PickDetail, s: &CommoditySummary, origin: Option<[
                             station: st.name.clone(),
                             system: st.system.clone(),
                             carrier: st.is_carrier,
-                            symbol: s.symbol.clone(),
-                            name: s.name.clone(),
+                            symbol: symbol.to_string(),
+                            name: name.to_string(),
                             sell_here,
                             price,
                             qty,
@@ -1592,19 +1833,19 @@ fn pick_card(ui: &mut Ui, d: &PickDetail, s: &CommoditySummary, origin: Option<[
                         ui.add(egui::Label::new(RichText::new(format!("Fleet carrier: its owner sets these prices. Docking: {who}.")).size(size::FOOTNOTE).color(pal::DIM)).wrap());
                     }
                     ui.add_space(6.0);
-                    match m.items.iter().find(|r| r.symbol == s.symbol) {
+                    match m.items.iter().find(|r| r.symbol == symbol) {
                         Some(r) => {
                             if r.buy > 0 && r.stock > 0 {
-                                ui.label(RichText::new(format!("Sells {} for {} · {} in stock", s.name, cr(r.buy), nexus_data::names::group_digits(r.stock))).color(pal::CYAN));
+                                ui.label(RichText::new(format!("Sells {} for {} · {} in stock", name, cr(r.buy), nexus_data::names::group_digits(r.stock))).color(pal::CYAN));
                             }
                             if r.sell > 0 && r.demand > 0 {
-                                ui.label(RichText::new(format!("Buys {} for {} · {} wanted", s.name, cr(r.sell), nexus_data::names::group_digits(r.demand))).color(pal::GOOD));
+                                ui.label(RichText::new(format!("Buys {} for {} · {} wanted", name, cr(r.sell), nexus_data::names::group_digits(r.demand))).color(pal::GOOD));
                             }
                             let (a, col) = age(r.updated_unix);
                             ui.label(RichText::new(format!("Updated {a} ago · {} goods on this market", m.items.len())).size(size::FOOTNOTE).color(col));
                         }
                         None => {
-                            ui.label(RichText::new(format!("Its latest market no longer lists {}.", s.name)).color(pal::DIM));
+                            ui.label(RichText::new(format!("Its latest market no longer lists {}.", name)).color(pal::DIM));
                         }
                     }
                 },
@@ -3228,6 +3469,42 @@ mod tests {
         rank_commodities(all, typed, 10).into_iter().map(|c| c.name.clone()).collect()
     }
 
+    /// Categories end with the pseudo category "Rare Goods"; a category lists its normal goods, then its rare
+    /// goods as one item; nothing untradeable or retired is listed.
+    #[test]
+    fn categories_items_and_rare_goods() {
+        let all = vec![
+            info("Silver", "silver", "Metals", false),
+            info("Gold", "gold", "Metals", false),
+            info("Sothis Crystalline Gold", "sothiscrystallinegold", "Metals", true),
+            info("Rusani Old Smokey", "rusanioldsmokey", "Legal Drugs", true),
+            info("Tobacco", "tobacco", "Legal Drugs", false),
+            info("Bauxite", "bauxite", "Minerals", false),
+            info("Unknown", "unknown", "NonMarketable", false),
+            info("Galactic Travel Guide", "galactictravelguide", "Salvage", true),
+        ];
+        let texts = |v: Vec<Suggestion>| v.into_iter().map(|s| s.text).collect::<Vec<_>>();
+        assert_eq!(commodity_categories(&all), vec!["Legal Drugs", "Metals", "Minerals", "Rare Goods"], "no Salvage: its only item is retired");
+        assert_eq!(texts(category_items(&all, "Metals")), vec!["Gold", "Silver", "Rare Goods"]);
+        assert_eq!(texts(category_items(&all, "Minerals")), vec!["Bauxite"], "no rare goods there");
+        assert_eq!(texts(category_items(&all, "Rare Goods")), vec!["Rare Goods"]);
+        assert_eq!(category_items(&all, "Rare Goods")[0].detail, "2 rare goods");
+        assert_eq!(item_suggestions(&all, &[], "Metals", "")[0].text, "", "a blank entry first");
+        let every = texts(category_items(&all, ""));
+        assert_eq!(every.len(), 7, "every listed commodity, rare goods one by one, then Rare Goods: {every:?}");
+        assert!(!every.contains(&"Unknown".to_string()) && !every.contains(&"Galactic Travel Guide".to_string()));
+        assert!(category_items(&all, "").iter().any(|s| s.text == "Sothis Crystalline Gold" && s.starred));
+
+        // Typing: matches within the category, rare goods as one when the words fit.
+        assert_eq!(texts(item_suggestions(&all, &[], "Metals", "gol")), vec!["Gold"], "the category's rare gold is in its Rare Goods item");
+        assert_eq!(texts(item_suggestions(&all, &[], "", "gol")), vec!["Gold", "Sothis Crystalline Gold"]);
+        assert_eq!(texts(item_suggestions(&all, &[], "Legal Drugs", "rare")), vec!["Rare Goods"]);
+        assert!(item_suggestions(&all, &[], "Minerals", "rare").is_empty());
+        // The category field narrows to what's typed.
+        assert_eq!(texts(category_suggestions(&all, "")), vec!["All categories", "Legal Drugs", "Metals", "Minerals", "Rare Goods"]);
+        assert_eq!(texts(category_suggestions(&all, "me")), vec!["Metals"]);
+    }
+
     #[test]
     fn suggestions_rank_names_initials_and_words() {
         let all = sample();
@@ -3288,6 +3565,7 @@ mod tests {
             updated_unix: 0,
             is_carrier: true,
             is_planetary: false,
+            commodity: None,
         };
         let r = Relax::for_hit(&hit, &p, true);
         assert_eq!(r.reasons(&p), vec!["farther than 60 ly", "fewer than 100 t", "fleet carrier (switched off)"]);
