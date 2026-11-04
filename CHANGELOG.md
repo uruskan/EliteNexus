@@ -17,6 +17,11 @@ release time that section becomes the new version and the release workflow publi
   it's full), by their English names on a game client in another language too, and where to find a raw material: the
   landable bodies that hold it most, or the nearest, within a distance you name (100 ly unless you say otherwise),
   from the scans commanders shared that Spansh holds.
+- **Ask** knows engineering, from the Engineering page's data: name a module and it lists the blueprints, experimental
+  effects and engineers for it; name a blueprint and it works out what each grade takes against the materials you
+  hold, what you're short of, the material-trader swaps that cover it (as the Blueprint planner does) and which
+  engineers offer that grade, how far they are and what unlocking them takes. It starts from the grade your current
+  ship's module already has of that blueprint, unless you say otherwise.
 - **BGS & Powerplay** shows the merits you earned in each system, on the system's card beside its factions'
   influence, bonds, profit and data (asked for by NetworX on the Frontier Forums). The journal doesn't say which
   system a merit award counts for, so each award is placed in the system you were in when the game awarded it. The

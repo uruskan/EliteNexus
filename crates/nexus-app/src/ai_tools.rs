@@ -29,6 +29,7 @@ use tokio::runtime::Handle;
 
 mod bodies;
 mod cmdr;
+mod engineering;
 
 pub struct NexusTools {
     pub model: Arc<RwLock<Model>>,
@@ -2043,6 +2044,30 @@ pub static TOOLS: &[Tool] = &[
         mcp: true,
         run: NexusTools::find_material_body,
     },
+    Tool {
+        name: "engineering",
+        description: "Ship engineering, from the Engineering page's data. module: its blueprints, experimental effects and engineers. module and blueprint: what each grade takes against what the commander holds, what's short, material-trader swaps that cover it, and the engineers offering that grade (unlocked or not, how far, how to unlock). engineer: where they are, what they offer, how to unlock them.",
+        params: || {
+            schema(
+                json!({
+                    "module": { "type": "string", "description": "e.g. Frame Shift Drive, Thrusters, Shield Booster." },
+                    "blueprint": { "type": "string", "description": "e.g. Increased FSD Range, Dirty Drive Tuning." },
+                    "grade": { "type": "integer", "description": "Grade to reach. Default: the highest." },
+                    "from_grade": { "type": "integer", "description": "Default 1, or the grade the current ship's module has of that blueprint." },
+                    "rolls_per_grade": { "type": "integer", "description": "1 to 10. Default 3." },
+                    "experimental": { "type": "string", "description": "e.g. Mass Manager." },
+                    "engineer": { "type": "string", "description": "An engineer's name." }
+                }),
+                &[],
+            )
+        },
+        working: "Looking up the blueprints…",
+        noun: "the engineering data",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        run: NexusTools::engineering,
+    },
 ];
 
 /// One line about the commander for each question (location, ship, credits, date).
@@ -2231,8 +2256,9 @@ mod tests {
         let ask: usize = TOOLS.iter().filter(|t| t.ask).map(size).sum();
         println!("{ask} characters offered to Ask");
         // Raising this is a decision: a tool offered to Ask has to earn its tokens. Tools few commanders ask about are
-        // offered to agents only (on_foot, credit_history, system_factions).
-        assert!(ask <= 13_500, "{ask} characters of tool specs go with every Ask question");
+        // offered to agents only (on_foot, credit_history, system_factions). engineering, which commanders asked Ask for
+        // (GitHub issue #4), took it from 13,500.
+        assert!(ask <= 14_500, "{ask} characters of tool specs go with every Ask question");
     }
 
     /// `fit` finds the most detail that fits in a few tries.
@@ -3086,6 +3112,79 @@ mod tests {
         assert_eq!(rank("Trade")["progress_pct"], 46, "the others keep theirs");
         assert!(p["notes"][0].as_str().unwrap().contains("promoted"), "{p}");
         assert_eq!(p["squadron"]["rank"], "Agent");
+    }
+
+    /// "What do I still need for my FSD?" (GitHub issue #4): the blueprint's materials against what the commander holds,
+    /// the trades that cover what's short, and who offers the grade.
+    #[test]
+    fn engineering_plans_a_blueprint_against_what_you_hold() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let t = at(30);
+        let m = with_lines(
+            commander(),
+            &[format!(r#"{{ "timestamp":"{t}", "event":"Materials", "Raw":[ {{ "Name":"arsenic", "Count":1 }} ], "Manufactured":[ {{ "Name":"chemicaldistillery", "Name_Localised":"Chemical Distillery", "Count":60 }} ], "Encoded":[ ] }}"#)],
+        );
+        let tools = model_tools(m, &rt);
+        let name = |s: &str| nexus_data::materials::material(s).unwrap().name.clone();
+        // G5 of Increased FSD Range, one roll: arsenic, chemical manipulators and datamined wake exceptions.
+        let p = tools.call("engineering", &json!({ "module": "fsd", "blueprint": "increased range", "grade": "G5", "from_grade": 5, "rolls_per_grade": 1 })).unwrap();
+        assert_eq!((&p["blueprint"], &p["from_grade"], &p["to_grade"]), (&json!("Increased FSD Range"), &json!(5), &json!(5)), "{p}");
+        let needed = p["needed"].as_array().unwrap();
+        let row = |n: &str| needed.iter().find(|r| r["name"] == n).cloned().unwrap_or_else(|| panic!("{n} in {p}"));
+        assert_eq!((&row("Arsenic")["have"], row("Arsenic").get("short")), (&json!(1), None));
+        assert_eq!((&row(&name("chemicalmanipulators"))["short"], &row(&name("chemicalmanipulators"))["kind"]), (&json!(1), &json!("manufactured")));
+        assert!(needed[0]["short"].is_number() && needed[2].get("short").is_none(), "what's short comes first: {p}");
+        // Chemical Distillery trades up to Chemical Manipulators; nothing spare trades for the encoded one.
+        assert!(p["trades"].as_array().unwrap().iter().any(|t| t["get"] == name("chemicalmanipulators") && t["give"] == "Chemical Distillery" && t["trader"] == "manufactured"), "{p}");
+        let still = &p["still_short"][0];
+        assert_eq!(still["materials"], json!([name("dataminedwake")]), "{p}");
+        assert!(still["why"].as_str().unwrap().contains("not enough spare"), "{p}");
+        assert!(p["verdict"].as_str().unwrap().starts_with("Short of 2 of the 3 materials"), "{p}");
+        // Felicity Farseer is unlocked: first, with how far she is; the others say how to unlock them.
+        let engineers = p["engineers"].as_array().unwrap();
+        assert_eq!((&engineers[0]["name"], &engineers[0]["status"], &engineers[0]["up_to_grade"]), (&json!("Felicity Farseer"), &json!("Unlocked"), &json!(5)), "{p}");
+        assert!(engineers[0]["distance_ly"].as_f64().unwrap() > 100.0 && engineers[0].get("to_unlock").is_none(), "{p}");
+        assert!(engineers[1]["to_unlock"].is_string(), "{p}");
+        assert_eq!(p["current_ship"][0]["blueprint"], "Increased FSD Range");
+        assert!(json_len(&p) <= Caller::Ask.budget(), "the whole plan fits Ask");
+    }
+
+    /// A module's blueprints and engineers, where the current ship's module stands, and an engineer on their own.
+    #[test]
+    fn engineering_lists_a_modules_blueprints_and_engineers() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = model_tools(commander(), &rt);
+        let o = tools.call("engineering", &json!({ "module": "Frame Shift Drive" })).unwrap();
+        assert!(o["blueprints"].as_array().unwrap().iter().any(|b| b["name"] == "Increased FSD Range" && b["max_grade"] == 5), "{o}");
+        assert!(o["experimentals"].as_array().unwrap().iter().any(|x| x["name"] == "Mass Manager"), "{o}");
+        assert_eq!(o["engineers"][0]["name"], "Felicity Farseer", "unlocked first: {o}");
+        assert_eq!((&o["current_ship"][0]["grade"], &o["current_ship"][0]["experimental"]), (&json!(5), &json!("Mass Manager")), "{o}");
+        // The current FSD has the blueprint at G5, fully rolled: nothing left to plan unless asked from scratch.
+        let done = tools.call("engineering", &json!({ "blueprint": "Increased FSD Range" })).unwrap();
+        assert_eq!(done["verdict"], "Nothing to roll.", "{done}");
+        assert!(done["notes"][0].as_str().unwrap().contains("already has it at G5, fully rolled"), "{done}");
+        let fresh = tools.call("engineering", &json!({ "blueprint": "Increased FSD Range", "from_grade": 1 })).unwrap();        assert_eq!((&fresh["from_grade"], &fresh["per_roll"].as_array().unwrap().len()), (&json!(1), &5), "{fresh}");
+        // An engineer the commander hasn't heard of: where, and every step to unlock them.
+        let ram = tools.call("engineering", &json!({ "engineer": "Ram Tah" })).unwrap();
+        assert_eq!(ram["system"], "Meene");
+        assert!(ram.get("status").is_none() && ram["to_unlock"].as_str().unwrap().contains("Classified Scan Databanks"), "{ram}");
+        assert!(tools.call("engineering", &json!({})).is_err());
+        assert!(tools.call("engineering", &json!({ "blueprint": "Overcharged" })).unwrap_err().contains("module="));
+    }
+
+    #[test]
+    fn engineering_gives_up_detail_to_fit_the_callers_budget() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let mut tools = model_tools(commander(), &rt);
+        for args in [json!({ "module": "Multi-cannon" }), json!({ "module": "fsd", "blueprint": "Increased FSD Range", "from_grade": 1, "experimental": "Mass Manager" })] {
+            tools.budget = Caller::Ask.budget();
+            let full = tools.call("engineering", &args).unwrap();
+            assert!(json_len(&full) <= tools.budget, "{args}: the whole reply fits Ask");
+            tools.budget = json_len(&full) - 1;
+            let cut = tools.call("engineering", &args).unwrap();
+            assert!(json_len(&cut) <= tools.budget, "{cut}");
+            assert!(cut["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("left out to fit")), "{cut}");
+        }
     }
 
     #[test]
