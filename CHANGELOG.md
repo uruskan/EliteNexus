@@ -47,6 +47,12 @@ release time that section becomes the new version and the release workflow publi
   system, whichever tab you left open there. It only ever moves between those three pages: on any other page it
   leaves you alone; docked, in an SRV or on foot inside, only opening the galaxy map changes the page, and it reacts
   only to what happens while the game runs: never to the journals read at start, nor to loading another commander.
+- **Settings › Screenshots** (off by default; asked for by Alvarrune on the Frontier Forums): **Save screenshots as
+  PNG** saves each screenshot you take while Elite Nexus runs (F10, or Alt+F10 at high resolution) again as a PNG,
+  every pixel of the game's uncompressed BMP kept, named after the system, the nearest body and the time, such as
+  `Sol (Earth) 2026-11-04 14-32-05.png`. It goes next to the BMP or into a folder you choose, never over another
+  file, and **Delete the BMP afterwards** removes the BMP once its PNG is saved. Screenshots already in the folder
+  stay as they are.
 - **Mining** › **Where to mine** (asked for by NetworX on the Frontier forum): which bodies are worth landing on for
   Rhino surface mining. **Near you** lists landable bodies with planetary mining locations within 25 to 1,000 ly,
   nearest first or most locations first, with each body's ground (its class and its volcanism, as the game reports

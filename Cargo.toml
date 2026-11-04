@@ -74,7 +74,8 @@ egui_plot = "0.37"
 egui-phosphor = { version = "0.14", features = ["fill"] }
 arboard = "3"
 tts = "0.26"
-image = { version = "0.25", default-features = false, features = ["png"] }
+# bmp: the game saves its screenshots as BMP (Settings › Screenshots saves them again as PNG).
+image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
 
 [profile.dev]
 # Keep debug builds snappy while making dependency code reasonably fast (JSON parsing, sqlite, rendering).

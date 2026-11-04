@@ -30,6 +30,8 @@ pub struct SettingsCtx<'a> {
     pub voices: Vec<crate::tts::VoiceInfo>,
     /// The overlay is see-through this run (its switch applies after a restart).
     pub overlay_see_through: bool,
+    /// What happened to the last screenshot saved as PNG this run.
+    pub last_screenshot: Option<crate::screenshots::Outcome>,
 }
 
 /// What the Settings page keeps between frames: the folder fields and what checking a folder found.
@@ -43,6 +45,11 @@ pub struct SettingsUi {
     /// The game folders in use, and the folder chosen when they were looked for (it may change on another page).
     game_found: Option<(Option<PathBuf>, Vec<nexus_hud::install::GameInstall>)>,
     game_msg: Option<(Color32, String)>,
+    /// Where the PNG screenshots go.
+    shots_folder: FolderField,
+    /// The game's screenshot folder, and the journal folder it was found for.
+    shots_dir: Option<(Option<PathBuf>, Option<PathBuf>)>,
+    shots_msg: Option<String>,
 }
 
 /// A slider with its value shown on the right, sized for a settings row.
@@ -177,6 +184,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
             });
             section(ui, "Game");
             game_folder(ui, cx);
+            screenshots(ui, cx);
             section(ui, "About");
             group(ui, |g| {
                 g.value("Version", format!("Elite Nexus {}", env!("CARGO_PKG_VERSION")));
@@ -408,6 +416,81 @@ fn game_folder(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
         });
         st.game_found = Some((cx.settings.game_dir.clone(), found));
     }
+}
+
+/// Settings › Screenshots: each new screenshot saved again as a PNG (screenshots.rs).
+fn screenshots(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
+    section(ui, "Screenshots");
+    let st = &mut *cx.ui;
+    let journal = cx.status.journal_dir.clone();
+    if st.shots_dir.as_ref().is_none_or(|(j, _)| *j != journal) {
+        st.shots_dir = Some((journal.clone(), nexus_journal::paths::screenshots_dir(journal.as_deref())));
+    }
+    let game_dir = st.shots_dir.as_ref().and_then(|(_, d)| d.clone());
+    let p = &mut cx.settings.screenshots;
+    let mut changed = false;
+    group(ui, |g| {
+        changed |= g.switch(
+            &mut p.convert,
+            "Save screenshots as PNG",
+            "The game saves each screenshot (F10, or Alt+F10 at high resolution) as an uncompressed BMP of several megabytes. Elite Nexus saves each new one again as a PNG, every pixel kept, named after the system, the nearest body and the time.",
+        );
+        if p.convert {
+            let bin = if cfg!(windows) { "the Recycle Bin" } else { "the Trash" };
+            changed |= g.switch(&mut p.delete_bmp, "Delete the BMP afterwards", &format!("Once its PNG is saved. It's deleted for good, not moved to {bin}."));
+        }
+        g.row("Game's screenshots", "", |ui| match &game_dir {
+            Some(dir) => {
+                if widgets::button(ui, "Open").clicked() {
+                    st.shots_msg = if dir.is_dir() {
+                        folders::reveal(dir);
+                        None
+                    } else {
+                        Some("The game hasn't saved a screenshot there yet.".into())
+                    };
+                }
+                let d = dir.display().to_string();
+                ui.add(egui::Label::new(RichText::new(d.clone()).color(pal::DIM)).truncate()).on_hover_text(d);
+            }
+            None => {
+                ui.label(RichText::new("Not known").color(pal::WARN)).on_hover_text("The journal folder in use isn't inside a Windows user folder, so the game's Pictures folder can't be told from it.");
+            }
+        });
+        if let Some(msg) = &st.shots_msg {
+            g.content(|ui| ui.add(egui::Label::new(RichText::new(msg).size(size::FOOTNOTE).color(pal::DIM)).wrap()));
+        }
+        if p.convert {
+            g.content(|ui| {
+                ui.label(RichText::new("Save the PNGs in").size(size::FOOTNOTE).color(pal::DIM));
+                let mut entered = st.shots_folder.field(ui, "screenshots", &p.folder, "Empty: next to the game's BMPs");
+                ui.add_space(6.0);
+                ui.horizontal_wrapped(|ui| {
+                    if let Some(dir) = st.shots_folder.browse(ui, "Folder for the PNG screenshots", &p.folder) {
+                        entered = Some(dir);
+                    }
+                });
+                if let Some(dir) = entered {
+                    p.folder = dir;
+                    changed = true;
+                }
+                let (color, text) = match &cx.last_screenshot {
+                    None => (pal::DIM, "Take a screenshot in the game: it's saved as PNG within a few seconds.".to_string()),
+                    Some(crate::screenshots::Outcome::Working(bmp)) => (pal::DIM, format!("Saving {bmp} as PNG…")),
+                    Some(crate::screenshots::Outcome::Saved(_, text)) => (pal::GOOD, text.clone()),
+                    Some(crate::screenshots::Outcome::Failed(why)) => (pal::WARN, why.clone()),
+                };
+                ui.add(egui::Label::new(RichText::new(text).size(size::FOOTNOTE).color(color)).wrap());
+                if let Some(crate::screenshots::Outcome::Saved(png, _)) = &cx.last_screenshot
+                    && let Some(dir) = png.parent()
+                    && widgets::button(ui, "Show the PNG's folder").clicked()
+                {
+                    folders::reveal(dir);
+                }
+            });
+        }
+    });
+    cx.changed |= changed;
+    footnote(ui, "Only screenshots taken while Elite Nexus is running are saved as PNG; the ones already in the folder stay as they are. A PNG is named like Sol (Earth) 2026-11-04 14-32-05.png.");
 }
 
 /// Linux: Elite Nexus in the desktop's app menu (desktop_entry.rs), written only on a click here.

@@ -19,6 +19,7 @@ mod notices;
 mod overlay;
 mod pages;
 mod runplan;
+mod screenshots;
 mod secrets;
 mod settings;
 mod shopping;

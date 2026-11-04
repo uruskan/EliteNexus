@@ -90,6 +90,8 @@ pub struct NexusApp {
     accounts: pages::accounts::AccountsUi,
     /// EDDN / EDSM / Inara / EDAstro uploads (all off until enabled in Accounts).
     sync: crate::sync::SyncService,
+    /// The game's screenshots saved again as PNG (off until enabled in Settings).
+    shots: crate::screenshots::ScreenshotService,
     /// Local galaxy/market database + live EDDN feed.
     market: crate::market::MarketService,
     market_ui: pages::market::MarketUi,
@@ -143,8 +145,11 @@ impl NexusApp {
         let core = start_core(&cc.egui_ctx, ov.journal_dir.as_ref().or(settings.journal_dir.as_ref()), market.history_sink(), &settings.mining);
         market.attach(&core);
         market.set_listen(settings.accounts.eddn_listen, rt.handle());
-        // Test runs (CLI journal folder, screenshots) never upload: replayed journals must not reach the services.
-        let sync = if ov.journal_dir.is_none() && shot.is_none() { crate::sync::SyncService::start(&core, &settings.accounts, &data_dir, rt.handle()) } else { crate::sync::SyncService::disabled() };
+        // Test runs (CLI journal folder, screenshots) never upload, and never touch the game's screenshots: replayed
+        // journals must not reach the services or the Pictures folder.
+        let live_run = ov.journal_dir.is_none() && shot.is_none();
+        let sync = if live_run { crate::sync::SyncService::start(&core, &settings.accounts, &data_dir, rt.handle()) } else { crate::sync::SyncService::disabled() };
+        let shots = if live_run { crate::screenshots::ScreenshotService::start(&core, &settings.screenshots, &cc.egui_ctx) } else { crate::screenshots::ScreenshotService::disabled() };
         let mut market_ui = pages::market::MarketUi::new(settings.market.clone());
         if let Some(t) = ov.tab.as_deref().and_then(pages::market::Tab::from_name) {
             market_ui.tab = t;
@@ -198,6 +203,7 @@ impl NexusApp {
             spansh: nexus_spansh::Spansh::new(),
             accounts: Default::default(),
             sync,
+            shots,
             market,
             market_ui,
             colo: Default::default(),
@@ -642,6 +648,7 @@ impl NexusApp {
                     voice: self.speaker.status(),
                     voices: self.speaker.voices(),
                     overlay_see_through: self.overlay.see_through(),
+                    last_screenshot: self.shots.last(),
                 };
                 pages::settings::show(ui, &mut cx);
                 settings_changed = cx.changed;
@@ -732,6 +739,7 @@ impl NexusApp {
             voice: self.speaker.status(),
             voices: self.speaker.voices(),
             overlay_see_through: self.overlay.see_through(),
+            last_screenshot: self.shots.last(),
         };
         // Scrolls: with the settings banner above it, a short window would otherwise cut off the folder's buttons.
         egui::ScrollArea::vertical().id_salt(("page", Page::Settings as u8, settings_page)).auto_shrink([false, false]).show(ui, |ui| {
@@ -758,6 +766,7 @@ impl NexusApp {
             self.speaker.set_voice(&self.settings.tts_voice);
             self.speaker.set_engine(self.settings.tts_engine);
             self.sync.apply(&self.settings.accounts);
+            self.shots.apply(&self.settings.screenshots);
             self.market.set_watches(&self.settings.price_watches);
             self.market.set_listen(self.settings.accounts.eddn_listen, self.rt.handle());
         }
@@ -767,6 +776,7 @@ impl NexusApp {
         if restart {
             self.core = start_core(ctx, self.overrides.journal_dir.as_ref().or(self.settings.journal_dir.as_ref()), self.market.history_sink(), &self.settings.mining);
             self.sync.attach(&self.core);
+            self.shots.attach(&self.core);
             self.market.attach(&self.core);
             // A new model: Follow my flight starts afresh instead of comparing it with the old one.
             self.flight = Default::default();

@@ -14,6 +14,8 @@ pub const STEAM_APP_ID: &str = "359320";
 const JOURNAL_IN_PROFILE: [&str; 3] = ["Saved Games", "Frontier Developments", "Elite Dangerous"];
 /// The game's Options folder inside `%LOCALAPPDATA%`.
 const OPTIONS_IN_LOCAL: [&str; 3] = ["Frontier Developments", "Elite Dangerous", "Options"];
+/// The game's screenshot folder (the journal's `\ED_Pictures\`) inside the Windows user's Pictures folder.
+const SCREENSHOTS_IN_PICTURES: [&str; 2] = ["Frontier Developments", "Elite Dangerous"];
 
 /// The journal folder the app reads, when it has said so (see [`set_journal_dir_in_use`]).
 static JOURNAL_DIR_IN_USE: Mutex<Option<PathBuf>> = Mutex::new(None);
@@ -89,6 +91,37 @@ fn wine_journal_dir() -> Option<PathBuf> {
 /// `<user>/AppData/Local/Frontier Developments/Elite Dangerous/Options` for a journal folder at
 /// `<user>/Saved Games/Frontier Developments/Elite Dangerous`; `None` for a journal folder anywhere else.
 pub fn options_dir_beside(journal_dir: &Path) -> Option<PathBuf> {
+    let profile = profile_of(journal_dir)?;
+    Some(OPTIONS_IN_LOCAL.iter().fold(profile.join("AppData").join("Local"), |p, c| p.join(c)))
+}
+
+/// Where the game saves screenshots (the journal's `\ED_Pictures\`): `Frontier Developments\Elite Dangerous` in the
+/// Windows user's Pictures folder, wherever Windows keeps it (OneDrive, another drive). On Linux and macOS, the same
+/// folder in the Wine user folder that holds `journal_dir`, the journal folder in use.
+pub fn screenshots_dir(journal_dir: Option<&Path>) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        let _ = journal_dir;
+        let pictures = known_folders::get_known_folder_path(known_folders::KnownFolder::Pictures).or_else(|| Some(PathBuf::from(std::env::var_os("USERPROFILE")?).join("Pictures")))?;
+        Some(SCREENSHOTS_IN_PICTURES.iter().fold(pictures, |p, c| p.join(c)))
+    }
+    #[cfg(not(windows))]
+    {
+        screenshots_dir_beside(journal_dir?)
+    }
+}
+
+/// `<user>/Pictures/Frontier Developments/Elite Dangerous` for a journal folder at
+/// `<user>/Saved Games/Frontier Developments/Elite Dangerous` (`My Pictures` in a prefix made by an older Wine);
+/// `None` for a journal folder anywhere else.
+pub fn screenshots_dir_beside(journal_dir: &Path) -> Option<PathBuf> {
+    let profile = profile_of(journal_dir)?;
+    let pictures = ["Pictures", "My Pictures"].iter().map(|n| profile.join(n)).find(|p| p.is_dir()).unwrap_or_else(|| profile.join("Pictures"));
+    Some(SCREENSHOTS_IN_PICTURES.iter().fold(pictures, |p, c| p.join(c)))
+}
+
+/// The Windows user folder of a journal folder at `<user>/Saved Games/Frontier Developments/Elite Dangerous`.
+fn profile_of(journal_dir: &Path) -> Option<&Path> {
     let mut profile = journal_dir;
     for name in JOURNAL_IN_PROFILE.iter().rev() {
         if !profile.file_name()?.to_string_lossy().eq_ignore_ascii_case(name) {
@@ -96,7 +129,7 @@ pub fn options_dir_beside(journal_dir: &Path) -> Option<PathBuf> {
         }
         profile = profile.parent()?;
     }
-    Some(OPTIONS_IN_LOCAL.iter().fold(profile.join("AppData").join("Local"), |p, c| p.join(c)))
+    Some(profile)
 }
 
 /// `%LOCALAPPDATA%\Frontier Developments\Elite Dangerous\Options\Bindings` (on Linux and macOS, in the game's Wine
@@ -525,6 +558,24 @@ mod tests {
         let options = pfx.join("AppData").join("Local").join("Frontier Developments").join("Elite Dangerous").join("Options");
         assert_eq!(options_dir_beside(&journals), Some(options));
         assert_eq!(options_dir_beside(&PathBuf::from("replays").join("Elite Dangerous")), None);
+    }
+
+    #[test]
+    fn finds_screenshots_next_to_the_journals() {
+        let root = std::env::temp_dir().join(format!("nexus-journal-shots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let user = root.join("drive_c").join("users").join("steamuser");
+        let journals = JOURNAL_IN_PROFILE.iter().fold(user.clone(), |p, c| p.join(c));
+        let shots = |pictures: &str| user.join(pictures).join("Frontier Developments").join("Elite Dangerous");
+        // Before the game has saved one, the folder it will make.
+        assert_eq!(screenshots_dir_beside(&journals), Some(shots("Pictures")));
+        // An older Wine names the folder My Pictures.
+        std::fs::create_dir_all(user.join("My Pictures")).unwrap();
+        assert_eq!(screenshots_dir_beside(&journals), Some(shots("My Pictures")));
+        std::fs::create_dir_all(user.join("Pictures")).unwrap();
+        assert_eq!(screenshots_dir_beside(&journals), Some(shots("Pictures")));
+        assert_eq!(screenshots_dir_beside(&PathBuf::from("replays").join("Elite Dangerous")), None);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// NotProton (Steam Play on macOS) keeps Proton's layout inside the macOS Steam library; CrossOver bottles and

@@ -57,6 +57,8 @@ pub struct Settings {
     pub mining: crate::pages::mining::MiningPrefs,
     /// The overlay: the island at the top of the game's screen.
     pub overlay: crate::overlay::window::OverlayPrefs,
+    /// The game's screenshots saved again as PNG (off by default: it writes to the player's Pictures folder).
+    pub screenshots: crate::screenshots::ScreenshotPrefs,
 }
 
 /// A named HUD colour matrix.
@@ -177,6 +179,7 @@ impl Default for Settings {
             bgs: Default::default(),
             mining: Default::default(),
             overlay: Default::default(),
+            screenshots: Default::default(),
         }
     }
 }
