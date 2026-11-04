@@ -119,8 +119,5 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
 
 * Elite Nexus is free software under GPL-3.0-or-later (`LICENSE`); third-party data and fonts are listed in `NOTICE.md`
   with their licences.
-* EDCD/FDevIDs CSVs (data/fdevids) have **no licence file**; releases now distribute binaries, so ask EDCD.
-* EDGalaxyData (online footfall lookups, `ai_tools::ONLINE_FOOTFALL_LOOKUP`) publishes no terms: ask its operator.
 * EDEngineer data (MIT), EDDiscovery sources (Apache-2.0), ed-journal-schemas (Apache-2.0): attribution in data/*/SOURCE.txt.
-* coriolis-data / EDSY data are Frontier IP / CC BY-NC: link to the sites, don't bundle their data.
 * Exobiology dataset is a factual compilation incl. facts from GPL tools — no GPL code is copied.

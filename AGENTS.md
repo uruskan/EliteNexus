@@ -185,8 +185,6 @@ never touches `nexus-data`.
 
 ## Open decisions
 
-* EDGalaxyData (online footfall lookups) publishes no terms: ask its operator before switching it on. The switch is
-  `ai_tools::ONLINE_FOOTFALL_LOOKUP`.
 * Inara whitelisted the app name "Elite Nexus" on 2026-10-13 (Artie, Inara's author), so Inara sync works with a
   user's personal key. Developer mode (`Accounts::inara_dev_mode`, sent as `isBeingDeveloped`) is still on by
   default; switch it off after a few weeks of clean syncs.
