@@ -2313,6 +2313,7 @@ pub struct MissionRedirected {
     pub old_destination_system: Option<String>,
 }
 
+/// One faction's share of a `Bounty` (`Rewards[]`).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct FactionReward {
@@ -2358,6 +2359,8 @@ pub struct KillBond {
     pub victim_faction: String,
 }
 
+/// Vouchers handed in: `Type` "bounty" lists each faction's share in `Factions[]`; "CombatBond" and the others name one
+/// `Faction` (empty for some). `Amount` is what the commander received, after an Interstellar Factors broker's cut.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct RedeemVoucher {
@@ -2368,9 +2371,20 @@ pub struct RedeemVoucher {
     #[serde(rename = "Faction")]
     pub faction: Option<String>,
     #[serde(rename = "Factions")]
-    pub factions: Vec<FactionReward>,
+    pub factions: Vec<VoucherFaction>,
     #[serde(rename = "BrokerPercentage")]
     pub broker_percentage: Option<f64>,
+}
+
+/// One faction's share of a bounty voucher (`RedeemVoucher.Factions[]`). It says `Amount` where the `Bounty` event's
+/// `Rewards[]` says `Reward`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct VoucherFaction {
+    #[serde(rename = "Faction")]
+    pub faction: String,
+    #[serde(rename = "Amount")]
+    pub amount: i64,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]

@@ -79,6 +79,11 @@ release time that section becomes the new version and the release workflow publi
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.
+- **BGS & Powerplay counts your bounties.** Bounty vouchers you handed in never reached the page, so its Bounties
+  column stayed empty: the journal names each faction's share of a voucher differently from the bounty itself, and
+  every share was read as 0. Each faction now gets its share, in the system where you hand the vouchers in. The page
+  is read from your journal, so bounties you handed in before this version show too. Combat bonds and Statistics
+  were counted right.
 - **Statistics and BGS & Powerplay: a bar's number is no longer cut off** (GitHub issue #4, with a screenshot).
   Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
   edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always

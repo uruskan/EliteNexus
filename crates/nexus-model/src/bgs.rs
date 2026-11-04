@@ -115,7 +115,7 @@ impl Bgs {
                         self.push(ts, here.system_address, here.system, f, BgsKind::Bounty, r.amount);
                     }
                 for f in &r.factions {
-                    self.push(ts, here.system_address, here.system, &f.faction, BgsKind::Bounty, f.reward);
+                    self.push(ts, here.system_address, here.system, &f.faction, BgsKind::Bounty, f.amount);
                 }
             }
             "combatbond" => {
