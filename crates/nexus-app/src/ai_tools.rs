@@ -1983,7 +1983,8 @@ pub static TOOLS: &[Tool] = &[
         working: "Checking your on-foot gear…",
         noun: "your on-foot gear",
         read_only: true,
-        ask: true,
+        // Rarely asked: not worth its tokens in every Ask request.
+        ask: false,
         mcp: true,
         run: |t, _| t.on_foot(),
     },
@@ -2002,7 +2003,8 @@ pub static TOOLS: &[Tool] = &[
         working: "Reading your credit history…",
         noun: "your credit history",
         read_only: true,
-        ask: true,
+        // Rarely asked: not worth its tokens in every Ask request.
+        ask: false,
         mcp: true,
         run: NexusTools::credit_history,
     },
@@ -2013,7 +2015,8 @@ pub static TOOLS: &[Tool] = &[
         working: "Reading the factions you saw there…",
         noun: "your journal",
         read_only: true,
-        ask: true,
+        // Rarely asked: not worth its tokens in every Ask request.
+        ask: false,
         mcp: true,
         run: NexusTools::system_factions,
     },
@@ -2217,6 +2220,21 @@ mod tests {
         assert_eq!(tools.tools().len(), mcp.len());
     }
 
+    /// Every spec Ask's model is offered goes with every question, and again with each round of tool calls: they're
+    /// kept in check (about four characters make a token).
+    #[test]
+    fn ask_specs_stay_small() {
+        let size = |t: &Tool| json_len(&json!({ "name": t.name, "description": t.description, "parameters": (t.params)() }));
+        for t in TOOLS {
+            println!("{:>5} {}{}", size(t), t.name, if t.ask { "" } else { " (agents only)" });
+        }
+        let ask: usize = TOOLS.iter().filter(|t| t.ask).map(size).sum();
+        println!("{ask} characters offered to Ask");
+        // Raising this is a decision: a tool offered to Ask has to earn its tokens. Tools few commanders ask about are
+        // offered to agents only (on_foot, credit_history, system_factions).
+        assert!(ask <= 13_500, "{ask} characters of tool specs go with every Ask question");
+    }
+
     /// `fit` finds the most detail that fits in a few tries.
     #[test]
     fn fit_keeps_the_most_detail_that_fits() {
@@ -2318,6 +2336,12 @@ mod tests {
             caller: Caller::Ask,
             budget: Caller::Ask.budget(),
         }
+    }
+
+    /// Tools as an AI agent over MCP calls them (with Ask's length, so the size checks hold): for the tools only agents are
+    /// offered.
+    fn agent_tools(m: Model, rt: &tokio::runtime::Runtime) -> NexusTools {
+        NexusTools { caller: Caller::Mcp, ..model_tools(m, rt) }
     }
 
     #[test]
@@ -2671,7 +2695,7 @@ mod tests {
     #[test]
     fn on_foot_lists_loadouts_and_locker() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let tools = model_tools(geared_commander(), &rt);
+        let tools = agent_tools(geared_commander(), &rt);
         let v = tools.call("on_foot", &json!({})).unwrap();
         let loadouts = v["loadouts"].as_array().unwrap();
         assert_eq!(loadouts.len(), 1, "{v}");
@@ -2705,7 +2729,7 @@ mod tests {
                 format!(r#"{{ "timestamp":"{t}", "event":"DeleteSuitLoadout", "SuitID":18, "SuitName":"explorationsuit_class1", "SuitName_Localised":"Artemis Suit", "LoadoutID":4293000002, "LoadoutName":"Loadout 2" }}"#),
             ],
         );
-        let v = model_tools(m, &rt).call("on_foot", &json!({})).unwrap();
+        let v = agent_tools(m, &rt).call("on_foot", &json!({})).unwrap();
         let loadouts = v["loadouts"].as_array().unwrap();
         assert_eq!(loadouts.len(), 1, "the deleted one is gone: {v}");
         assert_eq!((&loadouts[0]["name"], &loadouts[0]["suit"]), (&json!("Assault"), &json!("Dominator Suit")));
@@ -2743,7 +2767,7 @@ mod tests {
             );
         }
         inv.current_suit_loadout = Some(3);
-        let tools = model_tools(m, &rt);
+        let tools = agent_tools(m, &rt);
         let v = tools.call("on_foot", &json!({})).unwrap();
         let len = v.to_string().len();
         assert!(len < limit, "{len} chars");
@@ -2771,7 +2795,7 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let m = paid_commander();
         let credits = m.active().unwrap().cmdr.credits;
-        let tools = model_tools(m, &rt);
+        let tools = agent_tools(m, &rt);
         let v = tools.call("credit_history", &json!({})).unwrap();
         assert_eq!(v["balance"], credits);
         let tx = v["transactions"].as_array().unwrap();
@@ -2808,7 +2832,7 @@ mod tests {
         let h = &mut m.active_mut().expect("commander").history;
         h.ledger(ts, LedgerCategory::Repairs, -10, "applied first");
         h.ledger(ts, LedgerCategory::Ammo, -20, "applied second");
-        let v = model_tools(m, &rt).call("credit_history", &json!({})).unwrap();
+        let v = agent_tools(m, &rt).call("credit_history", &json!({})).unwrap();
         let tx = v["transactions"].as_array().unwrap();
         assert_eq!((tx[0]["amount"].clone(), tx[1]["amount"].clone()), (json!(-20), json!(-10)), "{v}");
     }
@@ -2819,10 +2843,10 @@ mod tests {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let ts = nexus_journal::Timestamp(nexus_journal::Timestamp::now().0 + 10);
         let mut m = paid_commander();
-        let none = model_tools(m.clone(), &rt).call("credit_history", &json!({})).unwrap();
+        let none = agent_tools(m.clone(), &rt).call("credit_history", &json!({})).unwrap();
         assert!(none.get("notes").is_none(), "no transfer, no note: {none}");
         m.active_mut().expect("commander").history.ledger(ts, LedgerCategory::Transfer, -5_000, "To carrier");
-        let v = model_tools(m, &rt).call("credit_history", &json!({})).unwrap();
+        let v = agent_tools(m, &rt).call("credit_history", &json!({})).unwrap();
         assert!(v["totals"].as_array().unwrap().iter().any(|t| t["category"] == "Carrier transfers"));
         assert_eq!(v["notes"][0], "Carrier transfers move credits between you and your carrier: they are not income or spending.");
     }
@@ -2840,7 +2864,7 @@ mod tests {
             let note = format!("Sold {} Low Temperature Diamonds to a very long named station in a very long named system (profit {})", 700 + i, 12_345_678 + i);
             gs.history.ledger(nexus_journal::Timestamp(base + i), cats[(i % 6) as usize], if i % 3 == 0 { -123_456_789 - i } else { 987_654_321 + i }, note);
         }
-        let tools = model_tools(m, &rt);
+        let tools = agent_tools(m, &rt);
         let v = tools.call("credit_history", &json!({ "limit": 100 })).unwrap();
         let len = v.to_string().len();
         assert!(len < limit, "{len} chars");
@@ -2906,7 +2930,7 @@ mod tests {
             text.push('\n');
         }
         std::fs::write(&path, text).expect("write journal");
-        let tools = model_tools(with_lines(commander(), lines), rt);
+        let tools = agent_tools(with_lines(commander(), lines), rt);
         *tools.index.write() = index;
         tools
     }
