@@ -16,6 +16,10 @@ pub struct Settings {
     pub tts_min_priority: u8,
     pub tts_rate: f32,
     pub tts_volume: f32,
+    /// Windows: the speech engine that speaks.
+    pub tts_engine: crate::tts::EngineKind,
+    /// Windows: the engine's id for the voice. Empty = the engine's default voice.
+    pub tts_voice: String,
     pub toast_seconds: f32,
     pub ui_scale: f32,
     /// Exploration: bodies worth at least this (mapped) are highlighted.
@@ -153,6 +157,8 @@ impl Default for Settings {
             tts_min_priority: 1,
             tts_rate: 1.0,
             tts_volume: 0.9,
+            tts_engine: Default::default(),
+            tts_voice: String::new(),
             toast_seconds: 7.0,
             ui_scale: 1.0,
             high_value_threshold: 1_000_000,
@@ -643,6 +649,28 @@ mod tests {
         assert_eq!(back.bgs, s.bgs);
         std::fs::write(d.0.join("settings.json"), r#"{ "tts_rate": 1.2 }"#).expect("write");
         assert_eq!(Settings::load(&d.0).0.bgs, crate::pages::bgs::BgsPrefs::default());
+    }
+
+    /// The speech engine and voice survive a restart; older files speak through Windows speech in its default voice,
+    /// and an engine that doesn't read falls back alone.
+    #[test]
+    fn speech_engine_and_voice_are_kept() {
+        use crate::tts::EngineKind;
+        let d = Dir::new("voice");
+        let s = Settings { tts_engine: EngineKind::Sapi, tts_voice: r"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Speech\Voices\Tokens\TTS_MS_EN-US_ZIRA_11.0".into(), ..Default::default() };
+        s.save(&d.0);
+        let text = std::fs::read_to_string(d.0.join("settings.json")).expect("saved");
+        assert!(text.contains(r#""tts_engine": "sapi""#), "{text}");
+        let (back, problem) = Settings::load(&d.0);
+        assert!(problem.is_none());
+        assert_eq!((back.tts_engine, back.tts_voice), (EngineKind::Sapi, s.tts_voice));
+        std::fs::write(d.0.join("settings.json"), r#"{ "tts_rate": 1.2 }"#).expect("write");
+        let back = Settings::load(&d.0).0;
+        assert_eq!((back.tts_engine, back.tts_voice.as_str()), (EngineKind::WinRt, ""));
+        std::fs::write(d.0.join("settings.json"), r#"{ "tts_engine": "festival", "tts_rate": 1.2 }"#).expect("write");
+        let (back, problem) = Settings::load(&d.0);
+        assert_eq!((back.tts_engine, back.tts_rate), (EngineKind::WinRt, 1.2));
+        assert!(problem.expect("a problem to show").what.contains("tts_engine is back at the default"));
     }
 
     #[test]

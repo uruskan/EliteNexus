@@ -1,16 +1,60 @@
-//! Text-to-speech on a background thread. Windows: WinRT speech synthesis via the `tts` crate.
+//! Text-to-speech on a background thread. Windows: the engine chosen in Settings, Windows speech (WinRT speech
+//! synthesis via the `tts` crate) or SAPI 5 (`sapi.rs`), in the voice chosen there.
 //! Linux: speech-dispatcher's `spd-say`, else `espeak-ng` or `espeak`, run as programs (nothing to link); without
 //! any of them the app stays quiet and Settings says why.
 //! macOS: the system's `say`, in the voice chosen in System Settings › Accessibility › Spoken Content.
 
 use crossbeam_channel::{Receiver, Sender};
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+#[cfg(windows)]
+mod sapi;
 
 pub enum TtsCmd {
     Say(String),
     Rate(f32),
     Volume(f32),
+    /// Windows: speak through this engine.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Engine(EngineKind),
+    /// Windows: the voice's id (empty: the engine's default voice).
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Voice(String),
+}
+
+/// Which Windows speech engine speaks. Linux and macOS have one each, and don't use it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EngineKind {
+    /// Windows speech (WinRT): the voices of Windows Settings › Time & language › Speech.
+    #[default]
+    WinRt,
+    /// SAPI 5: Windows' desktop voices and the ones other programs install for it (IVONA, CereProc, …).
+    Sapi,
+}
+
+impl EngineKind {
+    pub const ALL: [EngineKind; 2] = [EngineKind::WinRt, EngineKind::Sapi];
+
+    /// As Settings and the voice line under Test voice name it.
+    pub fn label(self) -> &'static str {
+        match self {
+            EngineKind::WinRt => "Windows speech",
+            EngineKind::Sapi => "SAPI",
+        }
+    }
+}
+
+/// A voice the engine in use offers.
+#[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub struct VoiceInfo {
+    /// The engine's id for it: what Settings keeps.
+    pub id: String,
+    /// As the engine names it.
+    pub name: String,
 }
 
 /// What happened the last time Elite Nexus tried to speak, for Settings (under Test voice).
@@ -31,15 +75,19 @@ pub enum VoiceStatus {
 pub struct Speaker {
     tx: Sender<TtsCmd>,
     status: Arc<Mutex<VoiceStatus>>,
+    /// The voices of the engine in use (Windows; empty elsewhere and until the engine has started).
+    voices: Arc<Mutex<Vec<VoiceInfo>>>,
 }
 
 impl Speaker {
     pub fn start() -> Speaker {
         let (tx, rx) = crossbeam_channel::unbounded();
         let status = Arc::new(Mutex::new(VoiceStatus::Untried));
+        let voices = Arc::new(Mutex::new(Vec::new()));
         let st = status.clone();
-        let _ = std::thread::Builder::new().name("nexus-tts".into()).spawn(move || run(rx, st));
-        Speaker { tx, status }
+        let vs = voices.clone();
+        let _ = std::thread::Builder::new().name("nexus-tts".into()).spawn(move || run(rx, st, vs));
+        Speaker { tx, status, voices }
     }
 
     pub fn say(&self, text: impl Into<String>) {
@@ -54,49 +102,172 @@ impl Speaker {
         let _ = self.tx.send(TtsCmd::Volume(v));
     }
 
+    /// Windows: the engine to speak through (started again only when it changes).
+    pub fn set_engine(&self, engine: EngineKind) {
+        let _ = self.tx.send(TtsCmd::Engine(engine));
+    }
+
+    /// Windows: the voice's id; empty for the engine's default voice.
+    pub fn set_voice(&self, id: &str) {
+        let _ = self.tx.send(TtsCmd::Voice(id.to_string()));
+    }
+
     pub fn status(&self) -> VoiceStatus {
         self.status.lock().clone()
+    }
+
+    pub fn voices(&self) -> Vec<VoiceInfo> {
+        self.voices.lock().clone()
+    }
+}
+
+/// The Windows engine speaking now.
+#[cfg(windows)]
+enum Engine {
+    /// With the id of the voice it started with (Windows' default), for going back to it.
+    WinRt(tts::Tts, Option<String>),
+    Sapi(sapi::Sapi),
+}
+
+#[cfg(windows)]
+impl Engine {
+    fn open(kind: EngineKind) -> Result<Engine, String> {
+        match kind {
+            EngineKind::WinRt => {
+                let tts = tts::Tts::default().map_err(|e| e.to_string())?;
+                let default = tts.voice().ok().flatten().map(|v| v.id());
+                Ok(Engine::WinRt(tts, default))
+            }
+            EngineKind::Sapi => sapi::Sapi::open().map(Engine::Sapi),
+        }
+    }
+
+    fn voices(&self) -> Vec<VoiceInfo> {
+        match self {
+            Engine::WinRt(tts, _) => match tts.voices() {
+                Ok(voices) => voices.into_iter().map(|v| VoiceInfo { id: v.id(), name: v.name() }).collect(),
+                Err(e) => {
+                    tracing::warn!("Windows speech's voices couldn't be listed: {e}");
+                    Vec::new()
+                }
+            },
+            Engine::Sapi(sapi) => sapi.voices(),
+        }
+    }
+
+    /// The voice with this id (empty: the default one). One that isn't installed (any more) leaves the default
+    /// speaking; Settings says so.
+    fn set_voice(&mut self, id: &str) {
+        if !self.try_voice(id) && !id.is_empty() {
+            tracing::warn!("voice {id} isn't installed: speaking with the default voice");
+            self.try_voice("");
+        }
+    }
+
+    fn try_voice(&mut self, id: &str) -> bool {
+        match self {
+            Engine::WinRt(tts, default) => {
+                let wanted = if id.is_empty() { default.clone() } else { Some(id.to_string()) };
+                let Some(wanted) = wanted else { return false };
+                let voice = tts.voices().ok().and_then(|voices| voices.into_iter().find(|v| v.id() == wanted));
+                voice.is_some_and(|v| tts.set_voice(&v).is_ok())
+            }
+            Engine::Sapi(sapi) => sapi.set_voice(id),
+        }
+    }
+
+    /// The speed setting, 1.0 = normal.
+    fn set_rate(&mut self, rate: f32) {
+        match self {
+            Engine::WinRt(tts, _) => {
+                let _ = tts.set_rate((tts.normal_rate() * rate).clamp(tts.min_rate(), tts.max_rate()));
+            }
+            Engine::Sapi(sapi) => sapi.set_rate(rate),
+        }
+    }
+
+    fn set_volume(&mut self, volume: f32) {
+        match self {
+            Engine::WinRt(tts, _) => {
+                let _ = tts.set_volume(volume.clamp(0.0, 1.0));
+            }
+            Engine::Sapi(sapi) => sapi.set_volume(volume),
+        }
+    }
+
+    /// Queues rather than interrupts, so back-to-back alerts are all heard: WinRT plays its lines one after another,
+    /// SAPI's line is waited for.
+    fn speak(&mut self, text: &str) -> Result<(), String> {
+        match self {
+            Engine::WinRt(tts, _) => tts.speak(text, false).map(|_| ()).map_err(|e| e.to_string()),
+            Engine::Sapi(sapi) => sapi.speak(text),
+        }
     }
 }
 
 #[cfg(windows)]
-fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>) {
-    const ENGINE: &str = "Windows speech";
-    let mut engine = match tts::Tts::default() {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!("text-to-speech unavailable: {e}");
-            // Drain so senders never block; each line says why it isn't spoken.
-            while let Ok(cmd) = rx.recv() {
-                if matches!(cmd, TtsCmd::Say(_)) {
-                    *status.lock() = VoiceStatus::Failed(ENGINE, e.to_string());
-                }
-            }
-            return;
+fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<Vec<VoiceInfo>>>) {
+    let com = sapi::Com::init();
+    let (mut kind, mut voice, mut rate, mut volume) = (EngineKind::default(), String::new(), 1.0, 1.0);
+    // Started by the first engine choice or line to speak. One that can't start says why on every line.
+    let mut engine: Option<Result<Engine, String>> = None;
+    let open = |kind: EngineKind, voice: &str, rate: f32, volume: f32| {
+        let mut engine = Engine::open(kind).inspect_err(|e| tracing::warn!("text-to-speech ({}) unavailable: {e}", kind.label()));
+        *voices.lock() = engine.as_ref().map(Engine::voices).unwrap_or_default();
+        if let Ok(e) = &mut engine {
+            e.set_voice(voice);
+            e.set_rate(rate);
+            e.set_volume(volume);
         }
+        engine
     };
-    let (min_rate, max_rate, normal_rate) = (engine.min_rate(), engine.max_rate(), engine.normal_rate());
     while let Ok(cmd) = rx.recv() {
         match cmd {
             TtsCmd::Say(text) => {
-                // Queue rather than interrupt, so back-to-back alerts are all heard.
-                *status.lock() = match engine.speak(text, false) {
-                    Ok(_) => VoiceStatus::Spoke(ENGINE),
-                    Err(e) => {
-                        tracing::warn!("tts speak failed: {e}");
-                        VoiceStatus::Failed(ENGINE, e.to_string())
-                    }
+                let engine = engine.get_or_insert_with(|| open(kind, &voice, rate, volume));
+                *status.lock() = match engine {
+                    Ok(e) => match e.speak(&text) {
+                        Ok(()) => VoiceStatus::Spoke(kind.label()),
+                        Err(why) => {
+                            tracing::warn!("text-to-speech ({}) failed: {why}", kind.label());
+                            VoiceStatus::Failed(kind.label(), why)
+                        }
+                    },
+                    Err(why) => VoiceStatus::Failed(kind.label(), why.clone()),
                 };
             }
+            TtsCmd::Engine(k) if k != kind || engine.is_none() => {
+                kind = k;
+                // One engine at a time: the old one goes before the new one starts.
+                drop(engine.take());
+                engine = Some(open(kind, &voice, rate, volume));
+            }
+            TtsCmd::Engine(_) => {}
+            // Settings sends the voice with every change (every frame while a slider moves): only a new one is set.
+            TtsCmd::Voice(v) if v != voice => {
+                voice = v;
+                if let Some(Ok(e)) = &mut engine {
+                    e.set_voice(&voice);
+                }
+            }
+            TtsCmd::Voice(_) => {}
             TtsCmd::Rate(r) => {
-                let rate = (normal_rate * r).clamp(min_rate, max_rate);
-                let _ = engine.set_rate(rate);
+                rate = r;
+                if let Some(Ok(e)) = &mut engine {
+                    e.set_rate(rate);
+                }
             }
             TtsCmd::Volume(v) => {
-                let _ = engine.set_volume(v.clamp(0.0, 1.0));
+                volume = v;
+                if let Some(Ok(e)) = &mut engine {
+                    e.set_volume(volume);
+                }
             }
         }
     }
+    // The engine's COM objects go before COM does.
+    drop(engine);
+    drop(com);
 }
 
 /// Linux speech programs, in the order they're tried.
@@ -109,7 +280,7 @@ const LINUX_PROGRAMS: [&str; 3] = ["spd-say", "espeak-ng", "espeak"];
 const PROGRAMS: &[&str] = if cfg!(target_os = "macos") { &["/usr/bin/say"] } else { &LINUX_PROGRAMS };
 
 #[cfg(not(windows))]
-fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>) {
+fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, _voices: Arc<Mutex<Vec<VoiceInfo>>>) {
     let program = find_program(std::env::var_os("PATH"), PROGRAMS);
     if program.is_none() {
         tracing::warn!("text-to-speech unavailable: none of {PROGRAMS:?} found");
@@ -132,6 +303,8 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>) {
             }
             TtsCmd::Rate(r) => rate = r,
             TtsCmd::Volume(v) => volume = v,
+            // Only Windows has engines and voices to choose from here.
+            TtsCmd::Engine(_) | TtsCmd::Voice(_) => {}
         }
     }
 }
