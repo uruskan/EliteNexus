@@ -12,6 +12,9 @@ release time that section becomes the new version and the release workflow publi
   starts (`EliteNexus --mcp`) opens no window and reaches the Elite Nexus you have running over a pipe on this
   computer, never the network; it answers one call at a time, at most 30 a minute. The user guide's Data & privacy
   section lists what an agent can read.
+- **Ask** says what it can see and do: **What I can see and do**, under the suggestions or behind the list icon at the
+  top, lists every tool it has, from the same list its model gets, grouped by what it reads, what it asks Spansh or
+  EDGalaxyData, and what it changes (route plans for Navigation), with what AI agents may read besides.
 - **Ask** can be stopped: while it answers, the round button becomes **Stop**, and **New conversation**, now there
   while it works too, stops it as well. A slow model no longer leaves you waiting with no way out, and a stopped
   question changes nothing, not even a route it was planning.

@@ -1590,6 +1590,8 @@ impl ToolHost for NexusTools {
 /// One tool, everything about it in one place.
 pub struct Tool {
     pub name: &'static str,
+    /// What the commander reads: Ask's list of what it can see and do, and an agent's display name for it.
+    pub title: &'static str,
     /// What the model reads to decide when to call it.
     pub description: &'static str,
     /// Its arguments, as a JSON schema.
@@ -1648,6 +1650,7 @@ pub fn specs(caller: Caller) -> Vec<ToolSpec> {
 pub static TOOLS: &[Tool] = &[
     Tool {
         name: "commander",
+        title: "Your ship, location and credits",
         description: "The commander's current state: location, docked station, ship (type, landing pad, cargo capacity, jump range, fuel, rebuy), cargo hold, credits, fleet carrier and squadron carrier, ranks, unsold exploration and exobiology data.",
         params: || schema(json!({}), &[]),
         working: "Checking your ship…",
@@ -1660,6 +1663,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "find_commodity",
+        title: "Where to buy or sell a commodity",
         description: "Where to buy or sell one commodity near a system, from the live market database (EDDN, refreshed in real time). Results respect the ship's landing pad size.",
         params: || {
             schema(
@@ -1686,6 +1690,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "price_deals",
+        title: "Price deals near you",
         description: "Best deals and abnormal prices right now: stations and fleet carriers paying far above the galactic average for any commodity (mode sell) or selling far below it (mode buy), ranked by what one full hold of the commander's ship earns. The fastest way to find unusually profitable trades. For abnormal prices anywhere (most are fleet-carrier orders, e.g. a carrier paying 100× the normal price), use max_distance_ly 0 and min_ratio 2 or more.",
         params: || {
             schema(
@@ -1711,6 +1716,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "untouched_biology",
+        title: "Untouched biology",
         description: "Find planets where a valuable exobiology species should grow (default Stratum Tectonicas, 19 M Cr, 95 M with the first-logged bonus) and that no data-sharing commander has DSS-mapped or sampled, so the ×5 first-logged bonus is likely still available. Searches Spansh around a system, leaves out populated systems and planets known to be footfalled, ranks by expected bonus value and distance.",
         params: || {
             schema(
@@ -1734,6 +1740,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "sell_my_cargo",
+        title: "Where to sell your cargo",
         description: "Where to sell everything currently in the hold: the best single stations (limited by their demand) and the best buyer for each item.",
         params: || schema(json!({ "max_distance_ly": { "type": "number", "description": "Default 60." }, "near_system": { "type": "string", "description": NEAR } }), &[]),
         working: "Planning your cargo sale…",
@@ -1746,6 +1753,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "trade_routes",
+        title: "Trade routes",
         description: "Best buy-here-sell-there trade routes near a system, sized to the ship's cargo capacity and the commander's credits.",
         params: || {
             schema(
@@ -1768,6 +1776,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "nearest_service",
+        title: "The nearest station with a service",
         description: "Nearest stations with a service, for the commander's landing pad size.",
         params: || {
             schema(
@@ -1789,6 +1798,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "mining_hotspots",
+        title: "Ring hotspots",
         description: "Known planetary-ring hotspots for a mineable commodity near a system, plus the best nearby places to sell it.",
         params: || {
             schema(
@@ -1811,6 +1821,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "mining_sites",
+        title: "Your Rhino mining sites",
         description: "Planetary mining locations the commander worked with the Rhino SRV (surface mining), newest first: system, body, the location's number as the game's navigation panel shows it, tonnes refined per commodity (by-products included), visits and the last visit. Use for \"where did I mine …\" or \"where was that site\" questions.",
         params: || {
             schema(
@@ -1831,6 +1842,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "system_info",
+        title: "A system's facts",
         description: "Facts about a star system from the local database: distance from the commander, population, economy, security, factions and their states, powerplay, stations.",
         params: || schema(json!({ "system": { "type": "string" } }), &["system"]),
         working: "Looking up the system…",
@@ -1843,6 +1855,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "system_bodies",
+        title: "A system's planets, footfall and biology",
         description: "The planets and moons of a star system worth landing on or scanning: type, distance, gravity, atmosphere, biological and geological signals, genera, the most likely species with their values and whether the ×5 first-logged bonus looks likely, plus discovery and footfall status: whether anyone has set foot on a body. No public site tracks footfall; it comes from the game's flag in the commander's own journal, in scans other commanders shared over EDDN, and in archived EDDN scans looked up online for biology bodies (EDGalaxyData), each with its age; \"probably unclaimed\" means Spansh has no data on the body since before Odyssey (a rule of thumb). Use it for any question about a planet, its biology or first footfall.",
         params: || {
             schema(
@@ -1863,6 +1876,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "plan_route",
+        title: "Plan a route",
         description: "Plans a route with Spansh: the exact plotter uses the commander's real ship (fuel, scooping, neutron boosts); the neutron plotter only needs the jump range. The route is put on the Navigation page and the next system is copied to the clipboard after every jump.",
         params: || {
             schema(
@@ -1885,6 +1899,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "money_routes",
+        title: "Routes that make money",
         description: "Plans a money-making exploration trip with Spansh near a system: exobiology (planets where commanders already logged valuable species: certain, but base value only; for the first-logged bonus use untouched_biology), or road-to-riches bodies (earth-likes, water/ammonia worlds, terraformables). Spansh skips populated systems, so from the bubble the search widens itself until it finds something. Returns stops with values, the total and, where known, whether anyone has set foot on the listed bodies; the route goes to the Navigation page.",
         params: || {
             schema(
@@ -1908,6 +1923,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "exobiology_here",
+        title: "Exobiology where you are",
         description: "Bodies with biological signals in the current system: genera found, species already sampled, likely species with their values (predictions), and unsold exobiology data.",
         params: || schema(json!({}), &[]),
         working: "Checking the biology here…",
@@ -1920,6 +1936,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "journal_search",
+        title: "Search your journal",
         description: "Searches the commander's own game journal (every journal file in their journal folder; journal_starts is the first day it holds) for lines with a text, newest first, each with its local time. One call returns up to limit matches, fewer when the lines are long; more_matches says when older ones were left out and how to get them. For a period, such as a week of travel, pass from and to. Event names work as text: FSDJump (jumps), Docked, MarketSell, MissionCompleted. Use for questions about past trips, sales, missions, ships, places visited.",
         params: || {
             schema(
@@ -1943,6 +1960,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "knowledge",
+        title: "Game mechanics and this guide",
         description: "Searches the built-in knowledge base: game mechanics, money-making strategies, exobiology, mining, engineering, carriers, colonisation, useful websites, and how to use Elite Nexus.",
         params: || schema(json!({ "query": { "type": "string" } }), &["query"]),
         working: "Reading up…",
@@ -1955,6 +1973,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "fleet",
+        title: "Your fleet",
         description: "Every ship the commander owns: where it is (or that it's in transit and when it arrives), jump range, cargo, value, rebuy and its engineered modules (blueprint, grade, experimental effect). ship= picks one ship (name, ident or type); all_modules=true adds every module of that ship, or of the current ship. Modules are those of the last loadout the game reported for that ship.",
         params: || {
             schema(
@@ -1975,6 +1994,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "progress",
+        title: "Your ranks and engineers",
         description: "The commander's progress: every rank with its progress to the next, engineers (unlocked with their rank, or invited/known), superpower reputation, Powerplay, squadron, and whether the game is running or at the main menu.",
         params: || schema(json!({}), &[]),
         working: "Checking your ranks and engineers…",
@@ -1987,6 +2007,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "materials",
+        title: "Your materials",
         description: "Engineering materials the commander holds (raw, manufactured, encoded), each with its grade, storage cap and whether it's full. Filter by category or by part of a name.",
         params: || {
             schema(
@@ -2007,6 +2028,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "on_foot",
+        title: "Your on-foot gear",
         description: "On-foot equipment: suit loadouts (suit, modifications, weapons and their modifications), the one in use, and what's in the ship locker and backpack (items, components, consumables, data).",
         params: || schema(json!({}), &[]),
         working: "Checking your on-foot gear…",
@@ -2020,6 +2042,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "credit_history",
+        title: "Your credit history",
         description: "Credits earned and spent since the game was last loaded (or in the last since_hours), newest first, with totals per category. Built from the journal: a few game actions record no amount, so the list may not add up to the balance exactly.",
         params: || {
             schema(
@@ -2041,6 +2064,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "system_factions",
+        title: "The factions you met",
         description: "Factions in a system as the commander last saw it (default: the current system): influence, state, active, pending and recovering states, happiness and the commander's own reputation with each. Only for systems in the commander's journal; system_info has EDDN faction data for any system, without reputation.",
         params: || schema(json!({ "system": { "type": "string", "description": "System name. Default: the commander's current system." } }), &[]),
         working: "Reading the factions you saw there…",
@@ -2054,6 +2078,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "find_material_body",
+        title: "Where to find a raw material",
         description: "Landable bodies near a system that hold a raw material (e.g. Polonium), from Spansh: the richest within a distance (default 100 ly), or the nearest. Spansh knows a body's materials only from scans commanders shared.",
         params: || {
             schema(
@@ -2078,6 +2103,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "engineering",
+        title: "Engineering",
         description: "Ship engineering, from the Engineering page's data. module: its blueprints, experimental effects and engineers. module and blueprint: what each grade takes against what the commander holds, what's short, material-trader swaps that cover it, and the engineers offering that grade (unlocked or not, how far, how to unlock). engineer: where they are, what they offer, how to unlock them.",
         params: || {
             schema(
@@ -2103,6 +2129,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "where_to_mine",
+        title: "Where to surface-mine",
         description: "Rhino surface mining: landable bodies with planetary mining locations near a system, or the best system in each stretch of the way to to_system, from the scans commanders shared that Spansh holds; and what the commander's own runs gave on each ground (class and volcanism). Nothing says what a location holds.",
         params: || {
             schema(
@@ -2130,6 +2157,7 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "where_to_buy",
+        title: "Where to buy a build",
         description: "The nearest stations that sell a whole ship build (default: the current ship's; modules in storage aren't searched for), or the stops that cover it between them, with cost and data age, from Spansh's outfitting lists. items= narrows it to some modules or a hull, or searches those alone.",
         params: || {
             schema(
@@ -2289,8 +2317,12 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), TOOLS.len(), "tool names are unique");
+        let mut titles: Vec<&str> = TOOLS.iter().map(|t| t.title).collect();
+        titles.sort_unstable();
+        titles.dedup();
+        assert_eq!(titles.len(), TOOLS.len(), "each tool has a title of its own");
         for t in TOOLS {
-            assert!(!t.description.is_empty() && !t.working.is_empty() && !t.noun.is_empty(), "{}", t.name);
+            assert!(!t.title.is_empty() && !t.description.is_empty() && !t.working.is_empty() && !t.noun.is_empty(), "{}", t.name);
             let p = (t.params)();
             assert_eq!(p["type"], "object", "{}", t.name);
             for r in p["required"].as_array().into_iter().flatten() {

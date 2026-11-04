@@ -4,7 +4,7 @@
 use crate::assistant::AssistantService;
 use crate::secrets;
 use crate::settings::AiSettings;
-use crate::theme::{bold, display, pal};
+use crate::theme::{bold, display, pal, size};
 use crate::widgets;
 use egui::text::LayoutJob;
 use egui::{Align, Align2, Color32, CornerRadius, FontId, Frame, Label, Layout, Margin, RichText, ScrollArea, Sense, Stroke, TextEdit, TextFormat, Ui, Vec2};
@@ -19,12 +19,15 @@ pub struct AskUi {
     show_other: bool,
     /// Screenshot runs (`--demo`): show the conversation without a configured provider.
     pub preview: bool,
+    /// What Ask can see and do, open.
+    show_tools: bool,
 }
 
 impl AskUi {
-    /// `preview`: show the conversation without a configured provider (screenshot runs).
-    pub fn new(preview: bool) -> Self {
-        AskUi { preview, ..Default::default() }
+    /// `preview`: show the conversation without a configured provider (screenshot runs); `show_tools`: open what Ask can
+    /// see and do (screenshot runs, `--tab tools`).
+    pub fn new(preview: bool, show_tools: bool) -> Self {
+        AskUi { preview, show_tools, ..Default::default() }
     }
 }
 
@@ -210,11 +213,26 @@ fn chat(ui: &mut Ui, svc: &mut AssistantService, st: &mut AskUi) -> AskAction {
             if widgets::icon_button(ui, icon::GEAR_SIX, "Assistant settings").clicked() {
                 st.show_setup = true;
             }
+            if widgets::icon_button(ui, icon::LIST_CHECKS, "What Ask can see and do").clicked() {
+                st.show_tools = !st.show_tools;
+            }
             if !svc.exchanges.is_empty() && widgets::icon_button(ui, icon::NOTE_PENCIL, "New conversation").clicked() {
                 svc.clear();
             }
         });
     });
+    // What Ask can see and do: under the toolbar, scrolling on its own, so a long conversation doesn't hide it.
+    if st.show_tools {
+        ui.add_space(6.0);
+        ScrollArea::vertical().id_salt("ask-tools").max_height(ui.available_height() * 0.6).auto_shrink([false, true]).show(ui, |ui| {
+            centered(ui, COLUMN, |ui| {
+                if capabilities(ui) {
+                    st.show_tools = false;
+                }
+            });
+        });
+        ui.add_space(6.0);
+    }
     let input_h = 70.0;
     ScrollArea::vertical()
         .id_salt("ask-chat")
@@ -233,6 +251,13 @@ fn chat(ui: &mut Ui, svc: &mut AssistantService, st: &mut AskUi) -> AskAction {
                                 action = AskAction::Ask((*s).to_string());
                             }
                             ui.add_space(2.0);
+                        }
+                        if !st.show_tools {
+                            ui.add_space(10.0);
+                            let link = ui.add(Label::new(RichText::new(format!("{} What I can see and do", icon::LIST_CHECKS)).color(pal::ACCENT)).sense(Sense::click()));
+                            if link.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                st.show_tools = true;
+                            }
                         }
                     });
                 }
@@ -322,6 +347,73 @@ fn chat(ui: &mut Ui, svc: &mut AssistantService, st: &mut AskUi) -> AskAction {
             });
     });
     action
+}
+
+/// The first sentence of a tool's description: what it is, without the details the model gets. "e.g." and "i.e." don't
+/// end one.
+fn first_sentence(text: &str) -> &str {
+    let mut from = 0;
+    while let Some(i) = text[from..].find(". ").map(|i| i + from) {
+        if !(text[..i].ends_with("e.g") || text[..i].ends_with("i.e")) {
+            return &text[..=i];
+        }
+        from = i + 2;
+    }
+    text
+}
+
+/// Which tools a group of the list shows.
+type Pick = fn(&crate::ai_tools::Tool) -> bool;
+
+/// "your fleet" for "Your fleet", inside a sentence.
+fn lower_first(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map(|f| f.to_lowercase().chain(c).collect()).unwrap_or_default()
+}
+
+/// What Ask can see and do, from the tool registry (`ai_tools::TOOLS`), so it is always the list the model gets: what
+/// it reads, what it asks online services, what it changes, and what AI agents may read besides. True when closed.
+fn capabilities(ui: &mut Ui) -> bool {
+    use crate::ai_tools::{Caller, TOOLS, Tool};
+    let groups: [(&str, Pick); 3] = [
+        ("Reads your game and Elite Nexus' own database", |t| t.read_only && !t.online),
+        ("Asks Spansh and EDGalaxyData", |t| t.read_only && t.online),
+        ("Changes something in Elite Nexus", |t| !t.read_only),
+    ];
+    let mut closed = false;
+    widgets::card_frame().show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("What I can see and do").font(display(size::HEADLINE)).color(pal::TEXT));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| closed = widgets::icon_button(ui, icon::X, "Close").clicked());
+        });
+        ui.add(Label::new(RichText::new("Every answer comes from these tools, and the line under it names the ones it used. Hover over one for what the model is told about it.").size(size::FOOTNOTE).color(pal::DIM)).wrap());
+        let cols = if ui.available_width() > 620.0 { 2 } else { 1 };
+        for (heading, pick) in groups {
+            let tools: Vec<&Tool> = TOOLS.iter().filter(|t| t.offered_to(Caller::Ask) && pick(t)).collect();
+            if tools.is_empty() {
+                continue;
+            }
+            ui.add_space(12.0);
+            ui.label(RichText::new(heading).font(display(size::CALLOUT)).color(pal::ACCENT));
+            ui.columns(cols, |c| {
+                for (i, t) in tools.iter().enumerate() {
+                    // Plain top-down: the columns' own layout would justify the text.
+                    c[i % cols].vertical(|ui| {
+                        ui.add_space(6.0);
+                        ui.label(RichText::new(t.title).color(pal::TEXT)).on_hover_text(t.description);
+                        ui.add(Label::new(RichText::new(first_sentence(t.description)).size(size::FOOTNOTE).color(pal::DIM)).wrap());
+                    });
+                }
+            });
+        }
+        let agents: Vec<String> = TOOLS.iter().filter(|t| t.offered_to(Caller::Mcp) && !t.offered_to(Caller::Ask)).map(|t| lower_first(t.title)).collect();
+        if !agents.is_empty() {
+            ui.add_space(12.0);
+            widgets::footnote(ui, &format!("AI agents (Settings › AI agents) may also read {}. They can't change anything.", agents.join(", ")));
+        }
+    });
+    closed
 }
 
 fn avatar(ui: &mut Ui) {

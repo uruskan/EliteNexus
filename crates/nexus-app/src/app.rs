@@ -216,7 +216,7 @@ impl NexusApp {
             market_ui,
             colo: Default::default(),
             assistant: if ov.demo && shot.is_some() { crate::assistant::AssistantService::demo() } else { Default::default() },
-            ask_ui: pages::ask::AskUi::new(ov.demo && shot.is_some()),
+            ask_ui: pages::ask::AskUi::new(ov.demo && shot.is_some(), shot.is_some() && ov.tab.as_deref() == Some("tools")),
             ai_routes: Default::default(),
             mcp,
             agents_spansh,

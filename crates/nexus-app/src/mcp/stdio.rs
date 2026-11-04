@@ -292,7 +292,7 @@ fn tool_list(id: Value, params: &Value, modern: bool) -> Value {
     let tools: Vec<Value> = TOOLS
         .iter()
         .filter(|t| t.offered_to(Caller::Mcp))
-        .map(|t| json!({ "name": t.name, "description": t.description, "inputSchema": (t.params)(), "annotations": { "readOnlyHint": true, "openWorldHint": t.online } }))
+        .map(|t| json!({ "name": t.name, "title": t.title, "description": t.description, "inputSchema": (t.params)(), "annotations": { "readOnlyHint": true, "openWorldHint": t.online } }))
         .collect();
     let mut r = json!({ "tools": tools });
     if modern {
