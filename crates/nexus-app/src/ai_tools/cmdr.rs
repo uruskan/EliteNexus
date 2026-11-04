@@ -2,7 +2,7 @@
 //! credits and the factions of the systems they have visited. Each takes one short read of the model (or the journal
 //! index) and returns compact JSON; nothing is read from disk under a lock.
 
-use super::{NexusTools, arg_bool, arg_f64, arg_str, r1, strip_nulls};
+use super::{NexusTools, arg_bool, arg_f64, arg_str, fit, r1, strip_nulls};
 use nexus_data::materials::{self, Material};
 use nexus_data::outfitting::{display_name, slot_display};
 use nexus_data::ranks::RankKind;
@@ -112,9 +112,6 @@ fn find_ships<'a>(gs: &'a GameState, query: &str) -> Vec<&'a Ship> {
     }
     gs.fleet.ships.values().filter(|s| is(s, |a, b| !a.is_empty() && a.contains(b))).collect()
 }
-
-/// Room left for the reply once the model's tool-result limit is taken off, so it is never cut mid-JSON.
-const BUDGET: usize = nexus_ai::agent::MAX_RESULT_CHARS - 1_000;
 
 /// How far an engineer is on the road to Unlocked, for sorting.
 fn engineer_order(status: &str) -> u8 {
@@ -308,33 +305,28 @@ impl NexusTools {
                 .collect();
             (lists, (!mats.updated.is_zero()).then(|| mats.updated.to_iso()))
         };
-        // The reply has to fit what the model is given of a tool result: the storage cap goes first, then the objects
-        // become rows, and in the end only how many there are.
-        let mut notes: Vec<&str> = Vec::new();
-        for form in 0..=3u8 {
+        if lists.iter().all(|(_, h)| h.is_empty()) && as_of.is_none() {
+            return Ok(json!({ "raw": [], "manufactured": [], "encoded": [], "notes": ["No materials reported yet: the game lists them when it starts."] }));
+        }
+        // What gives way when the reply is too long for the caller: the storage cap, then the objects become rows, and
+        // in the end only how many there are.
+        const NOTES: [&str; 3] = [
+            "Too many to give each one's storage cap: it is 300, 250, 200, 150 or 100 for grade 1 to 5, and a material is full at its cap.",
+            "Written as [name, count, grade] rows to fit.",
+            "Too many to list: only how many of each category. Ask with category= or name= to see them.",
+        ];
+        let (out, _) = fit(self.budget, NOTES.len() + 1, |form| {
             let mut out = json!({ "as_of": as_of });
             strip_nulls(&mut out);
             for (key, held) in &lists {
-                out[*key] = if form >= 3 { json!({ "distinct": held.len(), "total": held.iter().map(|h| h.count).sum::<i64>() }) } else { held.iter().map(|h| material_row(h, form)).collect() };
+                out[*key] = if form >= 3 { json!({ "distinct": held.len(), "total": held.iter().map(|h| h.count).sum::<i64>() }) } else { held.iter().map(|h| material_row(h, form as u8)).collect() };
             }
-            match form {
-                1 => notes.push("Too many to give each one's storage cap: it is 300, 250, 200, 150 or 100 for grade 1 to 5, and a material is full at its cap."),
-                2 => notes.push("Written as [name, count, grade] rows to fit."),
-                3 => notes.push("Too many to list: only how many of each category. Ask with category= or name= to see them."),
-                _ => {}
+            if form > 0 {
+                out["notes"] = json!(NOTES[..form]);
             }
-            if lists.iter().all(|(_, h)| h.is_empty()) && as_of.is_none() {
-                out["notes"] = json!(["No materials reported yet: the game lists them when it starts."]);
-                return Ok(out);
-            }
-            if !notes.is_empty() {
-                out["notes"] = json!(notes);
-            }
-            if form == 3 || out.to_string().len() <= BUDGET {
-                return Ok(out);
-            }
-        }
-        Err("Too many materials to list.".into())
+            out
+        });
+        Ok(out)
     }
 
     pub(super) fn on_foot(&self) -> Result<Value, String> {
@@ -347,30 +339,26 @@ impl NexusTools {
             loadouts.sort_by_key(|l| (inv.current_suit_loadout != Some(l.loadout_id), l.loadout_id));
             (loadouts, inv.current_suit_loadout, inv.ship_locker.clone(), inv.backpack.clone())
         };
-        // What gives way when there is too much: the ship locker's lists, then the backpack's, then the weapon
-        // modifications, then everything about a loadout but its suit and weapons.
-        let mut notes: Vec<&str> = Vec::new();
-        for level in 0..=4u8 {
+        // What gives way when the reply is too long for the caller: the ship locker's lists, then the backpack's, then
+        // the weapon modifications, then everything about a loadout but its suit and weapons.
+        const NOTES: [&str; 4] = [
+            "Ship locker too big to list: how many of each kind (items, components, consumables, data) instead.",
+            "Backpack too big to list: how many of each kind instead.",
+            "Weapon modifications left out to fit.",
+            "Suit modifications and weapon details left out to fit.",
+        ];
+        let (out, _) = fit(self.budget, NOTES.len() + 1, |level| {
             let mut out = json!({
-                "loadouts": loadouts.iter().map(|l| loadout(l, current == Some(l.loadout_id), level.saturating_sub(2))).collect::<Vec<_>>(),
+                "loadouts": loadouts.iter().map(|l| loadout(l, current == Some(l.loadout_id), level.saturating_sub(2) as u8)).collect::<Vec<_>>(),
                 "locker": locker(&ship_locker, level >= 1),
                 "backpack": locker(&backpack, level >= 2),
             });
-            match level {
-                1 => notes.push("Ship locker too big to list: how many of each kind (items, components, consumables, data) instead."),
-                2 => notes.push("Backpack too big to list: how many of each kind instead."),
-                3 => notes.push("Weapon modifications left out to fit."),
-                4 => notes.push("Suit modifications and weapon details left out to fit."),
-                _ => {}
+            if level > 0 {
+                out["notes"] = json!(NOTES[..level]);
             }
-            if !notes.is_empty() {
-                out["notes"] = json!(notes);
-            }
-            if level == 4 || out.to_string().len() <= BUDGET {
-                return Ok(out);
-            }
-        }
-        Err("Too much to list.".into())
+            out
+        });
+        Ok(out)
     }
 
     pub(super) fn credit_history(&self, a: &Value) -> Result<Value, String> {
@@ -391,25 +379,33 @@ impl NexusTools {
         let rows: Vec<(Timestamp, &'static str, i64, String)> = entries.iter().map(|e| (e.ts, e.category.label(), e.amount, e.note.clone())).collect();
         let (balance, commander) = (gs.cmdr.credits, gs.cmdr.name.clone());
         drop(model);
-        // The reply has to fit what the model is given of a tool result: long notes are cut, then dropped, then the
-        // oldest transactions go.
-        let mut notes: Vec<&str> = Vec::new();
-        if transfers {
-            notes.push("Carrier transfers move credits between you and your carrier: they are not income or spending.");
-        }
-        let mut note_max = Some(100usize);
-        let mut shown = rows.len();
-        loop {
+        // What gives way when the reply is too long for the caller: long notes are cut, then dropped, then the oldest
+        // transactions go, one by one, down to the newest.
+        let (out, _) = fit(self.budget, 3 + rows.len().saturating_sub(1), |level| {
+            let note_max = [100, 40, 0][level.min(2)];
+            let shown = rows.len() - level.saturating_sub(2).min(rows.len().saturating_sub(1));
             let tx: Vec<Value> = rows[..shown]
                 .iter()
                 .map(|(ts, category, amount, note)| {
                     let mut v = json!({ "time": ts.to_iso(), "category": category, "amount": amount });
-                    if let Some(max) = note_max.filter(|m| *m > 0) {
-                        v["note"] = json!(clip(note, max));
+                    if note_max > 0 {
+                        v["note"] = json!(clip(note, note_max));
                     }
                     v
                 })
                 .collect();
+            let mut notes: Vec<&str> = Vec::new();
+            if transfers {
+                notes.push("Carrier transfers move credits between you and your carrier: they are not income or spending.");
+            }
+            match level {
+                0 => {}
+                1 => notes.push("Transaction notes shortened to fit."),
+                _ => notes.push("Transaction notes left out to fit."),
+            }
+            if shown < rows.len() {
+                notes.push("Oldest transactions left out to fit: ask with a smaller limit or since_hours.");
+            }
             let mut out = json!({
                 "commander": commander, "balance": balance, "since": (!since.is_zero()).then(|| since.to_iso()),
                 "transactions_total": total, "transactions": tx, "totals": totals,
@@ -418,27 +414,9 @@ impl NexusTools {
             if !notes.is_empty() {
                 out["notes"] = json!(notes);
             }
-            if out.to_string().len() <= BUDGET || shown <= 1 {
-                return Ok(out);
-            }
-            match note_max {
-                Some(100) => {
-                    note_max = Some(40);
-                    notes.push("Transaction notes shortened to fit.");
-                }
-                Some(40) => {
-                    note_max = Some(0);
-                    notes.pop();
-                    notes.push("Transaction notes left out to fit.");
-                }
-                _ => {
-                    shown -= 1;
-                    if !notes.iter().any(|n| n.starts_with("Oldest")) {
-                        notes.push("Oldest transactions left out to fit: ask with a smaller limit or since_hours.");
-                    }
-                }
-            }
-        }
+            out
+        });
+        Ok(out)
     }
 
     pub(super) fn fleet(&self, a: &Value) -> Result<Value, String> {
@@ -464,12 +442,14 @@ impl NexusTools {
             });
         }
         ships.sort_by_key(|s| (gs.fleet.current_ship_id != Some(s.id), std::cmp::Reverse(s.total_value())));
-        // The reply has to fit what the model is given of a tool result. A big fleet gives up detail in this order:
-        // the module lists, then which modules are engineered, then the ships of least value.
-        let (mut with_modules, mut counts_only, mut omitted) = (all_modules, false, 0usize);
-        let mut notes: Vec<&str> = Vec::new();
-        loop {
-            let listed: Vec<Value> = ships
+        // What gives way when the reply is too long for the caller: the module lists, then which modules are
+        // engineered (a count each instead), then the ships of least value, one by one, down to the first.
+        let steps = if all_modules { 3 } else { 2 };
+        let (out, _) = fit(self.budget, steps + ships.len().saturating_sub(1), |level| {
+            let step = level + 3 - steps;
+            let (with_modules, counts_only) = (step == 0, step >= 2);
+            let kept = ships.len() - (step.saturating_sub(2)).min(ships.len().saturating_sub(1));
+            let listed: Vec<Value> = ships[..kept]
                 .iter()
                 .map(|s| {
                     // With no ship asked for, only the ship being flown gets its whole module list.
@@ -477,31 +457,24 @@ impl NexusTools {
                     ship(gs, s, Detail { modules, counts_only }, now)
                 })
                 .collect();
+            let mut notes: Vec<&str> = Vec::new();
+            if all_modules && !with_modules {
+                notes.push("Too much to list every module: ask for one ship with ship= to see its modules.");
+            }
+            if counts_only {
+                notes.push("Too many engineered modules to list: engineered_count says how many each ship has; ask for one ship with ship= to see which.");
+            }
             let mut out = json!({ "commander": gs.cmdr.name, "ships": listed, "total_value_cr": gs.fleet.total_value() });
-            if omitted > 0 {
-                out["ships_omitted"] = omitted.into();
+            if kept < ships.len() {
+                out["ships_omitted"] = (ships.len() - kept).into();
+                notes.push("Ships left out (the least valuable) to fit: ask for one with ship=.");
             }
             if !notes.is_empty() {
                 out["notes"] = json!(notes);
             }
-            let fits = out.to_string().len() <= BUDGET;
-            if fits || (ships.len() <= 1 && !with_modules && counts_only) {
-                return Ok(out);
-            }
-            if with_modules {
-                with_modules = false;
-                notes.push("Too much to list every module: ask for one ship with ship= to see its modules.");
-            } else if !counts_only {
-                counts_only = true;
-                notes.push("Too many engineered modules to list: engineered_count says how many each ship has; ask for one ship with ship= to see which.");
-            } else {
-                ships.pop();
-                omitted += 1;
-                if !notes.iter().any(|n| n.starts_with("Ships left out")) {
-                    notes.push("Ships left out (the least valuable) to fit: ask for one with ship=.");
-                }
-            }
-        }
+            out
+        });
+        Ok(out)
     }
 
     pub(super) fn progress(&self) -> Result<Value, String> {
@@ -607,23 +580,17 @@ impl NexusTools {
                 (arrival.star_system, info, "Commander's journal: what the game reported when the commander last arrived in this system. Influence and states may have moved since.")
             }
         };
-        // The reply has to fit what the model is given of a tool result: government, allegiance and happiness go
-        // first, then the pending, active and recovering states.
         if info.factions.is_empty() {
             notes.push("The journal lists no factions for this system (uninhabited, or it was not reported).");
         }
-        for form in 0..=2u8 {
-            let mut out = system_reply(&system, &info, source, form);
-            match form {
-                1 => notes.push("Government, allegiance and happiness left out to fit."),
-                2 => notes.push("Active, pending and recovering states left out to fit."),
-                _ => {}
-            }
-            out["notes"] = json!(notes);
-            if form == 2 || out.to_string().len() <= BUDGET {
-                return Ok(out);
-            }
-        }
-        Err("Too much to list.".into())
+        // What gives way when the reply is too long for the caller: government, allegiance and happiness, then the
+        // pending, active and recovering states.
+        const CUT: [&str; 2] = ["Government, allegiance and happiness left out to fit.", "Active, pending and recovering states left out to fit."];
+        let (out, _) = fit(self.budget, CUT.len() + 1, |form| {
+            let mut out = system_reply(&system, &info, source, form as u8);
+            out["notes"] = json!(notes.iter().chain(&CUT[..form]).collect::<Vec<_>>());
+            out
+        });
+        Ok(out)
     }
 }

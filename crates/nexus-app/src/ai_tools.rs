@@ -2436,6 +2436,24 @@ mod tests {
         assert!(tools.call("fleet", &json!({ "ship": "nope" })).is_err());
     }
 
+    /// How much a reply says is the caller's: an agent with room for more gets the detail Ask has to leave out.
+    #[test]
+    fn the_callers_budget_sets_how_much_is_said() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let mut tools = model_tools(crowded_fleet(15), &rt);
+        let ask = tools.call("fleet", &json!({})).unwrap();
+        assert_eq!(ask["ships"][0]["engineered_count"], 8, "Ask's length: counts instead of lists");
+        tools.budget = Caller::Mcp.budget();
+        let mcp = tools.call("fleet", &json!({})).unwrap();
+        assert_eq!(mcp["ships"][0]["engineered"].as_array().map(Vec::len), Some(8), "{}", mcp["notes"]);
+        assert!(mcp.get("notes").is_none() && mcp.to_string().len() <= Caller::Mcp.budget());
+        // And the other way: a caller that takes little gets the least detailed reply, never an error.
+        tools.budget = 500;
+        let tiny = tools.call("fleet", &json!({})).unwrap();
+        assert_eq!(tiny["ships"].as_array().map(Vec::len), Some(1), "down to the ship being flown");
+        assert_eq!(tiny["ships_omitted"], 14);
+    }
+
     #[test]
     fn fleet_drops_the_least_valuable_ships_when_even_the_short_form_is_too_long() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -2567,19 +2585,23 @@ mod tests {
         }
         let held = mats.raw.len() + mats.manufactured.len() + mats.encoded.len();
         assert!(held > 120, "{held} materials held");
-        let tools = model_tools(m, &rt);
+        let mut tools = model_tools(m, &rt);
         let v = tools.call("materials", &json!({})).unwrap();
         let len = v.to_string().len();
         assert!(len < limit, "{len} chars for {held} materials");
         let listed: usize = ["raw", "manufactured", "encoded"].iter().map(|k| v[k].as_array().unwrap().len()).sum();
         assert_eq!(listed, held, "every material is still listed: {}", v["notes"]);
-        // 147 materials at full detail are too long, so the storage cap is dropped (and said once in a note) while
-        // the grade and the full flag stay: this is the form the test means to cover.
+        let raw = tools.call("materials", &json!({ "category": "raw" })).unwrap();
+        assert!(raw.to_string().len() < limit);
+        // A caller with a little less room: the storage cap is dropped (and said once in a note) while the grade and
+        // the full flag stay, and every material is still listed.
+        tools.budget = len - 1;
+        let v = tools.call("materials", &json!({})).unwrap();
         let first = &v["raw"][0];
         assert!(first.get("grade").is_some() && first.get("full").is_some() && first.get("cap").is_none(), "{first}");
         assert!(v["notes"][0].as_str().unwrap().contains("storage cap"), "{}", v["notes"]);
-        let raw = tools.call("materials", &json!({ "category": "raw" })).unwrap();
-        assert!(raw.to_string().len() < limit);
+        let listed: usize = ["raw", "manufactured", "encoded"].iter().map(|k| v[k].as_array().unwrap().len()).sum();
+        assert_eq!(listed, held);
     }
 
     #[test]
