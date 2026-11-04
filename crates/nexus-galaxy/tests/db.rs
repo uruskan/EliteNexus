@@ -648,6 +648,67 @@ fn trade_routes_find_the_best_hop() {
 }
 
 #[test]
+fn trade_routes_from_one_station() {
+    let t = TempDb::new("trade-from");
+    let db = t.db();
+    let ts = now() - 60;
+    let mut batch = vec![
+        system(SYS_A, "Alpha", [0.0, 0.0, 0.0]),
+        system(SYS_B, "Beta", [10.0, 0.0, 0.0]),
+        station(1, "A Port", SYS_A, "Alpha", "Coriolis", &["commodities"], "Industrial"),
+        station(2, "A Carrier", SYS_A, "Alpha", "FleetCarrier", &["commodities"], "Carrier"),
+        // Two hours old.
+        market(1, "Alpha", "A Port", ts - 7200, &[("gold", 9000, 8900, 1000, 0)]),
+        market(2, "Alpha", "A Carrier", ts, &[("silver", 4000, 3900, 1000, 0)]),
+    ];
+    // Five buyers of gold (and silver) in Beta, the best price first.
+    for i in 0..5u64 {
+        let name = format!("B Port {i}");
+        let sell = 12_000 - i as i64 * 100;
+        batch.push(station(10 + i, &name, SYS_B, "Beta", "Orbis", &["commodities"], "Refinery"));
+        batch.push(market(10 + i, "Beta", &name, ts, &[("gold", 0, sell, 0, 1000), ("silver", 0, 4500, 0, 1000)]));
+    }
+    db.ingest_many(batch);
+    db.flush().expect("flush");
+    let q = TradeQuery {
+        origin: [0.0, 0.0, 0.0],
+        radius_ly: 50.0,
+        max_hop_ly: 20.0,
+        cargo_capacity: 100,
+        ..Default::default()
+    };
+    let ends = |q: &TradeQuery| -> Vec<(u64, u64, String)> {
+        db.trade_routes(q)
+            .expect("routes")
+            .into_iter()
+            .map(|r| (r.from.market_id, r.to.market_id, r.commodity))
+            .collect()
+    };
+    let around = ends(&q);
+    assert_eq!(around.len(), 3, "three buyers per seller: {around:?}");
+    assert!(around.iter().all(|(from, _, c)| *from == 1 && c == "gold"), "carriers are left out: {around:?}");
+    // From A Port, every buyer within reach.
+    let here = ends(&TradeQuery { from_market: Some(1), ..q.clone() });
+    assert_eq!(
+        here.iter().map(|(_, to, _)| *to).collect::<Vec<_>>(),
+        [10, 11, 12, 13, 14]
+    );
+    // Docked at the carrier: its routes, though the search leaves carriers out.
+    let carrier = ends(&TradeQuery { from_market: Some(2), ..q.clone() });
+    assert_eq!(carrier.len(), 5);
+    assert!(carrier.iter().all(|(from, _, c)| *from == 2 && c == "silver"));
+    // A station with no known market has none, nor one whose prices are older than the age limit.
+    assert!(ends(&TradeQuery { from_market: Some(99), ..q.clone() }).is_empty());
+    let hour = |from| TradeQuery {
+        from_market: Some(from),
+        max_age_hours: Some(1.0),
+        ..q.clone()
+    };
+    assert!(ends(&hour(1)).is_empty(), "A Port's prices are two hours old");
+    assert_eq!(ends(&hour(2)).len(), 5);
+}
+
+#[test]
 fn systems_and_factions() {
     let t = TempDb::new("systems");
     let db = t.db();

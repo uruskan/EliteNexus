@@ -102,7 +102,8 @@ a layout changes.
   Where to mine: near you, or along a route towards Colonia), `glare`, `cockpit` or a preset name such as `mocha` (Hud:
   that tab, or HUD colours starting from that theme; add `,options` to open the protection's options; nothing is
   written). `find`, `untouched`, `known`, `buy`, `where` and `where-route` start their search on the first frame: add
-  `-Delay 15` to `-Delay 25` for Spansh to answer.
+  `-Delay 15` to `-Delay 25` for Spansh to answer. `routes` (Market › Trade routes) searches the local database on the
+  first frame too.
 * HUD & cockpit with a game folder of your own making: set `ELITE_NEXUS_GAME_DIR` to a folder holding a dummy
   `EliteDangerous64.exe`; add a `d3dx.ini` starting `; Elite Nexus` with a `[Constants]` section (`x1 = 1` switches
   the HUD colour protection on) and an `EliteNexus-3Dmigoto.json` of `{"migoto_version":"1.4.9","files":[]}` for

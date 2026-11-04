@@ -148,6 +148,7 @@ impl NexusApp {
         let mut market_ui = pages::market::MarketUi::new(settings.market.clone());
         if let Some(t) = ov.tab.as_deref().and_then(pages::market::Tab::from_name) {
             market_ui.tab = t;
+            market_ui.autorun = shot.is_some() && t == pages::market::Tab::Routes;
         }
         let map = pages::galaxy_map::MapUi::new(ov.tab.as_deref() == Some("galaxy"));
         let speaker = Speaker::start();
