@@ -206,7 +206,10 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> 
 
 /// A commodity your missions ask you to bring: how many tonnes are still to go, and for which missions.
 struct Goods<'a> {
-    commodity: &'a str,
+    /// The journal's symbol (`$HydrogenFuel_Name;`): what the pin and the lookups go by, whatever the game's language.
+    symbol: &'a str,
+    /// Its name as the missions give it, in the game's language.
+    name: String,
     tonnes: i64,
     missions: Vec<&'a str>,
 }
@@ -214,9 +217,12 @@ struct Goods<'a> {
 /// What the active missions ask you to bring, one entry per commodity: not a delivery's or a smuggling run's cargo,
 /// which the mission hands you, nor a mission that's ready to hand in.
 fn wanted_goods(gs: &GameState) -> Vec<Goods<'_>> {
+    fn text(s: Option<&str>) -> Option<&str> {
+        s.map(str::trim).filter(|s| !s.is_empty())
+    }
     let mut out: Vec<Goods> = Vec::new();
     for m in gs.missions.active.values() {
-        let Some(c) = m.commodity.as_deref().map(str::trim).filter(|c| !c.is_empty()) else { continue };
+        let Some(symbol) = text(m.commodity_symbol.as_deref()).or(text(m.commodity.as_deref())) else { continue };
         let kind = m.name.to_ascii_lowercase();
         if kind.contains("delivery") || kind.contains("smuggle") || m.redirected {
             continue;
@@ -225,15 +231,19 @@ fn wanted_goods(gs: &GameState) -> Vec<Goods<'_>> {
         if tonnes == 0 {
             continue;
         }
-        match out.iter_mut().find(|g| g.commodity.eq_ignore_ascii_case(c)) {
+        match out.iter_mut().find(|g| g.symbol.eq_ignore_ascii_case(symbol)) {
             Some(g) => {
                 g.tonnes += tonnes;
                 g.missions.push(&m.title);
             }
-            None => out.push(Goods { commodity: c, tonnes, missions: vec![&m.title] }),
+            None => {
+                // The game's name for it; without one (it gave only the symbol), the commodity's English name.
+                let name = text(m.commodity.as_deref()).filter(|n| *n != symbol).map_or_else(|| nexus_data::commodities::display_name(symbol), str::to_string);
+                out.push(Goods { symbol, name, tonnes, missions: vec![&m.title] });
+            }
         }
     }
-    out.sort_by(|a, b| a.commodity.cmp(b.commodity));
+    out.sort_by(|a, b| a.name.cmp(&b.name));
     out
 }
 
@@ -248,13 +258,12 @@ fn goods(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> Opt
     card(ui, "Goods your missions ask for", |ui| {
         crate::widgets::group(ui, |g| {
             for w in &list {
-                let name = nexus_data::commodities::display_name(w.commodity);
-                g.row(&name, &w.missions.join(" · "), |ui| {
-                    st.get.button(ui, w.commodity);
+                g.row(&w.name, &w.missions.join(" · "), |ui| {
+                    st.get.button(ui, w.symbol);
                     ui.label(RichText::new(format!("{} t", nexus_data::names::group_digits(w.tonnes))).color(pal::WARN));
                 });
-                if st.get.is_open(w.commodity) {
-                    g.content(|ui| goto = st.get.panel(ui, gs, src, w.commodity));
+                if st.get.is_open(w.symbol) {
+                    g.content(|ui| goto = st.get.panel(ui, gs, src, w.symbol));
                 }
             }
         });
@@ -299,5 +308,28 @@ mod tests {
         assert_eq!(share([400.0, 100.0, 300.0], floor, 500.0), [200.0, 100.0, 200.0]);
         // Never narrower than a heading.
         assert_eq!(share([400.0, 100.0, 300.0], floor, 120.0), [60.0, 60.0, 60.0]);
+    }
+
+    /// A German client's missions: the goods go by the journal's symbol (two missions for one good are one entry),
+    /// show the game's name, and the lookup finds the commodity; a delivery's cargo isn't asked for.
+    #[test]
+    fn goods_go_by_symbol() {
+        let mut gs = GameState::default();
+        let mission = |id: u64, name: &str, symbol: &str, local: &str, count: i64| Mission {
+            id,
+            name: name.into(),
+            title: format!("Mission {id}"),
+            commodity: Some(local.into()),
+            commodity_symbol: Some(symbol.into()),
+            count: Some(count),
+            ..Default::default()
+        };
+        gs.missions.active.insert(1, mission(1, "Mission_Collect_Industry", "$HydrogenFuel_Name;", "Wasserstoff-Treibstoff", 12));
+        gs.missions.active.insert(2, mission(2, "Mission_Mining_Boom", "$HydrogenFuel_Name;", "Wasserstoff-Treibstoff", 8));
+        gs.missions.active.insert(3, mission(3, "Mission_Delivery", "$Gold_Name;", "Gold", 20));
+        let goods = wanted_goods(&gs);
+        assert_eq!(goods.len(), 1, "the delivery's gold comes with the mission");
+        assert_eq!((goods[0].name.as_str(), goods[0].tonnes, goods[0].missions.len()), ("Wasserstoff-Treibstoff", 20, 2));
+        assert_eq!(nexus_data::commodities::commodity(goods[0].symbol).map(|c| c.name.as_str()), Some("Hydrogen Fuel"));
     }
 }
