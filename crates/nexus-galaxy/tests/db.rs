@@ -302,6 +302,32 @@ fn commodity_search_filters_and_sorts() {
     assert!(db.search_commodity(&q).expect("q").is_empty());
 }
 
+/// A carrier's docking access, as its market reported it, reaches the list rows (in the journal's spelling, whatever
+/// the source wrote); stations, and carriers whose access was never reported, have none.
+#[test]
+fn carrier_access_reaches_the_lists() {
+    let t = TempDb::new("access");
+    let db = t.db();
+    populate(db);
+    // The Spansh dump writes "Squadron Friends", the journal and EDDN "squadronfriends".
+    db.ingest(Ingest::Market(MarketSnapshot {
+        carrier_docking_access: Some("Squadron Friends".into()),
+        ..match market(4, "Beta", "B-CARRIER", now() - 20, &[("gold", 7000, 0, 10, 0)]) {
+            Ingest::Market(m) => m,
+            _ => unreachable!("a market"),
+        }
+    }));
+    db.flush().expect("flush");
+    let q = CommodityQuery { commodity: "gold".into(), ..Default::default() };
+    let hits = db.search_commodity(&q).expect("q");
+    let access = |id: u64| hits.iter().find(|h| h.market_id == id).and_then(|h| h.carrier_access.clone());
+    assert_eq!(access(4).as_deref(), Some("squadronfriends"));
+    assert_eq!(access(1), None, "a station has none");
+    let latest = db.latest_prices(&q).expect("latest");
+    assert_eq!(latest.iter().find(|l| l.market_id == 4).and_then(|l| l.carrier_access.as_deref()), Some("squadronfriends"));
+    assert!(latest.iter().filter(|l| l.market_id != 4).all(|l| l.carrier_access.is_none()));
+}
+
 #[test]
 fn age_filter_and_freshest_sort() {
     let t = TempDb::new("age");
@@ -430,6 +456,109 @@ fn old_price_history_is_pruned_and_uncounted() {
     t.db().flush().expect("flush");
     assert!(t.db().price_history(9, "gold").expect("history").is_empty());
     assert_eq!(t.db().stats().expect("stats").price_history_rows, Some(0));
+}
+
+/// How long a carrier's buy order has stood, from the reports the database compared: since a change, since it
+/// appeared, at least since the market was first reported (or since the 30 days kept), or not known.
+#[test]
+fn how_long_an_order_stood() {
+    let mut t = TempDb::new("since");
+    let db = t.db();
+    populate(db);
+    let n = now();
+    const D: i64 = 86_400;
+    let carrier = |mid: u64, ts: i64, items: &[(&str, i64, i64, i64, i64)]| market(mid, "Beta", "B-CARRIER", ts, items);
+    // Changed from 50,000 to 55,000 twelve days ago, reported unchanged since.
+    for (ts, p) in [(n - 20 * D, 50_000), (n - 12 * D, 55_000), (n - 3 * D, 55_000), (n - 3600, 55_000)] {
+        db.ingest(carrier(21, ts, &[("tritium", 0, p, 0, 9_000)]));
+    }
+    // The same price on every report for 25 days.
+    for ts in [n - 25 * D, n - 10 * D, n - 7200] {
+        db.ingest(carrier(22, ts, &[("tritium", 0, 101_000, 0, 8_000)]));
+    }
+    // A buy order that appeared since the report six days ago (which had only gold).
+    db.ingest(carrier(23, n - 6 * D, &[("gold", 8_000, 0, 400, 0)]));
+    db.ingest(carrier(23, n - 3 * 3600, &[("gold", 8_000, 0, 380, 0), ("tritium", 0, 62_000, 0, 5_000)]));
+    // One report only.
+    db.ingest(carrier(24, n - 5 * 3600, &[("tritium", 0, 58_000, 0, 2_500)]));
+    // Followed for 40 days, changed 35 days ago: those changes are pruned (on the next start).
+    for (ts, p) in [(n - 40 * D, 40_000), (n - 35 * D, 45_000), (n - 3600, 45_000)] {
+        db.ingest(carrier(25, ts, &[("tritium", 0, p, 0, 1_000)]));
+    }
+    db.flush().expect("flush");
+    let sell = |db: &GalaxyDb, mid: u64| db.price_since(mid, "tritium").expect("since").and_then(|s| s.sell);
+    assert_eq!(sell(db, 21), Some(Stood::Since { since: n - 12 * D, before: n - 20 * D, previous: 50_000 }));
+    assert_eq!(sell(db, 22), Some(Stood::AtLeast { since: n - 25 * D }));
+    assert_eq!(sell(db, 23), Some(Stood::Since { since: n - 3 * 3600, before: n - 6 * D, previous: 0 }), "a new order");
+    assert_eq!(sell(db, 24), Some(Stood::AtLeast { since: n - 5 * 3600 }));
+    assert_eq!(db.price_since(21, "tritium").expect("since").and_then(|s| s.buy), None, "it doesn't sell tritium");
+    assert_eq!(db.price_since(21, "gold").expect("since"), None, "not on its market");
+    // The new order's points don't show as price changes of their own: the report before it lists nothing.
+    let h = db.price_history(23, "tritium").expect("history");
+    assert_eq!(h.iter().map(|p| (p.ts_unix, p.sell)).collect::<Vec<_>>(), vec![(n - 6 * D, 0), (n - 3 * 3600, 62_000)]);
+
+    t.reopen();
+    let db = t.db();
+    db.flush().expect("flush");
+    match sell(db, 25) {
+        // At least the 30 days kept: what came before is gone.
+        Some(Stood::AtLeast { since }) => assert!((since - (n - 30 * D)).abs() < 600, "{since} vs {}", n - 30 * D),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(sell(db, 21), Some(Stood::Since { since: n - 12 * D, before: n - 20 * D, previous: 50_000 }), "kept");
+}
+
+/// The live feed's "updates stored" counts what changed the database: not a bare rock it doesn't keep, a market
+/// report older than the one stored, or a report that changes nothing.
+#[test]
+fn counted_ingest_counts_what_was_stored() {
+    let t = TempDb::new("counted");
+    let db = t.db();
+    populate(db);
+    let stored = std::sync::Arc::new(AtomicU64::new(0));
+    let body = |id: u32, class: &str, bio: u32| {
+        Ingest::Body(BodyUpdate {
+            system_id64: SYS_A,
+            body_id: id,
+            name: Some(format!("Alpha {id}")),
+            scan: Some(BodyScan { planet_class: class.into(), landable: true, ..Default::default() }),
+            signals: (bio > 0).then(|| BodySignals { bio, ..Default::default() }),
+            timestamp: now() - 100,
+            source: Source::Eddn,
+            ..Default::default()
+        })
+    };
+    let rock = body(3, "Rocky body", 0);
+    let bio = body(4, "Rocky body", 2);
+    let fresh = market(1, "Alpha", "A Port", now() - 10, &[("gold", 9_200, 9_000, 100, 0)]);
+    let stale = market(1, "Alpha", "A Port", now() - 20, &[("gold", 9_300, 9_100, 100, 0)]);
+    db.ingest_counted(vec![rock.clone(), bio.clone(), fresh, stale], stored.clone());
+    db.flush().expect("flush");
+    assert_eq!(stored.load(Ordering::Relaxed), 2, "the biology body and the newer market");
+    // The same bodies again: nothing changes.
+    db.ingest_counted(vec![rock, bio], stored.clone());
+    db.flush().expect("flush");
+    assert_eq!(stored.load(Ordering::Relaxed), 2);
+    // A new system counts; uncounted ingests leave the counter alone.
+    db.ingest_counted(vec![system(SYS_C + 10, "Delta", [5.0, 5.0, 5.0])], stored.clone());
+    db.ingest(system(SYS_C + 11, "Epsilon", [6.0, 6.0, 6.0]));
+    db.flush().expect("flush");
+    assert_eq!(stored.load(Ordering::Relaxed), 3);
+}
+
+/// Without price history, nothing can be said about how long a price stood.
+#[test]
+fn no_history_no_since() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("galaxy-nohistory-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let db = GalaxyDb::open_with(dir.join("galaxy.db"), GalaxyOptions { price_history: false, ..Default::default() }).expect("open");
+        populate(&db);
+        db.ingest(market(1, "Alpha", "A Port", now() - 10, &[("gold", 9_100, 8_900, 100, 0)]));
+        db.flush().expect("flush");
+        assert_eq!(db.price_since(1, "gold").expect("since").and_then(|s| s.buy), Some(Stood::Unknown));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -1393,4 +1522,50 @@ fn commodity_summary_and_latest_prices() {
     assert_eq!(names, vec!["Alpha Port"], "Far Out is too far, the carrier is excluded, the outpost has no large pad");
     let busy = db.latest_prices(&CommodityQuery { min_quantity: 100, ..q }).expect("latest");
     assert_eq!(busy.len(), 2, "stock or demand of at least 100: Alpha Port and Far Out");
+}
+
+/// Rare goods taken as one commodity: George Lucas sells two of them (Azure Milk is Foods, Leestian
+/// Evil Juice Legal Drugs), each a row of its own that says which it is; a category narrows them;
+/// normal goods stay out; the one-commodity search is unchanged.
+#[test]
+fn rare_goods_as_one_commodity() {
+    let t = TempDb::new("rares");
+    let db = t.db();
+    db.ingest_many(vec![
+        system(SYS_A, "Leesti", [0.0, 0.0, 0.0]),
+        system(SYS_B, "Rusani", [10.0, 0.0, 0.0]),
+        station(31, "George Lucas", SYS_A, "Leesti", "Coriolis", &["dock", "commodities"], "Industrial"),
+        station(32, "Fernandes Market", SYS_B, "Rusani", "Coriolis", &["dock", "commodities"], "Industrial"),
+    ]);
+    db.ingest(priced(31, "Leesti", "George Lucas", Some("Coriolis"), &[("bluemilk", 6_000, 0, 9_000, 20, 0), ("leestianeviljuice", 400, 0, 1_600, 40, 0), ("gold", 9_000, 0, 9_400, 500, 0)]));
+    db.ingest(priced(32, "Rusani", "Fernandes Market", Some("Coriolis"), &[("rusanioldsmokey", 1_000, 0, 3_000, 10, 0), ("bluemilk", 0, 12_000, 9_000, 0, 50)]));
+    db.flush().expect("flush");
+    let rows = |hits: &[CommodityHit]| hits.iter().map(|h| (h.station.clone(), h.commodity.as_ref().map(|c| c.name.clone()).unwrap_or_default())).collect::<Vec<_>>();
+    let row = |station: &str, name: &str| (station.to_string(), name.to_string());
+
+    let q = CommodityQuery { origin: Some([0.0; 3]), mode: TradeMode::BuyFromStation, ..Default::default() };
+    let buy = db.search_rare_goods(None, &q).expect("rares");
+    assert_eq!(rows(&buy), vec![row("George Lucas", "Leestian Evil Juice"), row("Fernandes Market", "Rusani Old Smokey"), row("George Lucas", "Azure Milk")], "cheapest first, gold left out");
+    assert_eq!(buy[0].commodity.as_ref().map(|c| (c.symbol.as_str(), c.mean)), Some(("leestianeviljuice", 1_600)), "with its own average");
+    let legal = db.search_rare_goods(Some("Legal Drugs"), &q).expect("rares");
+    assert_eq!(rows(&legal), vec![row("George Lucas", "Leestian Evil Juice"), row("Fernandes Market", "Rusani Old Smokey")]);
+    let sell = db.search_rare_goods(None, &CommodityQuery { mode: TradeMode::SellToStation, ..q.clone() }).expect("rares");
+    assert_eq!(rows(&sell), vec![row("Fernandes Market", "Azure Milk")]);
+
+    // Latest prices: George Lucas twice (one row per market and commodity), Fernandes Market twice.
+    let latest = db.latest_rare_prices(None, &q).expect("latest");
+    let mut pairs: Vec<(String, String)> = latest.iter().map(|l| (l.station.clone(), l.commodity.as_ref().map(|c| c.name.clone()).unwrap_or_default())).collect();
+    pairs.sort();
+    assert_eq!(pairs, vec![row("Fernandes Market", "Azure Milk"), row("Fernandes Market", "Rusani Old Smokey"), row("George Lucas", "Azure Milk"), row("George Lucas", "Leestian Evil Juice")]);
+
+    let s = db.rare_goods_summary(Some("Legal Drugs"), Some(72.0)).expect("summary").expect("rare goods");
+    assert_eq!((s.category.as_str(), s.is_rare, s.sellers, s.buyers), ("Legal Drugs", true, 2, 0));
+    assert_eq!((s.lowest_buy, s.average), (Some(400), Some(2_300)), "the average of 1 600 and 3 000");
+    let all = db.rare_goods_summary(None, Some(72.0)).expect("summary").expect("rare goods");
+    assert_eq!((all.sellers, all.buyers, all.highest_sell), (3, 1, Some(12_000)));
+
+    // One commodity: no row commodity, as before.
+    let gold = db.search_commodity(&CommodityQuery { commodity: "gold".into(), ..q }).expect("gold");
+    assert_eq!(gold.len(), 1);
+    assert!(gold[0].commodity.is_none());
 }

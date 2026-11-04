@@ -720,6 +720,8 @@ fn search_capsule(ui: &mut Ui, text: &mut String, hint: &str, width: f32, id: Op
 pub struct Suggestion {
     pub text: String,
     pub detail: String,
+    /// Drawn in yellow behind a ★, as the game marks rare goods.
+    pub starred: bool,
 }
 
 /// What an [`autocomplete`] field did this frame.
@@ -728,6 +730,10 @@ pub struct Completion {
     pub picked: Option<String>,
     /// Enter pressed while no suggestion list was open.
     pub submitted: bool,
+    /// The field has the keyboard focus (it's being typed in).
+    pub focused: bool,
+    /// `picked` came from the whole list (`suggest("")`: the ▾, or the field empty), not from matches to typed text.
+    pub whole_list: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -736,16 +742,38 @@ struct CompletionState {
     sel: usize,
     /// Where the list was drawn last frame (a click on it must not close it).
     list: Option<Rect>,
+    /// Opened with the ▾ button: the whole list, whatever the field holds.
+    all: bool,
+    /// Just opened: the list scrolls to the highlighted entry.
+    scroll: bool,
+}
+
+/// A combobox's list opens on what the field holds (the blank entry when it's empty, if the list has one).
+fn current_entry(items: &[Suggestion], text: &str) -> usize {
+    items.iter().position(|it| it.text == text).unwrap_or(0)
 }
 
 /// A capsule search field with a suggestion list underneath. The list opens as you type (or when you
 /// click into the empty field), ↑/↓ move the highlight, Enter or a click takes a suggestion, Escape
 /// or a click elsewhere closes it. `suggest` gets the text and returns suggestions, best first.
 pub fn autocomplete(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: f32, suggest: impl Fn(&str) -> Vec<Suggestion>) -> Completion {
+    completion(ui, id_salt, text, hint, width, false, suggest)
+}
+
+/// An [`autocomplete`] field with a ▾ button that opens the whole list (`suggest("")`): type to narrow it, or pick.
+/// Unlike [`autocomplete`]: entering the field selects its text, the list opens on the entry the field holds, and
+/// Tab takes the highlighted entry as Enter does.
+pub fn combobox(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: f32, suggest: impl Fn(&str) -> Vec<Suggestion>) -> Completion {
+    completion(ui, id_salt, text, hint, width, true, suggest)
+}
+
+fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: f32, dropdown: bool, suggest: impl Fn(&str) -> Vec<Suggestion>) -> Completion {
     let id = ui.make_persistent_id(id_salt);
     let edit_id = id.with("edit");
     let mut s: CompletionState = ui.data(|d| d.get_temp(id)).unwrap_or_default();
-    let mut items = if s.open { suggest(text) } else { Vec::new() };
+    let mut items = if s.open { suggest(if s.all { "" } else { text }) } else { Vec::new() };
+    // The items are the whole list, not matches to typed text.
+    let mut whole = s.all || text.trim().is_empty();
     // Arrow keys move the highlight; they are taken before the text field sees them.
     let mut moved = false;
     if s.open && !items.is_empty() && ui.memory(|m| m.has_focus(edit_id)) {
@@ -763,16 +791,31 @@ pub fn autocomplete(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, w
     }
     let capsule = search_capsule(ui, text, hint, width, Some(edit_id));
     let resp = capsule.inner;
+    // Entering a combobox selects what's in it, so typing replaces it.
+    if dropdown
+        && resp.gained_focus()
+        && let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), edit_id)
+    {
+        state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(text.chars().count()))));
+        state.store(ui.ctx(), edit_id);
+    }
     if resp.changed() || (resp.gained_focus() && text.trim().is_empty()) {
         s.open = true;
-        s.sel = 0;
+        s.all = false;
         items = suggest(text);
+        whole = text.trim().is_empty();
+        s.sel = if dropdown && !resp.changed() { current_entry(&items, text) } else { 0 };
     }
+    let arrow = dropdown.then(|| {
+        ui.add(egui::Button::new(RichText::new(egui_phosphor::regular::CARET_DOWN).size(15.0).color(pal::DIM)).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Show the list")
+    });
     s.sel = s.sel.min(items.len().saturating_sub(1));
     let mut picked = None;
     let mut submitted = false;
     if resp.lost_focus() {
-        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let tab = dropdown && s.open && !items.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Tab));
+        if enter || tab {
             if s.open && !items.is_empty() {
                 picked = Some(s.sel);
             } else {
@@ -784,12 +827,25 @@ pub fn autocomplete(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, w
             s.open = false;
         }
     }
+    // The ▾ click would count as a click outside the list: it shows from the next frame on, with the field focused.
+    let opened = arrow.is_some_and(|r| r.clicked());
+    if opened {
+        s.open = true;
+        s.all = true;
+        items = suggest("");
+        whole = true;
+        s.sel = current_entry(&items, text);
+        s.scroll = true;
+        ui.memory_mut(|m| m.request_focus(edit_id));
+    }
     s.list = None;
-    if s.open && !items.is_empty() {
+    if s.open && !items.is_empty() && !opened {
         let mut open = true;
         let shown = egui::Popup::new(id.with("list"), ui.ctx().clone(), &capsule.response, ui.layer_id())
             .open_bool(&mut open)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            // A combobox closes by its own rule (the field loses the focus, not to the list): egui's would take the
+            // release of the click that opened it for a click outside, and close it again at once.
+            .close_behavior(if dropdown { egui::PopupCloseBehavior::IgnoreClicks } else { egui::PopupCloseBehavior::CloseOnClickOutside })
             .width(capsule.response.rect.width())
             .gap(4.0)
             .show(|ui| {
@@ -801,13 +857,14 @@ pub fn autocomplete(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, w
                         if r.clicked() {
                             picked = Some(i);
                         }
-                        if moved && i == s.sel {
+                        if (moved || s.scroll) && i == s.sel {
                             r.scroll_to_me(None);
                         }
                     }
                 });
             });
         s.list = shown.map(|r| r.response.rect);
+        s.scroll = false;
         if !open {
             s.open = false;
         }
@@ -818,7 +875,8 @@ pub fn autocomplete(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, w
         it.text
     });
     ui.data_mut(|d| d.insert_temp(id, s));
-    Completion { picked, submitted }
+    let whole_list = whole && picked.is_some();
+    Completion { picked, submitted, focused: ui.memory(|m| m.has_focus(edit_id)), whole_list }
 }
 
 fn suggestion_row(ui: &mut Ui, it: &Suggestion, selected: bool) -> Response {
@@ -830,7 +888,8 @@ fn suggestion_row(ui: &mut Ui, it: &Suggestion, selected: bool) -> Response {
         }
         let detail = p.layout_no_wrap(it.detail.clone(), FontId::proportional(size::CAPTION), pal::DIM);
         let room = (rect.width() - detail.size().x - 28.0).max(40.0);
-        let mut job = egui::text::LayoutJob::simple_singleline(it.text.clone(), FontId::proportional(size::CALLOUT), if selected { pal::ACCENT_SOFT } else { pal::TEXT });
+        let (label, col) = if it.starred { (format!("★ {}", it.text), pal::GOLD) } else { (it.text.clone(), if selected { pal::ACCENT_SOFT } else { pal::TEXT }) };
+        let mut job = egui::text::LayoutJob::simple_singleline(label, FontId::proportional(size::CALLOUT), col);
         job.wrap = egui::text::TextWrapping::truncate_at_width(room);
         let main = p.layout_job(job);
         p.galley(Pos2::new(rect.left() + 8.0, rect.center().y - main.size().y / 2.0), main, pal::TEXT);

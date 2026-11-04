@@ -17,6 +17,13 @@ release time that section becomes the new version and the release workflow publi
   racks, Heavy Duty module reinforcement, Balanced and Support Focused power distributors, the Merc weapons, seeker
   racks and mining tools, Plasma Conversion for lasers and Scoop Rate Enhanced for fuel scoops. Each grade shows its
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
+- **Engineering** and **Missions**: where to get what you're short of (asked for by nhok0169 in GitHub issue #4). In
+  the blueprint planner and its shopping list, the pin at the end of a material you're short of opens, under it,
+  the nearest material trader of its kind, for a raw material the three landable planets within 100 ly richest in
+  it (from Spansh), and for a commodity the nearest markets that sell it and rings with hotspots for it. The Missions
+  page lists the goods your missions ask you to source, mine or donate, each with the same pin. Every answer says
+  where it comes from (Elite Nexus's market database, or Spansh's shared scans) and what it can't know, and a button
+  opens the full list on the Market page.
 - **Fleet** shows the landing pad each ship needs (S, M or L), in the ship list and on its Loadout card (asked for by
   Alvarrune on the Frontier Forums).
 - **Fleet › Where to buy**: paste a ship build (a SLEF export from EDSY or Coriolis, a journal Loadout or an import
@@ -27,6 +34,24 @@ release time that section becomes the new version and the release workflow publi
   build costs there, with a route button. Spansh can't tell a fixed weapon from a gimballed one, so each station's own
   list is checked for the exact modules. When no station sells everything, it suggests two stops, or the nearest
   seller of each missing piece. Ships › **Where to buy** opens it with that ship's build.
+- **Market** › Find commodity: a **Category** field beside the search, and a ▾ on both that opens the whole list. The
+  category narrows only the list the search field's ▾ opens: typing still finds every commodity. A category's rare
+  goods are one item, **Rare Goods**, and the category **Rare Goods** holds them all: one page lists
+  every place selling or buying any of them, each row naming its rare good and comparing it with that good's own
+  average. Rare goods are marked ★ in yellow, and the lists name the commodity in their first column. Clicking into
+  either field selects its text; Tab takes the highlighted entry. The retired event rares (Classified Experimental
+  Equipment, Galactic Travel Guide) are left out.
+- **Market**: fleet carriers say who may dock right in the lists (Find commodity, Abnormal prices, Sell my cargo,
+  your pins and the Station tab's carriers): **open**, **friends**, **squadron**, **squadron, friends** or **owner
+  only**, as last reported with the carrier's market, or **?** when no report has said. Until now it showed only
+  after clicking a row (asked for by hangerhead in GitHub discussion #1). The owner can change it at any time, so
+  it may differ when you get there.
+- **Market** › Find commodity: click a fleet carrier's row and it says how long its order's price has stood: "Price
+  unchanged since 23 Oct" (with what the report before had), "Order first reported 2 Nov" when the report before
+  didn't list it, or "unchanged for at least" so long when Elite Nexus's price history reaches no further back. It
+  keeps 30 days of price changes, from the first report of that carrier it received; neither the game nor the live
+  feed says when an order was set up (asked for by hangerhead in GitHub discussion #1). The price history now also
+  records when a commodity first appears on a market.
 - **Market** › Trade routes, while you're docked: **From this station** lists only the routes that start there, what
   to buy at this station and where to sell it within the distance you set (asked for by NetworX on the Frontier
   Forums). Open the commodity market in the game first, so Elite Nexus has the station's latest prices.
@@ -74,8 +99,22 @@ release time that section becomes the new version and the release workflow publi
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
+- **Engineering** › Suits & weapons and Synthesis read the same way: each recipe (a grade, a modification, a
+  synthesis) is one row that says Ready or how many materials you're short of, with its price or effect, and opens
+  into each ingredient against what you have, instead of a run of "3× Vanadium (0)" in coloured brackets.
+- **Market**: the four lines of live-feed messages under every tab are gone, so each tab starts higher up. The
+  **Live** badge stays, with the feed's rate and the database's size beside it.
 
 ### Fixed
+- **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
+  Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
+  window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
+- **Missions** › Recent mission history: a long mission title no longer widens the card past the window. The date,
+  outcome and reward come first, and the title takes the room left, ending in "…" (whole on hover).
+- **Market**: the live feed's "updates stored" counts only what the database kept. It counted every item a message
+  turned into, so every body scanned anywhere, though from the feed Elite Nexus keeps only bodies with biology,
+  Earth-like, water and ammonia worlds and terraformables, and every market report, even one older than the market
+  it already had.
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.

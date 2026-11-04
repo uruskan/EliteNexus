@@ -201,7 +201,19 @@ impl GalaxyDb {
         if items.is_empty() {
             return;
         }
-        if self.send(WriterMsg::Ingest(items)).is_err() {
+        if self.send(WriterMsg::Ingest(items, None)).is_err() {
+            tracing::warn!("galaxy writer stopped; dropping ingest");
+        }
+    }
+
+    /// Queues items as [`Self::ingest_many`] does and, once they're committed, adds to `stored` how many of them
+    /// changed the database. A market report older than the stored one, a body the database doesn't keep (see
+    /// [`GalaxyOptions::all_eddn_bodies`]) or a report that changes nothing isn't counted.
+    pub fn ingest_counted(&self, items: Vec<Ingest>, stored: Arc<std::sync::atomic::AtomicU64>) {
+        if items.is_empty() {
+            return;
+        }
+        if self.send(WriterMsg::Ingest(items, Some(stored))).is_err() {
             tracing::warn!("galaxy writer stopped; dropping ingest");
         }
     }
@@ -269,7 +281,19 @@ impl GalaxyDb {
         query::search_commodity(
             &*self.inner.pool.get()?,
             &self.inner.shared.stations,
-            cid,
+            query::Goods::One(cid),
+            q,
+        )
+    }
+
+    /// Rare goods taken as one commodity: those of one category (`Some("Legal Drugs")`) or all of them
+    /// (`None`), searched as [`Self::search_commodity`] does. Each row says which commodity it is;
+    /// `q.commodity` is ignored.
+    pub fn search_rare_goods(&self, category: Option<&str>, q: &CommodityQuery) -> Result<Vec<CommodityHit>> {
+        query::search_commodity(
+            &*self.inner.pool.get()?,
+            &self.inner.shared.stations,
+            query::Goods::Rare(category),
             q,
         )
     }
@@ -287,7 +311,15 @@ impl GalaxyDb {
         let Some(cid) = cache.resolve(commodity) else {
             return Ok(None);
         };
-        query::commodity_summary(&conn, &self.inner.shared.stations, &cache, cid, max_age_hours)
+        query::commodity_summary(&conn, &self.inner.shared.stations, &cache, query::Goods::One(cid), max_age_hours)
+    }
+
+    /// [`Self::commodity_summary`] for rare goods taken as one (see [`Self::search_rare_goods`]). Its
+    /// symbol and name are empty: the caller names it. The average is the mean of what their markets report.
+    pub fn rare_goods_summary(&self, category: Option<&str>, max_age_hours: Option<f64>) -> Result<Option<CommoditySummary>> {
+        let conn = self.inner.pool.get()?;
+        let cache = self.inner.shared.commodities.read();
+        query::commodity_summary(&conn, &self.inner.shared.stations, &cache, query::Goods::Rare(category), max_age_hours)
     }
 
     /// Every market trading one commodity, newest update first, with both its prices (the query's
@@ -300,7 +332,18 @@ impl GalaxyDb {
         query::latest_prices(
             &*self.inner.pool.get()?,
             &self.inner.shared.stations,
-            cid,
+            query::Goods::One(cid),
+            q,
+        )
+    }
+
+    /// [`Self::latest_prices`] for rare goods taken as one (see [`Self::search_rare_goods`]): one row per
+    /// market and rare commodity.
+    pub fn latest_rare_prices(&self, category: Option<&str>, q: &CommodityQuery) -> Result<Vec<CommodityQuote>> {
+        query::latest_prices(
+            &*self.inner.pool.get()?,
+            &self.inner.shared.stations,
+            query::Goods::Rare(category),
             q,
         )
     }
@@ -413,6 +456,18 @@ impl GalaxyDb {
             return Ok(Vec::new());
         };
         query::price_history(&*self.inner.pool.get()?, market_id, cid)
+    }
+
+    /// How long a market's prices for one commodity have stood, as far as the price history can tell: since a
+    /// change (or since the commodity appeared there), at least since the history of this market begins, or not
+    /// known. `None` when the market doesn't list the commodity. The history keeps every change of a market it
+    /// compared reports of, for [`GalaxyOptions::price_history_days`].
+    pub fn price_since(&self, market_id: u64, commodity: &str) -> Result<Option<PriceSince>> {
+        let Some(cid) = self.inner.shared.commodities.read().resolve(commodity) else {
+            return Ok(None);
+        };
+        let kept_from = util::now_unix() - self.inner.opts.price_history_days.max(1) * 86_400;
+        query::price_since(&*self.inner.pool.get()?, market_id, cid, kept_from)
     }
 
     /// All known commodities, sorted by category and name.

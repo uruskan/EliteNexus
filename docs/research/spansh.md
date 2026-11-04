@@ -29,6 +29,7 @@ Request budget used: 12 API requests to `spansh.co.uk/api` (1 neutron job, 1 res
 | Nearest commodity, module, ship, material trader, tech broker or Interstellar Factors | `POST /api/stations/search` | 4 |
 | Mining hotspot finder | `POST /api/bodies/search` with the `ring_signals` filter | 4.7 B |
 | Rhino surface mining: where to mine (Mining › Where to mine) | `POST /api/bodies/search` with the `signals` filter `Planetary Mining Location` | 4.7 C |
+| Planets richest in a raw material (Engineering and Missions › where to get it) | `POST /api/bodies/search` with the `materials` filter, sorted by share | 4.7 C2 |
 | Faction and power system search | `POST /api/systems/search` | 4.6 |
 | Offline/local galaxy database | `downloads.spansh.co.uk` dumps plus the daily `galaxy_1day` | 7 |
 
@@ -531,6 +532,22 @@ The response was `count` 3029: Barnard's Star 5 (A ring Painite ×2), WISE 0855-
 - `GET /api/bodies/field_values/volcanism_type` has 22 values: `No volcanism`, metallic magma, rocky magma and silicate vapour geysers (each plain, `Major` and `Minor`), water geysers and water magma (each three ways), carbon dioxide geysers (three ways), and `Minor Ammonia Magma`, `Minor Methane Magma`, `Minor Nitrogen Magma`. There is **no silicate magma**, although the journal manual lists it.
 - A body without volcanism usually has **no `volcanism_type` field** in a search result (Mercury, Ganymede). Filtering on `"No volcanism"` matched 7 rocky bodies with mining locations within 20 ly of Sol; `{"value":[the 21 volcanic values],"logic":"NOT"}` matched 52, Ganymede and Callisto among them. Use the `NOT` form.
 - Coverage: only scans since the Rhino update (4.4.1, 2026-09-02) report the signal. Within 20 ly of Sol, 559 of 703 landable bodies have a count; within 25 ly of Colonia, 3,161 of 4,089 (and of the 3,347 updated since 2026-09-02, 3,161). A body without a count may still have locations.
+
+**C2. Planets richest in a raw material** [TESTED 2026-11-04] (Engineering and Missions › where to get it). The
+`materials` value_struct takes the material's English name and a share in %, and sorts like `ring_signals`:
+
+```json
+{"filters":{"is_landable":{"value":true},"materials":[{"name":"Polonium","value":[0.5,100],"comparison":"<=>"}],
+            "distance":{"min":"0","max":"60"}},
+ "sort":[{"materials":[{"name":"Polonium","direction":"desc"}]}],"size":5,"page":0,"reference_coords":{"x":0,"y":0,"z":0}}
+```
+
+- Within 60 ly of Sol: `count` 1,203; the first five were metal-rich bodies at 1.09 to 1.01 % polonium (Xi Ursae
+  Majoris B 1 at 29 ly, 36 Ophiuchi B 1, Alpha Centauri B 1 at 4.4 ly, Capella A 1, Uchaluroja B 2), so the sort is
+  by share, not distance. Results carry `materials[{name, share}]` (share in %), `gravity` and `distance`.
+- The app asks for a share of `[0, 100]` (any body with the material) within 100 ly and shows the first three. A
+  lower bound of 0 doesn't match bodies without the material: arsenic within 100 ly of Sol counts 9,368 bodies with
+  `[0, 100]` and with `[0.01, 100]` alike, while every landable body within 100 ly hits the 10,000 cap.
 
 **D. Constructed, not executed.** These are built from the site's builders and the field catalogue:
 

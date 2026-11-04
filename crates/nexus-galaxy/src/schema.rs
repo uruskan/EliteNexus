@@ -62,7 +62,10 @@ CREATE TABLE IF NOT EXISTS stations (
     updated               INTEGER NOT NULL DEFAULT 0,
     market_updated        INTEGER NOT NULL DEFAULT 0,
     n_commodities         INTEGER NOT NULL DEFAULT 0,
-    prohibited            TEXT
+    prohibited            TEXT,
+    -- The market report since which every price change and every new commodity at this market is in the price
+    -- history (unix seconds); NULL when its prices aren't followed (history off, or not reported since this column).
+    history_since         INTEGER
 );
 CREATE INDEX IF NOT EXISTS stations_system ON stations(system_id64);
 CREATE INDEX IF NOT EXISTS stations_unlinked ON stations(system_name_lower) WHERE system_id64 IS NULL;
@@ -95,6 +98,11 @@ CREATE TABLE IF NOT EXISTS market (
 CREATE INDEX IF NOT EXISTS market_sellers ON market(commodity_id, buy, stock, updated) WHERE buy > 0 AND stock > 0;
 -- "where can I sell X": stations buying (player sells), best price first (scanned backwards)
 CREATE INDEX IF NOT EXISTS market_buyers ON market(commodity_id, sell, demand, updated) WHERE sell > 0 AND demand > 0;
+-- market rows with their commodity's name, category and rare flag: searches over several commodities (rare goods)
+CREATE VIEW IF NOT EXISTS market_goods AS
+SELECT m.market_id, m.commodity_id, m.buy, m.sell, m.mean, m.stock, m.demand, m.updated,
+       c.symbol, c.name, c.category, c.is_rare
+FROM market AS m JOIN commodities AS c ON c.id = m.commodity_id;
 
 CREATE TABLE IF NOT EXISTS system_factions (
     system_id64       INTEGER NOT NULL,
@@ -172,9 +180,10 @@ CREATE INDEX IF NOT EXISTS bodies_name ON bodies(name);
 "#;
 
 /// Columns added to existing tables after they were first created: (table, column, type).
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("bodies", "checked_online", "INTEGER")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("bodies", "checked_online", "INTEGER"), ("stations", "history_since", "INTEGER")];
 
 const DROP_ALL: &str = r#"
+DROP VIEW IF EXISTS market_goods;
 DROP TABLE IF EXISTS systems;
 DROP TABLE IF EXISTS systems_rtree;
 DROP TABLE IF EXISTS stations;

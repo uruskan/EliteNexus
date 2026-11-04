@@ -144,6 +144,14 @@ fn system_info(r: &Row) -> rusqlite::Result<SystemInfo> {
     })
 }
 
+/// A fleet carrier's docking access in the journal's spelling (`all`, `none`, `friends`, `squadron`,
+/// `squadronfriends`), however its source wrote it (Spansh: `Squadron Friends`); `None` for a station, or a carrier
+/// whose access was never reported.
+pub(crate) fn carrier_access(is_carrier: bool, raw: Option<String>) -> Option<String> {
+    let a = raw?.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+    (is_carrier && !a.is_empty()).then_some(a)
+}
+
 /// SQL bounding box parameters for a sphere.
 fn bbox(o: [f64; 3], r: f64) -> [f64; 6] {
     [o[0] - r, o[0] + r, o[1] - r, o[1] + r, o[2] - r, o[2] + r]
@@ -169,6 +177,33 @@ fn age_cutoff(hours: Option<f64>) -> i64 {
 // Commodity search
 // ---------------------------------------------------------------------------------------------
 
+/// Which market rows a commodity search reads.
+#[derive(Clone, Copy)]
+pub(crate) enum Goods<'a> {
+    /// One commodity, by id: its range of the covering partial indexes.
+    One(i64),
+    /// Rare goods as one: those of one category, or (`None`) all of them, through `market_goods`.
+    Rare(Option<&'a str>),
+}
+
+impl Goods<'_> {
+    /// The first SQL parameter: the commodity id, or the category (NULL: every category).
+    fn key(self) -> rusqlite::types::Value {
+        match self {
+            Goods::One(cid) => rusqlite::types::Value::Integer(cid),
+            Goods::Rare(category) => category.map_or(rusqlite::types::Value::Null, |c| rusqlite::types::Value::Text(c.to_string())),
+        }
+    }
+
+    /// A rare goods row's commodity (its query's columns 5 to 7); `None` for one commodity's rows.
+    fn commodity(self, r: &Row) -> rusqlite::Result<Option<RowCommodity>> {
+        match self {
+            Goods::One(_) => Ok(None),
+            Goods::Rare(_) => Ok(Some(RowCommodity { symbol: r.get(5)?, name: r.get(6)?, mean: r.get(7)? })),
+        }
+    }
+}
+
 /// Candidate row of a commodity search (before the station details are fetched).
 struct Cand {
     market_id: i64,
@@ -176,6 +211,7 @@ struct Cand {
     qty: i64,
     updated: i64,
     dist: Option<f64>,
+    commodity: Option<RowCommodity>,
 }
 
 /// Commodity search: scans the commodity's range of the covering partial index (`market_sellers` /
@@ -184,7 +220,7 @@ struct Cand {
 pub(crate) fn search_commodity(
     conn: &Connection,
     index: &RwLock<StationIndex>,
-    cid: i64,
+    goods: Goods,
     q: &CommodityQuery,
 ) -> Result<Vec<CommodityHit>> {
     let limit = q.limit.clamp(1, 100_000);
@@ -195,14 +231,22 @@ pub(crate) fn search_commodity(
         max_dist_ls: -1.0,
     };
     let max_d = q.max_distance_ly.filter(|d| d.is_finite() && *d >= 0.0);
-    let sql = match q.mode {
-        TradeMode::BuyFromStation => {
+    let sql = match (goods, q.mode) {
+        (Goods::One(_), TradeMode::BuyFromStation) => {
             "SELECT market_id, buy, stock, updated FROM market \
              WHERE commodity_id = ?1 AND buy > 0 AND stock > 0 AND stock >= ?2 AND updated >= ?3 ORDER BY buy ASC"
         }
-        TradeMode::SellToStation => {
+        (Goods::One(_), TradeMode::SellToStation) => {
             "SELECT market_id, sell, demand, updated FROM market \
              WHERE commodity_id = ?1 AND sell > 0 AND demand > 0 AND demand >= ?2 AND updated >= ?3 ORDER BY sell DESC"
+        }
+        (Goods::Rare(_), TradeMode::BuyFromStation) => {
+            "SELECT market_id, buy, stock, updated, commodity_id, symbol, name, mean FROM market_goods \
+             WHERE is_rare = 1 AND (?1 IS NULL OR category = ?1) AND buy > 0 AND stock > 0 AND stock >= ?2 AND updated >= ?3 ORDER BY buy ASC"
+        }
+        (Goods::Rare(_), TradeMode::SellToStation) => {
+            "SELECT market_id, sell, demand, updated, commodity_id, symbol, name, mean FROM market_goods \
+             WHERE is_rare = 1 AND (?1 IS NULL OR category = ?1) AND sell > 0 AND demand > 0 AND demand >= ?2 AND updated >= ?3 ORDER BY sell DESC"
         }
     };
     // Rows arrive best price first: for that order we can stop once `limit` rows passed the filters
@@ -212,7 +256,7 @@ pub(crate) fn search_commodity(
     {
         let mut stmt = conn.prepare_cached(sql)?;
         let mut rows = stmt.query(params![
-            cid,
+            goods.key(),
             q.min_quantity.max(1),
             age_cutoff(q.max_age_hours)
         ])?;
@@ -246,6 +290,7 @@ pub(crate) fn search_commodity(
                 qty: r.get(2)?,
                 updated: r.get(3)?,
                 dist: d,
+                commodity: goods.commodity(r)?,
             });
         }
     }
@@ -268,13 +313,14 @@ pub(crate) fn search_commodity(
     cands.sort_by(cmp);
 
     let mut stmt = conn.prepare_cached(
-        "SELECT name, type, system_name, system_id64, x, y, z, dist_ls, max_pad, is_carrier, is_planetary \
+        "SELECT name, type, system_name, system_id64, x, y, z, dist_ls, max_pad, is_carrier, is_planetary, carrier_access \
          FROM stations WHERE market_id = ?1",
     )?;
     let mut out = Vec::with_capacity(cands.len());
     for c in cands {
         let hit = stmt
             .query_row([c.market_id], |r| {
+                let is_carrier = r.get::<_, i64>(9)? != 0;
                 Ok(CommodityHit {
                     system: r.get(2)?,
                     system_id64: r.get::<_, Option<i64>>(3)?.map(|v| v as u64),
@@ -288,8 +334,10 @@ pub(crate) fn search_commodity(
                     price: c.price,
                     quantity: c.qty,
                     updated_unix: c.updated,
-                    is_carrier: r.get::<_, i64>(9)? != 0,
+                    is_carrier,
                     is_planetary: r.get::<_, i64>(10)? != 0,
+                    carrier_access: carrier_access(is_carrier, r.get(11)?),
+                    commodity: c.commodity.clone(),
                 })
             })
             .optional()?;
@@ -304,24 +352,56 @@ const SELLER_ROWS: &str = "SELECT market_id, buy, stock, updated FROM market \
      WHERE commodity_id = ?1 AND buy > 0 AND stock > 0 AND stock >= ?2 AND updated >= ?3";
 const BUYER_ROWS: &str = "SELECT market_id, sell, demand, updated FROM market \
      WHERE commodity_id = ?1 AND sell > 0 AND demand > 0 AND demand >= ?2 AND updated >= ?3";
+/// The same for rare goods (one category's, or every category's with ?1 NULL), with each row's commodity.
+const RARE_SELLER_ROWS: &str = "SELECT market_id, buy, stock, updated, commodity_id, symbol, name, mean FROM market_goods \
+     WHERE is_rare = 1 AND (?1 IS NULL OR category = ?1) AND buy > 0 AND stock > 0 AND stock >= ?2 AND updated >= ?3";
+const RARE_BUYER_ROWS: &str = "SELECT market_id, sell, demand, updated, commodity_id, symbol, name, mean FROM market_goods \
+     WHERE is_rare = 1 AND (?1 IS NULL OR category = ?1) AND sell > 0 AND demand > 0 AND demand >= ?2 AND updated >= ?3";
 
-/// Galaxy-wide counts and extremes for one commodity (only the age limit applies).
+impl Goods<'_> {
+    /// The seller and buyer row queries for these goods.
+    fn row_queries(self) -> [(&'static str, bool); 2] {
+        match self {
+            Goods::One(_) => [(SELLER_ROWS, true), (BUYER_ROWS, false)],
+            Goods::Rare(_) => [(RARE_SELLER_ROWS, true), (RARE_BUYER_ROWS, false)],
+        }
+    }
+}
+
+/// Rare goods' galactic average, taken as one commodity: the mean of the averages their markets report.
+fn rare_average(conn: &Connection, category: Option<&str>) -> Result<Option<i64>> {
+    let avg: Option<f64> = conn.query_row(
+        "SELECT AVG(mean) FROM market_goods WHERE is_rare = 1 AND (?1 IS NULL OR category = ?1) AND mean > 0",
+        [category],
+        |r| r.get(0),
+    )?;
+    Ok(avg.map(|a| a.round() as i64))
+}
+
+/// Galaxy-wide counts and extremes for one commodity, or rare goods taken as one (only the age limit
+/// applies). Rare goods have no symbol or name of their own: those stay empty.
 pub(crate) fn commodity_summary(
     conn: &Connection,
     index: &RwLock<StationIndex>,
     cache: &CommodityCache,
-    cid: i64,
+    goods: Goods,
     max_age_hours: Option<f64>,
 ) -> Result<Option<CommoditySummary>> {
-    let Some(meta) = cache.meta(cid) else {
-        return Ok(None);
+    let (symbol, name, category, is_rare, average) = match goods {
+        Goods::One(cid) => {
+            let Some(meta) = cache.meta(cid) else {
+                return Ok(None);
+            };
+            (meta.symbol.clone(), meta.name.clone(), meta.category.clone(), meta.rare, crate::deals::global_average(conn, cid)?)
+        }
+        Goods::Rare(category) => (String::new(), String::new(), category.unwrap_or_default().to_string(), true, rare_average(conn, category)?),
     };
     let mut s = CommoditySummary {
-        symbol: meta.symbol.clone(),
-        name: meta.name.clone(),
-        category: meta.category.clone(),
-        is_rare: meta.rare,
-        average: crate::deals::global_average(conn, cid)?,
+        symbol,
+        name,
+        category,
+        is_rare,
+        average,
         sellers: 0,
         carrier_sellers: 0,
         buyers: 0,
@@ -332,9 +412,9 @@ pub(crate) fn commodity_summary(
     };
     let cutoff = age_cutoff(max_age_hours);
     let idx = index.read();
-    for (sql, selling) in [(SELLER_ROWS, true), (BUYER_ROWS, false)] {
+    for (sql, selling) in goods.row_queries() {
         let mut stmt = conn.prepare_cached(sql)?;
-        let mut rows = stmt.query(params![cid, 1, cutoff])?;
+        let mut rows = stmt.query(params![goods.key(), 1, cutoff])?;
         while let Some(r) = rows.next()? {
             let Some(st) = idx.get(r.get(0)?) else {
                 continue;
@@ -357,12 +437,15 @@ pub(crate) fn commodity_summary(
     Ok(Some(s))
 }
 
-/// Every market trading one commodity (stock or demand of at least `min_quantity`), newest
-/// update first. `mode` and `sort` are ignored; the other filters apply as in a commodity search.
+/// A "latest prices" candidate: market, last update, distance, commodity id, and rare goods' commodity.
+type LatestCand = (i64, i64, Option<f64>, i64, Option<RowCommodity>);
+
+/// Every market trading one commodity, or rare goods (stock or demand of at least `min_quantity`),
+/// newest update first. `mode` and `sort` are ignored; the other filters apply as in a commodity search.
 pub(crate) fn latest_prices(
     conn: &Connection,
     index: &RwLock<StationIndex>,
-    cid: i64,
+    goods: Goods,
     q: &CommodityQuery,
 ) -> Result<Vec<CommodityQuote>> {
     let limit = q.limit.clamp(1, 100_000);
@@ -373,24 +456,28 @@ pub(crate) fn latest_prices(
         max_dist_ls: -1.0,
     };
     let max_d = q.max_distance_ly.filter(|d| d.is_finite() && *d >= 0.0);
-    // (market, updated, distance), one entry per market even when it both sells and buys.
-    let mut cands: Vec<(i64, i64, Option<f64>)> = Vec::new();
+    // One entry per market and commodity, even when the market both sells and buys it.
+    let mut cands: Vec<LatestCand> = Vec::new();
     {
         let idx = index.read();
         let mut seen = rustc_hash::FxHashSet::default();
-        for sql in [SELLER_ROWS, BUYER_ROWS] {
+        for (sql, _) in goods.row_queries() {
             let mut stmt = conn.prepare_cached(sql)?;
             let mut rows = stmt.query(params![
-                cid,
+                goods.key(),
                 q.min_quantity.max(1),
                 age_cutoff(q.max_age_hours)
             ])?;
             while let Some(r) = rows.next()? {
                 let market_id: i64 = r.get(0)?;
+                let cid = match goods {
+                    Goods::One(cid) => cid,
+                    Goods::Rare(_) => r.get(4)?,
+                };
                 let Some(st) = idx.get(market_id) else {
                     continue;
                 };
-                if !filter.passes(st) || seen.contains(&market_id) {
+                if !filter.passes(st) || seen.contains(&(market_id, cid)) {
                     continue;
                 }
                 let d = match (q.origin, st.pos) {
@@ -402,12 +489,12 @@ pub(crate) fn latest_prices(
                 {
                     continue;
                 }
-                seen.insert(market_id);
-                cands.push((market_id, r.get(3)?, d));
+                seen.insert((market_id, cid));
+                cands.push((market_id, r.get(3)?, d, cid, goods.commodity(r)?));
             }
         }
     }
-    let newest = |a: &(i64, i64, Option<f64>), b: &(i64, i64, Option<f64>)| {
+    let newest = |a: &LatestCand, b: &LatestCand| {
         b.1.cmp(&a.1)
             .then(a.2.unwrap_or(f64::INFINITY).total_cmp(&b.2.unwrap_or(f64::INFINITY)))
     };
@@ -419,14 +506,15 @@ pub(crate) fn latest_prices(
 
     let mut stmt = conn.prepare_cached(
         "SELECT m.buy, m.sell, m.mean, m.stock, m.demand, m.updated, \
-                s.name, s.type, s.system_name, s.dist_ls, s.max_pad, s.is_carrier, s.is_planetary \
+                s.name, s.type, s.system_name, s.dist_ls, s.max_pad, s.is_carrier, s.is_planetary, s.carrier_access \
          FROM market AS m JOIN stations AS s ON s.market_id = m.market_id \
          WHERE m.market_id = ?1 AND m.commodity_id = ?2",
     )?;
     let mut out = Vec::with_capacity(cands.len());
-    for (market_id, _, d) in cands {
+    for (market_id, _, d, cid, commodity) in cands {
         let quote = stmt
             .query_row(params![market_id, cid], |r| {
+                let is_carrier = r.get::<_, i64>(11)? != 0;
                 Ok(CommodityQuote {
                     market_id: market_id as u64,
                     buy: r.get(0)?,
@@ -441,8 +529,10 @@ pub(crate) fn latest_prices(
                     distance_ly: d,
                     dist_ls: r.get(9)?,
                     max_pad: Pad::from_code(r.get(10)?).map(Pad::as_char),
-                    is_carrier: r.get::<_, i64>(11)? != 0,
+                    is_carrier,
                     is_planetary: r.get::<_, i64>(12)? != 0,
+                    carrier_access: carrier_access(is_carrier, r.get(13)?),
+                    commodity,
                 })
             })
             .optional()?;
@@ -826,6 +916,56 @@ pub(crate) fn price_history(
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// How long a market's prices for a commodity have stood (see [`Stood`]); `None` when the market doesn't list it.
+/// `kept_from`: the oldest time the history still holds every change from (older ones are pruned).
+pub(crate) fn price_since(conn: &Connection, market_id: u64, cid: i64, kept_from: i64) -> Result<Option<PriceSince>> {
+    let row = conn
+        .prepare_cached(
+            "SELECT m.buy, m.sell, s.history_since FROM market AS m JOIN stations AS s ON s.market_id = m.market_id \
+             WHERE m.market_id = ?1 AND m.commodity_id = ?2",
+        )?
+        .query_row(params![market_id as i64, cid], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<i64>>(2)?)))
+        .optional()?;
+    let Some((buy, sell, tracked)) = row else {
+        return Ok(None);
+    };
+    let points = price_history(conn, market_id, cid)?;
+    let side = |now: i64, of: fn(&PricePoint) -> i64| {
+        (now > 0).then(|| {
+            let pts: Vec<(i64, i64)> = points.iter().map(|p| (p.ts_unix, of(p))).collect();
+            stood(&pts, now, tracked, kept_from)
+        })
+    };
+    Ok(Some(PriceSince { buy: side(buy, |p| p.buy), sell: side(sell, |p| p.sell) }))
+}
+
+/// How long `price` has stood, from one side's history points (time, price; oldest first). `tracked`: the report
+/// since which the history has every change at this market; `kept_from`: changes before this may have been pruned.
+pub(crate) fn stood(points: &[(i64, i64)], price: i64, tracked: Option<i64>, kept_from: i64) -> Stood {
+    let Some(tracked) = tracked else {
+        return Stood::Unknown;
+    };
+    // Points from before an unfollowed stretch (an import replaced the prices) say nothing about since.
+    let pts: Vec<(i64, i64)> = points.iter().copied().filter(|p| p.0 >= tracked).collect();
+    // The newest points at this price, back to the change that brought it.
+    let first = pts.iter().rposition(|p| p.1 != price).map_or(0, |i| i + 1);
+    match (first.checked_sub(1).map(|i| pts[i]), pts.get(first)) {
+        // A change on record: from the report before it to the first at this price.
+        (Some(before), Some(at)) => Stood::Since { since: at.0, before: before.0, previous: before.1 },
+        // The newest point isn't this price: a change went unrecorded (too small to keep, say).
+        (Some(_), None) => Stood::Unknown,
+        // No change on record since the history began here. Changes older than what's kept are gone: with nothing
+        // left, the price has stood since then at least; with points left, the first may be the one that brought it
+        // (its report before pruned away), so only from that one.
+        (None, at) => Stood::AtLeast {
+            since: match at {
+                Some(at) if tracked < kept_from => at.0,
+                _ => tracked.max(kept_from),
+            },
+        },
+    }
+}
+
 /// Row counts. Station / market numbers come from the in-memory index; the rest are `COUNT(*)`s, except the price
 /// history (the writer keeps that count, see `GalaxyDb::stats`).
 pub(crate) fn stats(conn: &Connection, index: &RwLock<StationIndex>) -> Result<DbStats> {
@@ -855,4 +995,39 @@ pub(crate) fn stats(conn: &Connection, index: &RwLock<StationIndex>) -> Result<D
     }
     s.newest_market_update = (newest > 0).then_some(newest);
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DAY: i64 = 86_400;
+
+    /// What a price's history says about how long it stood, case by case (times in days; 30 days kept).
+    #[test]
+    fn how_long_a_price_stood() {
+        let now = 100 * DAY;
+        let kept = now - 30 * DAY;
+        let pts = |v: &[(i64, i64)]| v.iter().map(|&(d, p)| (d * DAY, p)).collect::<Vec<_>>();
+        let tracked = Some(80 * DAY);
+        // Changed from 50 to 55 between day 82 and day 88; unchanged since.
+        assert_eq!(stood(&pts(&[(82, 50), (88, 55)]), 55, tracked, kept), Stood::Since { since: 88 * DAY, before: 82 * DAY, previous: 50 });
+        // A later change of the other side adds points at this price: still since day 88.
+        assert_eq!(stood(&pts(&[(82, 50), (88, 55), (90, 55), (95, 55)]), 55, tracked, kept), Stood::Since { since: 88 * DAY, before: 82 * DAY, previous: 50 });
+        // New on the market: the report before didn't list it.
+        assert_eq!(stood(&pts(&[(85, 0), (86, 60)]), 60, tracked, kept), Stood::Since { since: 86 * DAY, before: 85 * DAY, previous: 0 });
+        // No change since the history of this market began.
+        assert_eq!(stood(&[], 55, tracked, kept), Stood::AtLeast { since: 80 * DAY });
+        assert_eq!(stood(&pts(&[(84, 55), (90, 55)]), 55, tracked, kept), Stood::AtLeast { since: 80 * DAY }, "only the other side changed");
+        // Followed for longer than the history keeps: at least since what's kept...
+        assert_eq!(stood(&[], 55, Some(10 * DAY), kept), Stood::AtLeast { since: kept });
+        // ...or, with a point left whose report before was pruned, since that point only.
+        assert_eq!(stood(&pts(&[(75, 55)]), 55, Some(10 * DAY), kept), Stood::AtLeast { since: 75 * DAY });
+        // Points from before the prices were last replaced without comparing don't count.
+        assert_eq!(stood(&pts(&[(70, 40), (72, 55)]), 55, Some(80 * DAY), kept), Stood::AtLeast { since: 80 * DAY });
+        // The newest point isn't the price now (a change too small to keep): no answer.
+        assert_eq!(stood(&pts(&[(82, 50), (88, 55)]), 56, tracked, kept), Stood::Unknown);
+        // Not followed.
+        assert_eq!(stood(&pts(&[(82, 50)]), 55, None, kept), Stood::Unknown);
+    }
 }

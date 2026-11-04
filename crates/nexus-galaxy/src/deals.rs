@@ -342,6 +342,7 @@ fn finish(conn: &Connection, shared: &Shared, rows: &[Row], cands: Vec<Cand>) ->
             distance_ly: r.dist,
             max_pad: st.max_pad,
             is_carrier: st.is_carrier,
+            carrier_access: crate::query::carrier_access(st.is_carrier, st.carrier_docking_access),
             updated_unix: r.updated,
         });
     }

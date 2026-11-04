@@ -140,14 +140,15 @@ impl MarketService {
         Some((s.is_connected(), s.messages_per_minute()))
     }
 
-    /// (connected, "N msgs/min · …") while the feed is on.
+    /// (connected, "N msgs/min · …") while the feed is on. "Updates stored" are those that changed the database:
+    /// most scanned bodies aren't kept, and a market report older than the stored one isn't either.
     pub fn feed_summary(&self) -> Option<(bool, String)> {
         let s = self.eddn.as_ref()?.stats().snapshot();
         let mut line = format!(
             "{} msgs/min · {} received · {} updates stored",
             s.messages_per_minute,
             nexus_data::names::group_digits(s.total_messages as i64),
-            nexus_data::names::group_digits(s.ingested as i64)
+            nexus_data::names::group_digits(s.stored as i64)
         );
         if !s.connected
             && let Some(e) = &s.last_error
@@ -155,10 +156,6 @@ impl MarketService {
             line = format!("{line} · {e}");
         }
         Some((s.connected, line))
-    }
-
-    pub fn recent_headlines(&self, n: usize) -> Vec<String> {
-        self.eddn.as_ref().map(|h| h.stats().headlines(n).into_iter().map(|h| h.text).collect()).unwrap_or_default()
     }
 
     /// The last database counters; asking counts them again on a worker thread every [`STATS_EVERY`] at most.

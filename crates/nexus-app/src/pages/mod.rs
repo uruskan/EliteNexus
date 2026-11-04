@@ -23,6 +23,7 @@ pub mod navigation;
 pub mod settings;
 pub mod stats;
 pub mod welcome;
+pub mod where_to_get;
 pub mod where_to_mine;
 
 use egui_phosphor::regular as icon;

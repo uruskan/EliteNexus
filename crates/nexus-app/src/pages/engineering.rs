@@ -1,6 +1,7 @@
 //! Engineering: materials, blueprint planner with shopping list & trader plan, engineers,
 //! Odyssey upgrades, synthesis.
 
+use crate::pages::where_to_get::{Goto, Sources, WhereToGet};
 use crate::settings::WishItem;
 use crate::theme::{display, pal, size};
 use crate::widgets::{badge, bar, card, empty};
@@ -42,6 +43,9 @@ pub struct EngineeringUi {
     pub show_engineers: bool,
     pub show_list_have: bool,
     pub show_list_options: bool,
+    /// "Where to get it" on the materials you're short of: the blueprint's, and the shopping list's.
+    pub get_blueprint: WhereToGet,
+    pub get_list: WhereToGet,
 }
 
 impl EngineeringUi {
@@ -81,6 +85,8 @@ impl Default for EngineeringUi {
             show_engineers: false,
             show_list_have: false,
             show_list_options: false,
+            get_blueprint: WhereToGet::default(),
+            get_list: WhereToGet::default(),
         }
     }
 }
@@ -106,21 +112,23 @@ fn inventory_map(gs: &GameState) -> HashMap<String, i64> {
     inv
 }
 
-/// Returns true when the wishlist changed (so settings get saved).
-pub fn show(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut Vec<WishItem>) -> bool {
+/// Returns true when the wishlist changed (so settings get saved), and what a "where to get it" panel asks the Market
+/// page to open.
+pub fn show(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut Vec<WishItem>, src: &Sources) -> (bool, Option<Goto>) {
     let mut changed = false;
+    let mut goto = None;
     if let Some(t) = crate::widgets::tabs(ui, st.tab, &[(Tab::Planner, "Blueprint planner"), (Tab::Materials, "Materials"), (Tab::Engineers, "Engineers"), (Tab::Odyssey, "Suits & weapons"), (Tab::Synthesis, "Synthesis")]) {
         st.tab = t;
     }
     ui.add_space(crate::widgets::GAP);
     match st.tab {
-        Tab::Planner => changed |= planner(ui, gs, st, wishlist),
+        Tab::Planner => (changed, goto) = planner(ui, gs, st, wishlist, src),
         Tab::Materials => materials(ui, gs, st),
         Tab::Engineers => engineers(ui, gs),
         Tab::Odyssey => odyssey(ui, gs),
         Tab::Synthesis => synthesis(ui, gs),
     }
-    changed
+    (changed, goto)
 }
 
 /// Grade labels for segmented controls.
@@ -128,12 +136,6 @@ const GRADE_LABELS: [&str; 5] = ["G1", "G2", "G3", "G4", "G5"];
 
 fn grade_options(grades: std::ops::RangeInclusive<u8>) -> Vec<(u8, &'static str)> {
     grades.filter_map(|g| GRADE_LABELS.get(usize::from(g).checked_sub(1)?).map(|l| (g, *l))).collect()
-}
-
-fn ingredient_line(ui: &mut Ui, ing: &Ingredient, have: i64) {
-    let ok = have >= i64::from(ing.count);
-    ui.label(RichText::new(format!("{}× {}", ing.count, ing.name())).color(if ok { pal::TEXT } else { pal::WARN }));
-    ui.label(RichText::new(format!("({have})")).small().color(if ok { pal::GOOD } else { pal::BAD }));
 }
 
 /// English name of a material, micro-resource or commodity symbol.
@@ -155,12 +157,17 @@ fn merge_into(into: &mut Vec<(String, u32)>, items: impl IntoIterator<Item = (St
     }
 }
 
-fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut Vec<WishItem>) -> bool {
+fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut Vec<WishItem>, src: &Sources) -> (bool, Option<Goto>) {
     let mut changed = false;
+    let mut goto = None;
     let inv = inventory_map(gs);
     crate::widgets::cards(ui, 2, 380.0, |c| {
         c.add(|ui| {
-            card(ui, "Blueprints", |ui| changed |= blueprint_card(ui, gs, st, &inv, wishlist));
+            card(ui, "Blueprints", |ui| {
+                let (c, g) = blueprint_card(ui, gs, st, &inv, wishlist, src);
+                changed |= c;
+                goto = goto.take().or(g);
+            });
             ui.add_space(8.0);
             card(ui, "From your ship", |ui| changed |= from_your_ship(ui, gs, wishlist));
         });
@@ -171,17 +178,18 @@ fn planner(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, wishlist: &mut V
                 if !wishlist.is_empty() {
                     ui.add_space(6.0);
                     crate::widgets::section(ui, "Shopping list");
-                    shopping_list(ui, gs, st, &inv, wishlist);
+                    goto = goto.take().or(shopping_list(ui, gs, st, &inv, wishlist, src));
                 }
             });
         });
     });
-    changed
+    (changed, goto)
 }
 
 /// Pick a module and blueprint, choose the grade to reach, and see what you're short of. The recipes
-/// and the engineers sit one click deeper. Returns true when the wishlist changed.
-fn blueprint_card(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &HashMap<String, i64>, wishlist: &mut Vec<WishItem>) -> bool {
+/// and the engineers sit one click deeper. Returns true when the wishlist changed, and what a "where to get it" panel
+/// asks the Market page to open.
+fn blueprint_card(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &HashMap<String, i64>, wishlist: &mut Vec<WishItem>, src: &Sources) -> (bool, Option<Goto>) {
     egui::ComboBox::from_id_salt("modtype").width(240.0).selected_text(nexus_data::names::split_camel(&st.module)).show_ui(ui, |ui| {
         for m in eng::module_types() {
             if ui.selectable_label(st.module == *m, nexus_data::names::split_camel(m)).clicked() {
@@ -204,7 +212,7 @@ fn blueprint_card(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &Has
     });
     let Some(bp) = st.blueprint.as_deref().and_then(|s| bps.iter().find(|b| b.symbol == s).copied()) else {
         crate::widgets::footnote(ui, "Pick a blueprint to see what it needs and who can do it.");
-        return false;
+        return (false, None);
     };
     // MercGear blueprints start at G2, and a few blueprints stop below G5.
     let (lo, hi) = (bp.min_grade(), bp.max_grade());
@@ -286,7 +294,7 @@ fn blueprint_card(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &Has
     }
     let coins = nexus_data::trader::blueprint_merc_coins(bp, st.from, st.to, st.rolls);
     ui.add_space(14.0);
-    needs(ui, gs, inv, &need, coins, &mut st.show_have);
+    let goto = needs(ui, gs, inv, &need, coins, &mut st.show_have, &mut st.get_blueprint, src);
 
     ui.add_space(12.0);
     let mut changed = false;
@@ -309,12 +317,14 @@ fn blueprint_card(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &Has
         recipes(ui, bp);
     }
     where_to_engineer(ui, gs, bp, st.to, &mut st.show_engineers);
-    changed
+    (changed, goto)
 }
 
 /// What a plan needs against what you have: a status line and a bar, a row for each thing you're
-/// short of, and one row that opens what you already have enough of.
-fn needs(ui: &mut Ui, gs: &GameState, inv: &HashMap<String, i64>, need: &[(String, u32)], coins: u32, show_have: &mut bool) {
+/// short of (with where to get it), and one row that opens what you already have enough of. Returns what a "where to
+/// get it" panel asks the Market page to open.
+#[allow(clippy::too_many_arguments)]
+fn needs(ui: &mut Ui, gs: &GameState, inv: &HashMap<String, i64>, need: &[(String, u32)], coins: u32, show_have: &mut bool, get: &mut WhereToGet, src: &Sources) -> Option<Goto> {
     let have = |s: &str| u64::try_from(*inv.get(&s.to_ascii_lowercase()).unwrap_or(&0)).unwrap_or(0);
     let (short, enough): (Vec<_>, Vec<_>) = need.iter().partition(|(s, n)| have(s) < u64::from(*n));
     let balance = merc_coin_balance(gs);
@@ -348,13 +358,18 @@ fn needs(ui: &mut Ui, gs: &GameState, inv: &HashMap<String, i64>, need: &[(Strin
         crate::widgets::footnote(ui, &format!("{in_hand} of {total} materials in hand"));
     }
     ui.add_space(6.0);
+    let mut goto = None;
     crate::widgets::group(ui, |g| {
         if coins > 0 {
             let note = balance.is_none().then_some("Your balance shows after you next log in.");
-            g.content(|ui| need_row(ui, icon::COINS, pal::GOLD, "Merc Coins", balance, u64::from(coins), note));
+            g.content(|ui| need_row(ui, icon::COINS, pal::GOLD, "Merc Coins", balance, u64::from(coins), note, |_| {}));
         }
         for (s, n) in &short {
-            g.content(|ui| need_row(ui, icon::CIRCLE_DASHED, pal::WARN, &item_name(s), Some(have(s)), u64::from(*n), None));
+            g.content(|ui| need_row(ui, icon::CIRCLE_DASHED, pal::WARN, &item_name(s), Some(have(s)), u64::from(*n), None, |ui| get.button(ui, s)));
+            // Where to get it, right under its row.
+            if get.is_open(s) {
+                g.content(|ui| goto = get.panel(ui, gs, src, s));
+            }
         }
         if !enough.is_empty() {
             g.content(|ui| {
@@ -365,20 +380,24 @@ fn needs(ui: &mut Ui, gs: &GameState, inv: &HashMap<String, i64>, need: &[(Strin
                 };
                 if crate::widgets::disclosure(ui, show_have, &label) {
                     for (s, n) in &enough {
-                        need_row(ui, icon::CHECK_CIRCLE, pal::GOOD, &item_name(s), Some(have(s)), u64::from(*n), None);
+                        need_row(ui, icon::CHECK_CIRCLE, pal::GOOD, &item_name(s), Some(have(s)), u64::from(*n), None, |_| {});
                     }
                 }
             });
         }
     });
+    goto
 }
 
-/// One row of a needs list: an icon and the name, then what you have of what's needed and how many more.
-fn need_row(ui: &mut Ui, glyph: &str, tint: Color32, name: &str, have: Option<u64>, need: u64, note: Option<&str>) {
+/// One row of a needs list: an icon and the name, then what you have of what's needed and how many more, and
+/// `trailing` at the end (a "where to get it" button).
+#[allow(clippy::too_many_arguments)]
+fn need_row(ui: &mut Ui, glyph: &str, tint: Color32, name: &str, have: Option<u64>, need: u64, note: Option<&str>, trailing: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
         ui.label(RichText::new(glyph).color(tint));
         // The counts first, from the right, so a long name truncates instead of widening the card.
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            trailing(ui);
             match have {
                 Some(h) if h < need => {
                     ui.label(RichText::new(format!("{} more", need - h)).color(pal::WARN));
@@ -538,8 +557,9 @@ fn wishlist_rows(ui: &mut Ui, wishlist: &mut Vec<WishItem>) -> bool {
     }
 }
 
-/// Everything the wishlist needs against what you have, and the trades that cover the gaps.
-fn shopping_list(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &HashMap<String, i64>, wishlist: &[WishItem]) {
+/// Everything the wishlist needs against what you have, and the trades that cover the gaps. Returns what a "where to
+/// get it" panel asks the Market page to open.
+fn shopping_list(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &HashMap<String, i64>, wishlist: &[WishItem], src: &Sources) -> Option<Goto> {
     let mut need: Vec<(String, u32)> = Vec::new();
     let mut coins = 0u32;
     for w in wishlist {
@@ -553,9 +573,9 @@ fn shopping_list(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &Hash
     }
     if need.is_empty() {
         ui.label(RichText::new("Nothing needed yet.").color(pal::DIM));
-        return;
+        return None;
     }
-    needs(ui, gs, inv, &need, coins, &mut st.show_list_have);
+    let goto = needs(ui, gs, inv, &need, coins, &mut st.show_list_have, &mut st.get_list, src);
     let plan = plan_shopping_with(&need, inv, &ShoppingOptions { cross_category: st.cross_category, ..Default::default() });
     if !plan.trades.is_empty() {
         crate::widgets::section(ui, "Trade at a material trader");
@@ -585,6 +605,7 @@ fn shopping_list(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &Hash
     if crate::widgets::disclosure(ui, &mut st.show_list_options, "Options") {
         crate::widgets::toggle(ui, &mut st.cross_category, "Trade across categories (costs 6× more)");
     }
+    goto
 }
 
 /// Merc Coins at the last login: the journal's Statistics event is the only place the game writes them.
@@ -619,23 +640,45 @@ fn materials(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi) {
                 }
                 items.retain(|(n, _, _)| filter.is_empty() || n.to_ascii_lowercase().contains(&filter));
                 items.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
-                Grid::new(("mats", i)).num_columns(3).striped(true).spacing([10.0, 2.0]).show(ui, |ui| {
-                    for (name, grade, n) in items {
-                        let cap = nexus_data::materials::cap(grade) as i64;
-                        ui.label(RichText::new(name).color(if n == 0 { pal::FAINT } else { pal::TEXT }));
-                        ui.label(RichText::new(if grade > 0 { format!("G{grade}") } else { String::new() }).small().color(pal::PURPLE));
-                        ui.scope(|ui| {
-                            ui.set_width(110.0);
-                            let full = cap > 0 && n >= cap;
-                            bar(ui, if cap > 0 { n as f32 / cap as f32 } else { 0.0 }, if full { pal::WARN } else { pal::ACCENT }, 12.0, Some(&if cap > 0 { format!("{n}/{cap}") } else { n.to_string() }));
-                        });
-                        ui.end_row();
+                ui.push_id(("mats", i), |ui| {
+                    // As close together as the grid they replace.
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    for (row, (name, grade, n)) in items.into_iter().enumerate() {
+                        material_row(ui, &name, grade, n, row % 2 == 1);
                     }
                 });
             });
             });
         }
     });
+}
+
+/// One material in the Materials cards: its name, grade and a bar of how many against the cap. The grade and the bar
+/// keep their place at the right, so a long name ("Guardian Sentinel Wreckage Components") ends in "…" (whole on
+/// hover) instead of widening the card past its column.
+fn material_row(ui: &mut Ui, name: &str, grade: u8, n: i64, stripe: bool) {
+    let cap = nexus_data::materials::cap(grade) as i64;
+    let background = ui.painter().add(egui::Shape::Noop);
+    let row = ui.horizontal(|ui| {
+        ui.set_min_height(24.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // Narrow cards give the bar less room before the name has to give way.
+            let bar_w = (ui.available_width() * 0.32).clamp(72.0, 110.0);
+            ui.scope(|ui| {
+                ui.set_width(bar_w);
+                let full = cap > 0 && n >= cap;
+                bar(ui, if cap > 0 { n as f32 / cap as f32 } else { 0.0 }, if full { pal::WARN } else { pal::ACCENT }, 12.0, Some(&if cap > 0 { format!("{n}/{cap}") } else { n.to_string() }));
+            });
+            ui.label(RichText::new(if grade > 0 { format!("G{grade}") } else { String::new() }).small().color(pal::PURPLE));
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                ui.add(egui::Label::new(RichText::new(name).color(if n == 0 { pal::FAINT } else { pal::TEXT })).truncate());
+            });
+        });
+    });
+    if stripe {
+        let rect = row.response.rect.expand2(egui::vec2(4.0, 0.0));
+        ui.painter().set(background, egui::Shape::rect_filled(rect, 4.0, ui.visuals().faint_bg_color));
+    }
 }
 
 fn engineers(ui: &mut Ui, gs: &GameState) {
@@ -719,34 +762,33 @@ fn odyssey(ui: &mut Ui, gs: &GameState) {
         empty(ui, icon::BACKPACK, "No Odyssey data", "");
         return;
     }
+    let have = |s: &str| locker_count(locker, s);
     crate::widgets::cards(ui, 2, 360.0, |c| {
         for (kind, title) in [(OdysseyKind::Suit, "Suits"), (OdysseyKind::Weapon, "Weapons")] {
             c.add(|ui| {
                 card(ui, title, |ui| {
                 for item in eng::odyssey_items().iter().filter(|i| i.kind == kind) {
                     egui::CollapsingHeader::new(RichText::new(item.name).color(pal::TEXT)).id_salt(item.symbol).show(ui, |ui| {
-                        for g in 2..=5u8 {
-                            if let Some(up) = eng::odyssey_upgrade(item.symbol, g) {
-                                ui.horizontal_wrapped(|ui| {
-                                    badge(ui, &format!("G{g}"), pal::PURPLE);
-                                    for ing in &up.cost {
-                                        ingredient_line(ui, ing, locker_count(locker, &ing.symbol));
-                                    }
-                                });
+                        crate::widgets::section(ui, "Upgrades");
+                        crate::widgets::group(ui, |g| {
+                            for grade in 2..=5u8 {
+                                if let Some(up) = eng::odyssey_upgrade(item.symbol, grade) {
+                                    let price = item.upgrade_credits(grade).map(credits).unwrap_or_default();
+                                    g.content(|ui| recipe_row(ui, (item.symbol, grade), &format!("Grade {grade}"), &price, &up.cost, have));
+                                }
                             }
-                        }
+                        });
                         let mods = eng::odyssey_mods_for(item.symbol);
                         if !mods.is_empty() {
-                            ui.label(RichText::new("MODIFICATIONS").small().color(pal::ACCENT));
-                            for m in mods {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.label(RichText::new(&m.name).color(pal::CYAN));
-                                    for ing in &m.cost {
-                                        ingredient_line(ui, ing, locker_count(locker, &ing.symbol));
-                                    }
-                                });
-                            }
+                            crate::widgets::section(ui, "Modifications");
+                            crate::widgets::group(ui, |g| {
+                                for m in mods {
+                                    let price = if m.credits > 0 { credits(m.credits) } else { String::new() };
+                                    g.content(|ui| recipe_row(ui, (item.symbol, m.symbol.as_str()), &m.name, &price, &m.cost, have));
+                                }
+                            });
                         }
+                        crate::widgets::footnote(ui, "Goods, assets and data counted in your ship locker.");
                     });
                 }
             });
@@ -757,25 +799,57 @@ fn odyssey(ui: &mut Ui, gs: &GameState) {
 
 fn synthesis(ui: &mut Ui, gs: &GameState) {
     let inv = inventory_map(gs);
+    let have = |s: &str| *inv.get(&s.to_ascii_lowercase()).unwrap_or(&0);
     let mut families: Vec<&str> = eng::synthesis_recipes().iter().map(|r| r.family.as_str()).collect();
     families.dedup();
-    for fam in families {
-        card(ui, fam, |ui| {
-            for r in eng::synthesis_recipes().iter().filter(|r| r.family == fam) {
-                let can = r.cost.iter().all(|i| *inv.get(&i.symbol.to_ascii_lowercase()).unwrap_or(&0) >= i64::from(i.count));
-                ui.horizontal_wrapped(|ui| {
-                    badge(ui, &r.name, if can { pal::GOOD } else { pal::DIM });
-                    // Basic grades have no effect text, and an empty label in a wrapping row sends the rest of the
-                    // row back over the badge.
-                    if !r.effect.is_empty() {
-                        ui.label(RichText::new(&r.effect).small().color(pal::DIM));
-                    }
-                    for ing in &r.cost {
-                        ingredient_line(ui, ing, *inv.get(&ing.symbol.to_ascii_lowercase()).unwrap_or(&0));
+    // Two columns where there's room: a family's three rows don't need the whole width.
+    crate::widgets::cards(ui, 2, 440.0, |c| {
+        for fam in families {
+            c.add(|ui| {
+                card(ui, fam, |ui| {
+                    crate::widgets::group(ui, |g| {
+                        for r in eng::synthesis_recipes().iter().filter(|r| r.family == fam) {
+                            g.content(|ui| recipe_row(ui, (fam, r.name.as_str()), &r.name, &r.effect, &r.cost, have));
+                        }
+                    });
+                });
+            });
+        }
+    });
+}
+
+fn credits(cr: u64) -> String {
+    format!("{} Cr", nexus_data::names::group_digits(i64::try_from(cr).unwrap_or(i64::MAX)))
+}
+
+/// A recipe as one row, as the blueprint planner shows needs: its name and what it does or costs, then whether you
+/// have everything it takes. Opening it lists each ingredient against what you have, what you're short of first.
+fn recipe_row(ui: &mut Ui, id: impl std::hash::Hash + std::fmt::Debug, name: &str, detail: &str, cost: &[Ingredient], have: impl Fn(&str) -> i64) {
+    let short = cost.iter().filter(|i| have(&i.symbol) < i64::from(i.count)).count();
+    egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), ui.make_persistent_id(id), false)
+        .show_header(ui, |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                match short {
+                    0 => ui.label(RichText::new(format!("{} Ready", icon::CHECK_CIRCLE)).color(pal::GOOD)),
+                    1 => ui.label(RichText::new("Short of 1 material").color(pal::WARN)),
+                    n => ui.label(RichText::new(format!("Short of {n} materials")).color(pal::WARN)),
+                };
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(name).color(pal::TEXT)).truncate());
+                    if !detail.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(detail).size(size::FOOTNOTE).color(pal::DIM)).truncate());
                     }
                 });
+            });
+        })
+        .body(|ui| {
+            let mut rows: Vec<&Ingredient> = cost.iter().collect();
+            rows.sort_by_key(|i| have(&i.symbol) >= i64::from(i.count));
+            for i in rows {
+                let h = u64::try_from(have(&i.symbol)).unwrap_or(0);
+                let ok = h >= u64::from(i.count);
+                let (glyph, tint) = if ok { (icon::CHECK_CIRCLE, pal::GOOD) } else { (icon::CIRCLE_DASHED, pal::WARN) };
+                need_row(ui, glyph, tint, &i.name(), Some(h), u64::from(i.count), None, |_| {});
             }
         });
-        ui.add_space(6.0);
-    }
 }

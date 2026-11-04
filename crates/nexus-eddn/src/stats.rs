@@ -3,6 +3,7 @@
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 /// One line for a UI ticker. Never contains uploader names or IDs.
@@ -26,6 +27,8 @@ pub struct EddnStats {
     decode_errors: AtomicU64,
     dropped_backlog: AtomicU64,
     ingested: AtomicU64,
+    /// Filled by the database writer as it commits what the feed sent (see [`EddnStatsSnapshot::stored`]).
+    stored: Arc<AtomicU64>,
     connects: AtomicU64,
     last_message_unix_ms: AtomicI64,
     headline_capacity: usize,
@@ -57,6 +60,9 @@ pub struct EddnStatsSnapshot {
     pub dropped_backlog: u64,
     /// Database items queued from EDDN.
     pub ingested: u64,
+    /// Of those, the ones that changed the database, once committed: a scan of a body it doesn't keep (most are
+    /// bare rock), a market report older than the one it has, or a report that changes nothing isn't counted.
+    pub stored: u64,
     /// Successful connections (1 = connected once, never reconnected).
     pub connects: u64,
     pub last_message_unix_ms: Option<i64>,
@@ -85,6 +91,7 @@ impl EddnStats {
             decode_errors: AtomicU64::new(0),
             dropped_backlog: AtomicU64::new(0),
             ingested: AtomicU64::new(0),
+            stored: Arc::new(AtomicU64::new(0)),
             connects: AtomicU64::new(0),
             last_message_unix_ms: AtomicI64::new(0),
             headline_capacity: headline_capacity.max(1),
@@ -144,6 +151,7 @@ impl EddnStats {
             decode_errors: self.decode_errors.load(Ordering::Relaxed),
             dropped_backlog: self.dropped_backlog.load(Ordering::Relaxed),
             ingested: self.ingested.load(Ordering::Relaxed),
+            stored: self.stored.load(Ordering::Relaxed),
             connects: self.connects.load(Ordering::Relaxed),
             last_message_unix_ms: (last > 0).then_some(last),
             per_schema,
@@ -184,6 +192,11 @@ impl EddnStats {
 
     pub(crate) fn ingested(&self, n: usize) {
         self.ingested.fetch_add(n as u64, Ordering::Relaxed);
+    }
+
+    /// The counter the database writer adds the stored items to.
+    pub(crate) fn stored_counter(&self) -> Arc<AtomicU64> {
+        self.stored.clone()
     }
 
     /// One accepted message of `schema`.

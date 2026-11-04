@@ -78,6 +78,7 @@ pub struct NexusApp {
     mining_ui: pages::mining::MiningUi,
     fleet: pages::fleet::FleetUi,
     eng: pages::engineering::EngineeringUi,
+    missions: pages::missions::MissionsUi,
     log: pages::logbook::LogbookUi,
     map: pages::galaxy_map::MapUi,
     binds: pages::bindings::BindsUi,
@@ -193,6 +194,7 @@ impl NexusApp {
             mining_ui: pages::mining::MiningUi::new(ov.tab.as_deref(), shot.is_some()),
             fleet: pages::fleet::FleetUi::new(ov.tab.as_deref(), shot.is_some()),
             eng: pages::engineering::EngineeringUi::new(ov.tab.as_deref()),
+            missions: pages::missions::MissionsUi::default(),
             log: Default::default(),
             map,
             binds: Default::default(),
@@ -583,6 +585,8 @@ impl NexusApp {
         let mut restart = false;
         let mut map_action = None;
         let mut follow = None;
+        // A "where to get it" panel (Engineering, Missions) opens the Market page on its answer.
+        let mut market_goto = None;
         let route = if page == Page::GalaxyMap { pages::navigation::active_route(gs, self.nav.planned.as_ref()) } else { Vec::new() };
         let mut body = |ui: &mut Ui| match page {
             Page::Dashboard => pages::dashboard::show(ui, gs, &self.settings.colonisation.hidden),
@@ -626,13 +630,21 @@ impl NexusApp {
                 pages::ask::AskAction::None => {}
             },
             Page::Carrier => settings_changed |= pages::carrier::show(ui, gs, &mut self.settings.carrier),
-            Page::Engineering => settings_changed |= pages::engineering::show(ui, gs, &mut self.eng, &mut self.settings.wishlist),
+            Page::Engineering => {
+                let sources = pages::where_to_get::Sources { db: self.market.db.as_ref(), spansh: &self.spansh, rt: self.rt.handle() };
+                let (changed, goto) = pages::engineering::show(ui, gs, &mut self.eng, &mut self.settings.wishlist, &sources);
+                settings_changed |= changed;
+                market_goto = goto;
+            }
             Page::Fleet => {
                 if let Some(pages::fleet::FleetAction::PlotTo(s)) = pages::fleet::show(ui, gs, &mut self.fleet, &self.spansh, self.rt.handle()) {
                     map_action = Some(pages::galaxy_map::MapAction::PlotTo(s));
                 }
             }
-            Page::Missions => pages::missions::show(ui, gs),
+            Page::Missions => {
+                let sources = pages::where_to_get::Sources { db: self.market.db.as_ref(), spansh: &self.spansh, rt: self.rt.handle() };
+                market_goto = pages::missions::show(ui, gs, &mut self.missions, &sources);
+            }
             Page::Bgs => settings_changed |= pages::bgs::show(ui, gs, &mut self.settings.bgs),
             Page::Logbook => pages::logbook::show(ui, gs, &mut self.log, &self.core.index),
             Page::Statistics => pages::stats::show(ui, gs),
@@ -685,7 +697,7 @@ impl NexusApp {
                     self.settings.market.clone_from(&self.market_ui.prefs);
                     self.settings_dirty = Some(Instant::now());
                 }
-                // Feed counters and headlines move every second or so.
+                // The feed's counters move every second or so.
                 ui.ctx().request_repaint_after(Duration::from_millis(1000));
             }
         };
@@ -695,6 +707,10 @@ impl NexusApp {
             body(ui);
         }
         drop(model);
+        if let Some(to) = market_goto {
+            self.market_ui.open_source(self.market.db.as_ref(), to);
+            self.page = Page::Market;
+        }
         if let Some(pages::galaxy_map::MapAction::PlotTo(system)) = map_action {
             self.nav.to = system;
             self.nav.planner = pages::navigation::Planner::Exact;
