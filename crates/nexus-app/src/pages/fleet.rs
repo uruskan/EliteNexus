@@ -1,5 +1,5 @@
 use crate::theme::{display, pal};
-use crate::widgets::{badge, card, empty, short_credits};
+use crate::widgets::{badge, badge_size, card, empty, short_credits};
 use egui::{Grid, RichText, Sense, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
@@ -19,7 +19,9 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut FleetUi) {
     let selected = st.selected.or(gs.fleet.current_ship_id);
     let mut ships: Vec<&Ship> = gs.fleet.ships.values().collect();
     ships.sort_by(|a, b| (Some(b.id) == gs.fleet.current_ship_id).cmp(&(Some(a.id) == gs.fleet.current_ship_id)).then(b.total_value().cmp(&a.total_value())));
-    if ui.available_width() < 940.0 {
+    // The ship list goes beside the loadout only where that leaves the loadout about 700 pt, which its module table
+    // needs for long module names and engineering badges; in a narrower window the ships are pills above it.
+    if ui.available_width() < 1050.0 {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
             for s in &ships {
@@ -178,24 +180,46 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) {
     }
     let mut modules: Vec<&ShipModule> = s.modules.iter().filter(|m| !m.item.contains("_cockpit") && !m.slot.eq_ignore_ascii_case("VesselVoice") && !m.slot.contains("Paint") && !m.slot.contains("Decal") && !m.slot.contains("Name") && !m.slot.contains("Bobble") && !m.slot.contains("Livery")).collect();
     modules.sort_by(|a, b| slot_group(&a.slot).0.cmp(&slot_group(&b.slot).0).then(a.slot.cmp(&b.slot)));
-    // Slot and Module are as wide as their longest text, Module only as far as the room two engineering badges need
-    // allows; together they take at least the 370 they always had, so Engineering never starts further right. A name
-    // that still doesn't fit ends in "…" and shows whole on hover ("8A Mk II Supercharge Optimised Frame Shift Drive (SCO)").
+    // Slot and Module are as wide as their longest text, Module only as far as the engineering badges leave room, and
+    // together at least the 370 they always had while the window allows. A name that still doesn't fit ends in "…" and
+    // shows whole on hover ("8A Mk II Supercharge Optimised Frame Shift Drive (SCO)"). Where a blueprint's badge and
+    // its experimental effect's side by side would squeeze Module below that, the effect goes under the blueprint in a
+    // taller row, so the badges always stay inside the table; Module then stops at those 370 and leaves the badges the
+    // rest, so few rows need the second line.
     let slots: Vec<String> = modules.iter().map(|m| nexus_data::outfitting::slot_display(&m.slot)).collect();
     let names: Vec<String> = modules.iter().map(|m| nexus_data::outfitting::display_name(&m.item)).collect();
+    let values: Vec<String> = modules.iter().map(|m| m.value.map(short_credits).unwrap_or_default()).collect();
+    let blueprints: Vec<Option<String>> = modules.iter().map(|m| m.engineering.as_ref().map(|e| format!("G{} {}", e.level, nexus_data::names::split_camel(&e.blueprint.replace('_', " "))))).collect();
     let font = egui::TextStyle::Body.resolve(ui.style());
     let widest = |texts: &[String]| texts.iter().map(|t| ui.painter().layout_no_wrap(t.clone(), font.clone(), pal::TEXT).size().x + 8.0).fold(0.0, f32::max);
+    let gap = ui.spacing().item_spacing.x;
+    // Each row's blueprint and experimental badge widths (0: none), and the column they need side by side or stacked.
+    let badge_w: Vec<[f32; 2]> = modules
+        .iter()
+        .zip(&blueprints)
+        .map(|(m, bp)| [bp.as_deref(), m.engineering.as_ref().and_then(|e| e.experimental.as_deref())].map(|t| t.map_or(0.0, |t| badge_size(ui, t).x)))
+        .collect();
+    let pair = |[b, x]: [f32; 2]| if x > 0.0 { b + gap + x } else { b };
+    let side_by_side = badge_w.iter().map(|w| pair(*w)).fold(120.0, f32::max);
+    let stacked = badge_w.iter().map(|[b, x]| b.max(*x)).fold(120.0, f32::max);
     let slot_w = widest(&slots).clamp(130.0, 180.0);
-    let room = ui.available_width() - slot_w - 80.0 - 360.0 - 3.0 * ui.spacing().item_spacing.x;
-    let module_w = widest(&names).min(room).max(370.0 - slot_w);
+    let value_w = widest(&values).max(80.0);
+    let room = ui.available_width() - slot_w - value_w - 3.0 * gap;
+    let (module_want, floor) = (widest(&names), 370.0 - slot_w);
+    let stack = room - side_by_side < module_want.min(floor);
+    let (eng_w, module_max) = if stack { (stacked, module_want.min(floor)) } else { (side_by_side, module_want.max(floor)) };
+    let module_w = (room - eng_w).min(module_max).max(100.0);
+    // A row whose badges are stacked is one badge, and the 4 pt between them, taller.
+    let badge_h = badge_size(ui, "G5").y;
+    let heights: Vec<f32> = badge_w.iter().map(|w| if w[1] > 0.0 && pair(*w) > room - module_w { 36.0 + badge_h } else { 32.0 }).collect();
     TableBuilder::new(ui)
         .striped(true)
         .resizable(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(Column::exact(slot_w).clip(true))
         .column(Column::exact(module_w).clip(true))
-        .column(Column::initial(80.0))
-        .column(Column::remainder().at_least(200.0))
+        .column(Column::exact(value_w))
+        .column(Column::remainder().clip(true))
         .header(30.0, |mut h| {
             for t in ["Slot", "Module", "Value", "Engineering"] {
                 h.col(|ui| {
@@ -204,7 +228,7 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) {
             }
         })
         .body(|body| {
-            body.rows(32.0, modules.len(), |mut row| {
+            body.heterogeneous_rows(heights.iter().copied(), |mut row| {
                 let i = row.index();
                 let m = modules[i];
                 row.col(|ui| {
@@ -215,20 +239,28 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) {
                     ui.add(egui::Label::new(if m.on { t } else { t.color(pal::FAINT) }).truncate());
                 });
                 row.col(|ui| {
-                    if let Some(v) = m.value {
-                        ui.label(RichText::new(short_credits(v)).color(pal::DIM));
+                    if m.value.is_some() {
+                        ui.label(RichText::new(&values[i]).color(pal::DIM));
                     }
                 });
                 row.col(|ui| {
-                    if let Some(e) = &m.engineering {
-                        ui.horizontal(|ui| {
-                            badge(ui, &format!("G{} {}", e.level, nexus_data::names::split_camel(&e.blueprint.replace('_', " "))), pal::PURPLE);
+                    if let (Some(e), Some(bp)) = (&m.engineering, &blueprints[i]) {
+                        let badges = |ui: &mut Ui| {
+                            badge(ui, bp, pal::PURPLE);
                             if let Some(x) = &e.experimental {
                                 badge(ui, x, pal::ACCENT);
                             }
-                        })
-                        .response
-                        .on_hover_ui(|ui| {
+                        };
+                        let shown = if heights[i] > 32.0 {
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 4.0;
+                                ui.add_space((ui.available_height() - 2.0 * badge_h - 4.0) / 2.0);
+                                badges(ui);
+                            })
+                        } else {
+                            ui.horizontal(badges)
+                        };
+                        shown.response.on_hover_ui(|ui| {
                             for md in &e.modifiers {
                                 if let Some(p) = md.improvement_pct() {
                                     let col = if p >= 0.0 { pal::GOOD } else { pal::BAD };
