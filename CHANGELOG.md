@@ -79,6 +79,27 @@ release time that section becomes the new version and the release workflow publi
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.
+- **BGS & Powerplay counts your bounties.** Bounty vouchers you handed in never reached the page, so its Bounties
+  column stayed empty: the journal names each faction's share of a voucher differently from the bounty itself, and
+  every share was read as 0. Each faction now gets its share, in the system where you hand the vouchers in. The page
+  is read from your journal, so bounties you handed in before this version show too. Combat bonds and Statistics
+  were counted right.
+- **BGS & Powerplay: "All time" says what it counts.** It said "Counting from 01 Jan 02:00", the date computer
+  clocks count from (1 January 1970) in your time zone. It now says it counts all your journals, and the date of
+  your first activity in them.
+- **BGS & Powerplay: a system's factions fit the window.** The table on each system's card had a column for every
+  kind of activity, and in a window about 1,000 pixels wide it ran past the edge: Missions failed and Murders were
+  cut off. It now has a column only for each kind of activity the system saw in the period, and where even those
+  don't fit side by side, each faction lists its activity under its name.
+- **Statistics and BGS & Powerplay: every chart labels its side.** The Powerplay merits chart could have "0" as its
+  only label when your best day was a few hundred merits, and so could Jumps per day with up to about nine jumps a
+  day: the marks went by tens, hundreds and thousands, and the ones close enough together had no room for their
+  labels. The charts are now marked in round steps (1, 2, 2.5 or 5 times ten, a hundred, …), as fine as their labels
+  have room for. On the Credits chart's **Log scale**, a balance that stayed between two powers of ten (2 to 5
+  billion, say) had no label at all; it now gets 2 B, 3 B, 4 B and 5 B.
+- **Statistics: the Credits chart's dates are your own.** Its dates stood at midnight UTC, which west of UTC (the
+  Americas) is the evening before: your balance from the morning of the 3rd showed just after the mark for the 2nd.
+  Each date now marks your own midnight, as on Jumps per day.
 - **Statistics and BGS & Powerplay: a bar's number is no longer cut off** (GitHub issue #4, with a screenshot).
   Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
   edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always

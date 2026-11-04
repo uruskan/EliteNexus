@@ -119,6 +119,32 @@ impl LocalDays {
     pub fn label(day: i64, fmt: &str) -> String {
         i32::try_from(day).ok().and_then(chrono::NaiveDate::from_epoch_days).map(|d| d.format(fmt).to_string()).unwrap_or_default()
     }
+
+    /// Where `t` sits on a chart whose x axis counts these days: its day plus the share of that day gone by, so whole
+    /// numbers fall on the commander's midnights, under the dates [`LocalDays::label`] writes. A day that lasts 23 or 25
+    /// hours, where the clocks change, is still one unit wide.
+    pub fn at(&mut self, t: Timestamp) -> f64 {
+        self.at_in(t, &chrono::Local)
+    }
+
+    fn at_in<Tz: chrono::TimeZone>(&mut self, t: Timestamp, tz: &Tz) -> f64 {
+        let day = self.day_in(t, tz);
+        day as f64 + (t.0 - self.from) as f64 / (self.to - self.from) as f64
+    }
+
+    /// The instant at `x` on such an axis (the inverse of [`LocalDays::at`]), for a chart's hover label.
+    pub fn instant(x: f64) -> Timestamp {
+        Self::instant_in(x, &chrono::Local)
+    }
+
+    fn instant_in<Tz: chrono::TimeZone>(x: f64, tz: &Tz) -> Timestamp {
+        let day = x.floor();
+        let date = i32::try_from(day as i64).ok().and_then(chrono::NaiveDate::from_epoch_days);
+        match date.and_then(|d| Some((day_start(d, tz)?, day_start(d.succ_opt()?, tz)?))) {
+            Some((from, to)) => Timestamp(from + ((x - day) * (to - from) as f64).round() as i64),
+            None => Timestamp((x * 86_400.0) as i64),
+        }
+    }
 }
 
 impl fmt::Display for Timestamp {
@@ -217,5 +243,29 @@ mod tests {
             assert!(from <= at(s) && at(s) < to, "{s}");
         }
         assert_eq!(LocalDays::label(i64::MAX, "%d %b"), "");
+    }
+
+    #[test]
+    fn a_days_axis_puts_midnight_under_its_date() {
+        let at = |s: &str| Timestamp::parse(s).unwrap();
+        let new_york = chrono::FixedOffset::west_opt(5 * 3_600).unwrap();
+        let nov3 = (at("2026-11-03T00:00:00Z").0 / 86_400) as f64;
+        // Midnight in New York is 05:00 UTC: whole on the axis, under "03 Nov". Unix seconds over 86,400 put UTC
+        // midnight there, the evening of the 2nd in New York, under the label "02 Nov": a day early.
+        let mut days = LocalDays::default();
+        assert_eq!(days.at_in(at("2026-11-03T05:00:00Z"), &new_york), nov3);
+        assert_eq!(LocalDays::label(nov3 as i64, "%d %b"), "03 Nov");
+        assert_eq!(days.at_in(at("2026-11-03T17:00:00Z"), &new_york), nov3 + 0.5, "noon in New York");
+        assert_eq!(days.at_in(at("2026-11-03T04:00:00Z"), &new_york), nov3 - 1.0 + 23.0 / 24.0, "23:00 on the 2nd");
+        // The hover label reads the instant back.
+        for s in ["2026-11-03T05:00:00Z", "2026-11-03T17:00:00Z", "2026-11-04T04:59:59Z"] {
+            assert_eq!(LocalDays::instant_in(days.at_in(at(s), &new_york), &new_york), at(s), "{s}");
+        }
+        // On this computer's clock too, whichever day the clocks change on.
+        let mut days = LocalDays::default();
+        for s in ["2026-03-29T00:30:00Z", "2026-10-25T01:30:00Z", "2026-11-04T12:00:00Z"] {
+            assert_eq!(LocalDays::instant(days.at(at(s))), at(s), "{s}");
+            assert_eq!(days.at(at(s)).floor() as i64, days.day(at(s)), "{s}");
+        }
     }
 }

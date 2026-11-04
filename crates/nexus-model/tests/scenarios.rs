@@ -314,6 +314,42 @@ fn massacre_stack_end_to_end() {
     assert_eq!(m.active().unwrap().missions.massacre_stacks()[0].kills_remaining, 0);
 }
 
+/// Handed-in vouchers reach BGS & Powerplay (each faction's share, in the system they're handed in) and Statistics (the
+/// credits received). A bounty voucher lists its factions with `Amount`, where the `Bounty` event says `Reward`: read as
+/// a `Reward`, every share came out 0 and no bounty reached the BGS page.
+#[test]
+fn redeemed_vouchers_count_for_the_bgs_and_the_ledger() {
+    use nexus_journal::Timestamp;
+    use nexus_model::bgs::BgsKind;
+    use nexus_model::history::LedgerCategory;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            // Bounties for two factions and one with no name (the game writes that too), then a conflict zone's bonds.
+            r#"{ "timestamp":"2026-10-01T10:30:00Z", "event":"RedeemVoucher", "Type":"bounty", "Amount":155000, "Factions":[ { "Faction":"Alpha Jet Group", "Amount":120000 }, { "Faction":"", "Amount":5000 }, { "Faction":"Alpha Patron's Party", "Amount":30000 } ] }"#,
+            r#"{ "timestamp":"2026-10-01T10:31:00Z", "event":"RedeemVoucher", "Type":"CombatBond", "Amount":80000, "Faction":"Alpha Jet Group" }"#,
+            // A codex voucher pays too; the BGS page counts bounties and bonds.
+            r#"{ "timestamp":"2026-10-01T10:32:00Z", "event":"RedeemVoucher", "Type":"codex", "Amount":25000, "Faction":"" }"#,
+        ],
+    );
+    let gs = m.active().expect("commander");
+    let summary = gs.bgs.summary(Timestamp::ZERO);
+    let found: Vec<_> = summary.iter().flat_map(|s| s.factions.iter().map(|f| (s.system.as_str(), f.faction.as_str(), f.kinds.clone()))).collect();
+    assert_eq!(
+        found,
+        [
+            ("Alpha", "Alpha Jet Group", vec![(BgsKind::Bounty, 120_000, 1), (BgsKind::CombatBond, 80_000, 1)]),
+            ("Alpha", "Alpha Patron's Party", vec![(BgsKind::Bounty, 30_000, 1)]),
+        ]
+    );
+    let earned = |cat| gs.history.totals_since(Timestamp::ZERO).into_iter().find(|(c, _, _)| *c == cat).map(|(_, i, _)| i);
+    assert_eq!(earned(LedgerCategory::Bounties), Some(155_000), "Statistics counts what was paid out");
+    assert_eq!(earned(LedgerCategory::CombatBonds), Some(80_000));
+    assert_eq!(earned(LedgerCategory::Exploration), Some(25_000));
+}
+
 /// `PowerplayMerits` names no system: each award goes to the system the commander was in when the game wrote it,
 /// and the period's total stays the sum of the awards.
 #[test]

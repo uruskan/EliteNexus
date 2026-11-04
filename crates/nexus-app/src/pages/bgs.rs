@@ -2,13 +2,13 @@
 
 use crate::theme::{display, pal};
 use crate::widgets::{card, card_with, empty, short_credits};
-use egui::{Grid, RichText, Ui};
+use egui::{Color32, Grid, RichText, Ui};
 use egui_phosphor::regular as icon;
 use egui_plot::{Bar, BarChart, Plot};
 use nexus_data::names::group_digits;
 use nexus_journal::time::LocalDays;
 use nexus_journal::Timestamp;
-use nexus_model::bgs::{last_tick, BgsKind};
+use nexus_model::bgs::{last_tick, BgsKind, FactionSummary, SystemSummary};
 use nexus_model::GameState;
 use serde::{Deserialize, Serialize};
 
@@ -66,7 +66,8 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut BgsPrefs) -> bool {
         Period::Week => Timestamp(now.0 - 7 * 86_400),
         Period::All => Timestamp::ZERO,
     };
-    ui.label(RichText::new(format!("Counting from {}", since.to_local_string("%d %b %H:%M"))).small().color(pal::DIM));
+    let first = gs.bgs.actions.iter().map(|a| a.ts).chain(gs.bgs.merits.iter().map(|m| m.ts)).min();
+    ui.label(RichText::new(counting(st.period, since, first)).small().color(pal::DIM));
     ui.add_space(6.0);
 
     powerplay(ui, gs, since);
@@ -84,37 +85,84 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut BgsPrefs) -> bool {
                 ui.label(RichText::new("No faction activity recorded here in this period.").color(pal::DIM));
                 return;
             }
-            Grid::new(("bgs", &sys.system)).num_columns(COLUMNS.len() + 1).striped(true).spacing([14.0, 4.0]).show(ui, |ui| {
-                ui.label(RichText::new("Faction").color(pal::DIM));
-                for k in COLUMNS {
-                    ui.label(RichText::new(k.label()).small().color(pal::DIM));
-                }
-                ui.end_row();
-                for f in &sys.factions {
-                    ui.label(RichText::new(&f.faction).color(pal::TEXT));
-                    for k in COLUMNS {
-                        match f.kinds.iter().find(|(kk, _, _)| *kk == k) {
-                            Some((_, amount, n)) => {
-                                let text = match k {
-                                    BgsKind::MissionInfluence => format!("{}{} ({n})", if *amount >= 0 { "+" } else { "" }, amount),
-                                    BgsKind::MissionFailed | BgsKind::Murder | BgsKind::Crime => n.to_string(),
-                                    _ => short_credits(*amount),
-                                };
-                                let col = if k.positive() { pal::GOOD } else { pal::BAD };
-                                ui.label(RichText::new(text).font(display(13.0)).color(col));
-                            }
-                            None => {
-                                ui.label(RichText::new("·").color(pal::FAINT));
-                            }
-                        }
-                    }
-                    ui.end_row();
-                }
-            });
+            factions(ui, sys);
         });
         ui.add_space(6.0);
     }
     changed
+}
+
+/// A system's factions: a table when it fits the card, and when it doesn't, each faction with its activity on the
+/// lines under its name (the table, with a column for every kind of activity, ran past a 1,000-pixel window). Only
+/// the kinds of activity the system saw in the period get a column.
+fn factions(ui: &mut Ui, sys: &SystemSummary) {
+    let kinds: Vec<BgsKind> = COLUMNS.into_iter().filter(|k| sys.factions.iter().any(|f| cell(f, *k).is_some())).collect();
+    const GAP: f32 = 14.0;
+    let (head, body) = (egui::TextStyle::Small.resolve(ui.style()), egui::TextStyle::Body.resolve(ui.style()));
+    let width = |text: &str, font: &egui::FontId| ui.painter().layout_no_wrap(text.to_owned(), font.clone(), pal::TEXT).size().x;
+    let names = sys.factions.iter().map(|f| width(&f.faction, &body)).fold(width("Faction", &body), f32::max);
+    let columns: f32 =
+        kinds.iter().map(|k| sys.factions.iter().filter_map(|f| cell(f, *k)).map(|(t, _)| width(&t, &display(13.0))).fold(width(k.label(), &head), f32::max)).sum();
+    if names + columns + GAP * kinds.len() as f32 <= ui.available_width() {
+        Grid::new(("bgs", &sys.system)).num_columns(kinds.len() + 1).striped(true).spacing([GAP, 4.0]).show(ui, |ui| {
+            ui.label(RichText::new("Faction").color(pal::DIM));
+            for k in &kinds {
+                ui.label(RichText::new(k.label()).small().color(pal::DIM));
+            }
+            ui.end_row();
+            for f in &sys.factions {
+                ui.label(RichText::new(&f.faction).color(pal::TEXT));
+                for k in &kinds {
+                    match cell(f, *k) {
+                        Some((text, col)) => ui.label(RichText::new(text).font(display(13.0)).color(col)),
+                        None => ui.label(RichText::new("·").color(pal::FAINT)),
+                    };
+                }
+                ui.end_row();
+            }
+        });
+        return;
+    }
+    for (i, f) in sys.factions.iter().enumerate() {
+        if i > 0 {
+            ui.separator();
+        }
+        ui.label(RichText::new(&f.faction).color(pal::TEXT));
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(GAP, 2.0);
+            for k in &kinds {
+                if let Some((text, col)) = cell(f, *k) {
+                    // One label, so a kind and its amount move to the next line together.
+                    let format = |font_id: egui::FontId, color| egui::TextFormat { font_id, color, valign: egui::Align::Center, ..Default::default() };
+                    let mut job = egui::text::LayoutJob::default();
+                    job.append(k.label(), 0.0, format(head.clone(), pal::DIM));
+                    job.append(&text, 6.0, format(display(13.0), col));
+                    ui.add(egui::Label::new(job).wrap_mode(egui::TextWrapMode::Extend));
+                }
+            }
+        });
+    }
+}
+
+/// What a faction's entry for `k` says, in its colour; None when it had none of that kind.
+fn cell(f: &FactionSummary, k: BgsKind) -> Option<(String, Color32)> {
+    let (_, amount, n) = f.kinds.iter().find(|(kind, _, _)| *kind == k)?;
+    let text = match k {
+        BgsKind::MissionInfluence => format!("{}{amount} ({n})", if *amount >= 0 { "+" } else { "" }),
+        BgsKind::MissionFailed | BgsKind::Murder | BgsKind::Crime => n.to_string(),
+        _ => short_credits(*amount),
+    };
+    Some((text, if k.positive() { pal::GOOD } else { pal::BAD }))
+}
+
+/// What the period counts, under its buttons. "All time" has no start of its own (the Unix epoch it counts from read
+/// "01 Jan 02:00"): it counts every journal, and `first` is the oldest activity in them.
+fn counting(period: Period, since: Timestamp, first: Option<Timestamp>) -> String {
+    match (period, first) {
+        (Period::All, Some(first)) => format!("Counting all your journals (first activity {})", first.to_local_string("%d %b %Y")),
+        (Period::All, None) => "Counting all your journals".into(),
+        _ => format!("Counting from {}", since.to_local_string("%d %b %H:%M")),
+    }
 }
 
 /// A system's merits, in its card's title row.
@@ -165,6 +213,8 @@ fn powerplay(ui: &mut Ui, gs: &GameState, since: Timestamp) {
                 .include_x(last as f64 + 1.0)
                 .include_y(0.0)
                 .x_axis_formatter(crate::widgets::day_axis)
+                .y_grid_spacer(crate::widgets::round_marks(1.0))
+                .y_axis_formatter(|m, _| group_digits(m.value.round() as i64))
                 .show(ui, |p| p.bar_chart(BarChart::new("merits", bars).element_formatter(Box::new(|_, _| String::new()))));
             crate::widgets::bar_tooltip(&plot, |day| {
                 let date = LocalDays::label(day, "%d %b");
@@ -178,4 +228,22 @@ fn powerplay(ui: &mut Ui, gs: &GameState, since: Timestamp) {
             crate::widgets::footnote(ui, "Each system below shows the merits you earned there. The journal doesn't say which system a merit award counts for, so it's placed in the system you were in when the game awarded it.");
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_time_counts_every_journal() {
+        // "All time" counts from the Unix epoch, which in local time read "01 Jan 02:00" (or 31 Dec, west of UTC).
+        let first = Timestamp::parse("2025-03-14T12:00:00Z").unwrap();
+        let all = counting(Period::All, Timestamp::ZERO, Some(first));
+        assert_eq!(all, format!("Counting all your journals (first activity {})", first.to_local_string("%d %b %Y")));
+        assert!(all.ends_with("2025)"), "{all}");
+        assert_eq!(counting(Period::All, Timestamp::ZERO, None), "Counting all your journals");
+        // The other periods start at their own time.
+        let tick = Timestamp::parse("2026-11-03T13:00:00Z").unwrap();
+        assert_eq!(counting(Period::SinceTick, tick, Some(first)), format!("Counting from {}", tick.to_local_string("%d %b %H:%M")));
+    }
 }
