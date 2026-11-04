@@ -146,7 +146,7 @@ fn stations_search_sample() {
         resp.search_reference.as_deref(),
         Some("D89314F8-C61D-11F1-8DFD-D2F019E66765")
     );
-    let reference = resp.reference.as_ref().expect("reference");
+    let reference = resp.reference.first().expect("reference");
     assert_eq!(
         (reference.name.as_str(), reference.id64),
         ("Sol", Some(10_477_373_803))

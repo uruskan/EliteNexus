@@ -28,6 +28,7 @@ Request budget used: 12 API requests to `spansh.co.uk/api` (1 neutron job, 1 res
 | Multi-stop tourist route | `POST /api/tourist/route` | 3.7 |
 | Nearest commodity, module, ship, material trader, tech broker or Interstellar Factors | `POST /api/stations/search` | 4 |
 | Mining hotspot finder | `POST /api/bodies/search` with the `ring_signals` filter | 4.7 B |
+| Rhino surface mining: where to mine (Mining › Where to mine) | `POST /api/bodies/search` with the `signals` filter `Planetary Mining Location` | 4.7 C |
 | Faction and power system search | `POST /api/systems/search` | 4.6 |
 | Offline/local galaxy database | `downloads.spansh.co.uk` dumps plus the daily `galaxy_1day` | 7 |
 
@@ -375,7 +376,7 @@ A direct `/search` response also returns a `search_reference`, so results can be
 - **Reference point**: choose exactly one.
   - `"reference_system": "<name>"`
   - `"reference_coords": {"x":0,"y":0,"z":0}`
-  - `"reference_route": {"source":"Sol","destination":"Colonia"}` (distance measured to a route)
+  - `"reference_route": {"source":"Sol","destination":"Colonia"}` (distance measured to a route). [TESTED 2026-11-04] The route is the straight **segment** between the two systems, not a plotted route and not an infinite line: Sol→Alpha Centauri within 3 ly returned only those two systems' bodies. The response's `reference` is then an **array** of both ends (`[{id64,name,x,y,z},{…}]`) instead of one object.
 
   The `distance` filter and sort need a reference point.
 
@@ -515,7 +516,23 @@ The response was `count` 1720. The first results were Galileo, Daedalus and Colu
 ```
 The response was `count` 3029: Barnard's Star 5 (A ring Painite ×2), WISE 0855-0714 6 and Kokary 5. The filter matches when **any** ring of the body satisfies it.
 
-**C. Constructed, not executed.** These are built from the site's builders and the field catalogue:
+**C. Tested 2026-11-04.** Rhino surface mining: landable bodies with planetary mining locations (19 requests).
+
+- The signal's search name is `Planetary Mining Location`; `GET /api/bodies/field_values/signals` lists it with counts 1 to 36. Search results carry it in `signals[]` under that name; dumps keep the journal symbol `$PlanetaryMiningLocation_Name;` (§7.3).
+  ```json
+  {"filters":{"is_landable":{"value":true},
+              "signals":[{"name":"Planetary Mining Location","count":[1,999],"comparison":"<=>"}],
+              "subtype":{"value":["Rocky body"]},
+              "volcanism_type":{"value":["Major Rocky Magma","Rocky Magma","Minor Rocky Magma"]},
+              "distance":{"min":"0","max":"100"}},
+   "sort":[{"distance":{"direction":"asc"}}],"size":5,"page":0,"reference_system":"Sol"}
+  ```
+  That found 30 rocky bodies with rocky magma and mining locations within 100 ly of Sol; without `subtype` and `volcanism_type` the count hits the 10,000 cap. The filters are ANDed.
+- `GET /api/bodies/field_values/volcanism_type` has 22 values: `No volcanism`, metallic magma, rocky magma and silicate vapour geysers (each plain, `Major` and `Minor`), water geysers and water magma (each three ways), carbon dioxide geysers (three ways), and `Minor Ammonia Magma`, `Minor Methane Magma`, `Minor Nitrogen Magma`. There is **no silicate magma**, although the journal manual lists it.
+- A body without volcanism usually has **no `volcanism_type` field** in a search result (Mercury, Ganymede). Filtering on `"No volcanism"` matched 7 rocky bodies with mining locations within 20 ly of Sol; `{"value":[the 21 volcanic values],"logic":"NOT"}` matched 52, Ganymede and Callisto among them. Use the `NOT` form.
+- Coverage: only scans since the Rhino update (4.4.1, 2026-09-02) report the signal. Within 20 ly of Sol, 559 of 703 landable bodies have a count; within 25 ly of Colonia, 3,161 of 4,089 (and of the 3,347 updated since 2026-09-02, 3,161). A body without a count may still have locations.
+
+**D. Constructed, not executed.** These are built from the site's builders and the field catalogue:
 
 - **Nearest raw material trader**:
   ```json

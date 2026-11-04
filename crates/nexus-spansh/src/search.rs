@@ -350,13 +350,23 @@ pub struct SearchResponse<T> {
     pub from: u64,
     #[serde(deserialize_with = "de::u64_or_zero")]
     pub size: u64,
-    /// The resolved reference system.
-    pub reference: Option<SystemPoint>,
+    /// The resolved reference: the system or point searched around, or a route search's two ends.
+    #[serde(deserialize_with = "reference_points")]
+    pub reference: Vec<SystemPoint>,
     /// GUID for sharing: `https://spansh.co.uk/{kind}/search/{guid}/1`.
     #[serde(deserialize_with = "de::opt_string")]
     pub search_reference: Option<String>,
     #[serde(deserialize_with = "de::lenient_vec")]
     pub results: Vec<T>,
+}
+
+/// `{…}` (a system or coordinates), `[{…}, {…}]` (a route's two ends) or `null`.
+fn reference_points<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<SystemPoint>, D::Error> {
+    Ok(match Value::deserialize(d)? {
+        Value::Array(items) => items.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect(),
+        v @ Value::Object(_) => serde_json::from_value(v).ok().into_iter().collect(),
+        _ => Vec::new(),
+    })
 }
 
 impl<T> Default for SearchResponse<T> {
@@ -365,7 +375,7 @@ impl<T> Default for SearchResponse<T> {
             count: 0,
             from: 0,
             size: 0,
-            reference: None,
+            reference: Vec::new(),
             search_reference: None,
             results: Vec::new(),
         }
@@ -960,6 +970,22 @@ mod tests {
                 .get("reference_system")
                 .is_none()
         );
+    }
+
+    /// A route search answers with both ends of the route (seen live, 2026-11-04).
+    #[test]
+    fn a_route_search_names_both_ends() {
+        let route: SearchResponse<BodyRecord> = serde_json::from_value(json!({
+            "count": 10000, "from": 0, "size": 5, "results": [],
+            "reference": [{"id64": 10477373803u64, "name": "Sol", "x": 0.0, "y": 0.0, "z": 0.0},
+                          {"id64": 3238296097059u64, "name": "Colonia", "x": -9530.5, "y": -910.28125, "z": 19808.125}]
+        }))
+        .expect("route response");
+        let names: Vec<&str> = route.reference.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Sol", "Colonia"]);
+        assert_eq!(route.reference[1].z, 19808.125);
+        let none: SearchResponse<BodyRecord> = serde_json::from_value(json!({"count": 0, "reference": null})).expect("no reference");
+        assert!(none.reference.is_empty());
     }
 
     #[test]
