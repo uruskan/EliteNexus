@@ -315,7 +315,7 @@ impl GalaxyDb {
     }
 
     /// [`Self::commodity_summary`] for rare goods taken as one (see [`Self::search_rare_goods`]). Its
-    /// symbol and name are empty: the caller names it. The average is the mean of what their markets report.
+    /// symbol and name are empty: the caller names it. The average is the mean of each rare good's own.
     pub fn rare_goods_summary(&self, category: Option<&str>, max_age_hours: Option<f64>) -> Result<Option<CommoditySummary>> {
         let conn = self.inner.pool.get()?;
         let cache = self.inner.shared.commodities.read();

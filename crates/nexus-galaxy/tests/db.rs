@@ -1526,19 +1526,23 @@ fn commodity_summary_and_latest_prices() {
 
 /// Rare goods taken as one commodity: George Lucas sells two of them (Azure Milk is Foods, Leestian
 /// Evil Juice Legal Drugs), each a row of its own that says which it is; a category narrows them;
-/// normal goods stay out; the one-commodity search is unchanged.
+/// normal goods stay out; the one-commodity search is unchanged. A carrier's row, which reports no
+/// average, has its good's own.
 #[test]
 fn rare_goods_as_one_commodity() {
     let t = TempDb::new("rares");
     let db = t.db();
+    let carrier = 3_700_000_033u64;
     db.ingest_many(vec![
         system(SYS_A, "Leesti", [0.0, 0.0, 0.0]),
         system(SYS_B, "Rusani", [10.0, 0.0, 0.0]),
         station(31, "George Lucas", SYS_A, "Leesti", "Coriolis", &["dock", "commodities"], "Industrial"),
         station(32, "Fernandes Market", SYS_B, "Rusani", "Coriolis", &["dock", "commodities"], "Industrial"),
+        station(carrier, "K7K-77K", SYS_B, "Rusani", "FleetCarrier", &["dock", "commodities"], "Carrier"),
     ]);
     db.ingest(priced(31, "Leesti", "George Lucas", Some("Coriolis"), &[("bluemilk", 6_000, 0, 9_000, 20, 0), ("leestianeviljuice", 400, 0, 1_600, 40, 0), ("gold", 9_000, 0, 9_400, 500, 0)]));
     db.ingest(priced(32, "Rusani", "Fernandes Market", Some("Coriolis"), &[("rusanioldsmokey", 1_000, 0, 3_000, 10, 0), ("bluemilk", 0, 12_000, 9_000, 0, 50)]));
+    db.ingest(priced(carrier, "Rusani", "K7K-77K", Some("FleetCarrier"), &[("leestianeviljuice", 0, 3_000, 0, 0, 100)]));
     db.flush().expect("flush");
     let rows = |hits: &[CommodityHit]| hits.iter().map(|h| (h.station.clone(), h.commodity.as_ref().map(|c| c.name.clone()).unwrap_or_default())).collect::<Vec<_>>();
     let row = |station: &str, name: &str| (station.to_string(), name.to_string());
@@ -1550,19 +1554,24 @@ fn rare_goods_as_one_commodity() {
     let legal = db.search_rare_goods(Some("Legal Drugs"), &q).expect("rares");
     assert_eq!(rows(&legal), vec![row("George Lucas", "Leestian Evil Juice"), row("Fernandes Market", "Rusani Old Smokey")]);
     let sell = db.search_rare_goods(None, &CommodityQuery { mode: TradeMode::SellToStation, ..q.clone() }).expect("rares");
-    assert_eq!(rows(&sell), vec![row("Fernandes Market", "Azure Milk")]);
+    assert_eq!(rows(&sell), vec![row("Fernandes Market", "Azure Milk"), row("K7K-77K", "Leestian Evil Juice")]);
+    let mean = |c: &Option<RowCommodity>| c.as_ref().map(|c| c.mean);
+    assert_eq!(mean(&sell[1].commodity), Some(1_600), "the carrier reports none: Leestian Evil Juice's own, not one over all rare goods");
 
     // Latest prices: George Lucas twice (one row per market and commodity), Fernandes Market twice.
     let latest = db.latest_rare_prices(None, &q).expect("latest");
     let mut pairs: Vec<(String, String)> = latest.iter().map(|l| (l.station.clone(), l.commodity.as_ref().map(|c| c.name.clone()).unwrap_or_default())).collect();
     pairs.sort();
-    assert_eq!(pairs, vec![row("Fernandes Market", "Azure Milk"), row("Fernandes Market", "Rusani Old Smokey"), row("George Lucas", "Azure Milk"), row("George Lucas", "Leestian Evil Juice")]);
+    assert_eq!(pairs, vec![row("Fernandes Market", "Azure Milk"), row("Fernandes Market", "Rusani Old Smokey"), row("George Lucas", "Azure Milk"), row("George Lucas", "Leestian Evil Juice"), row("K7K-77K", "Leestian Evil Juice")]);
+    let on_carrier = latest.iter().find(|l| l.is_carrier).expect("carrier");
+    assert_eq!((on_carrier.mean, mean(&on_carrier.commodity)), (0, Some(1_600)), "what the carrier reported, and its good's average");
 
     let s = db.rare_goods_summary(Some("Legal Drugs"), Some(72.0)).expect("summary").expect("rare goods");
-    assert_eq!((s.category.as_str(), s.is_rare, s.sellers, s.buyers), ("Legal Drugs", true, 2, 0));
+    assert_eq!((s.category.as_str(), s.is_rare, s.sellers, s.buyers), ("Legal Drugs", true, 2, 1));
     assert_eq!((s.lowest_buy, s.average), (Some(400), Some(2_300)), "the average of 1 600 and 3 000");
     let all = db.rare_goods_summary(None, Some(72.0)).expect("summary").expect("rare goods");
-    assert_eq!((all.sellers, all.buyers, all.highest_sell), (3, 1, Some(12_000)));
+    assert_eq!((all.sellers, all.buyers, all.highest_sell), (3, 2, Some(12_000)));
+    assert_eq!(all.average, Some(4_533), "each rare good's own counted once: 9 000, 1 600 and 3 000");
 
     // One commodity: no row commodity, as before.
     let gold = db.search_commodity(&CommodityQuery { commodity: "gold".into(), ..q }).expect("gold");

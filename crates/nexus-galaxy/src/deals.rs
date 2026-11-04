@@ -349,14 +349,17 @@ fn finish(conn: &Connection, shared: &Shared, rows: &[Row], cands: Vec<Cand>) ->
     Ok(out)
 }
 
+/// The averages [`global_average`] samples: the commodity's range of the buyer and seller indexes.
+pub(crate) const AVERAGE_SAMPLES: [&str; 2] = [
+    "SELECT mean FROM market WHERE commodity_id = ?1 AND sell > 0 AND demand > 0 AND mean > 0 LIMIT 64",
+    "SELECT mean FROM market WHERE commodity_id = ?1 AND buy > 0 AND stock > 0 AND mean > 0 LIMIT 64",
+];
+
 /// The most common average reported for a commodity anywhere (sampled through the buyer/seller
 /// indexes, which cover only rows with demand or stock).
 pub(crate) fn global_average(conn: &Connection, cid: i64) -> Result<Option<i64>> {
     let mut counts: FxHashMap<i64, u32> = FxHashMap::default();
-    for sql in [
-        "SELECT mean FROM market WHERE commodity_id = ?1 AND sell > 0 AND demand > 0 AND mean > 0 LIMIT 64",
-        "SELECT mean FROM market WHERE commodity_id = ?1 AND buy > 0 AND stock > 0 AND mean > 0 LIMIT 64",
-    ] {
+    for sql in AVERAGE_SAMPLES {
         let mut stmt = conn.prepare_cached(sql)?;
         let mut rows = stmt.query([cid])?;
         while let Some(r) = rows.next()? {

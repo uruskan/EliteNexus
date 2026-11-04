@@ -1384,7 +1384,7 @@ fn commodity_header(ui: &mut Ui, page: &CommodityPage, p: &MarketPrefs, have_ori
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(32.0, 8.0);
         let avg_tip = if s.symbol.is_empty() {
-            "Rare goods taken as one: the mean of the galactic averages their markets report. Each rare good's own price differs widely: click a row for which one it is."
+            "Rare goods taken as one: the mean of their galactic averages, each good counted once. Each rare good's own price differs widely: each row compares with its own good's average."
         } else {
             "The average price the game reports for this commodity (the one most stations quote). Fleet carriers don't report one."
         };
@@ -1645,8 +1645,8 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
                 row.col(|ui| {
                     ui.label(RichText::new(cr(h.price)).font(display(size::CALLOUT)).color(if buying { pal::CYAN } else { pal::GOOD }));
                 });
-                // A rare good against its own average (the market reports it), not the one over all of them.
-                let avg = h.commodity.as_ref().map(|c| c.mean).filter(|m| *m > 0).or(average);
+                // A rare good against its own average (0 when no market reports one), never the one over all of them.
+                let avg = h.commodity.as_ref().map_or(average, |c| Some(c.mean));
                 row.col(|ui| vs_average(ui, h.price, avg, buying));
                 row.col(|ui| {
                     ui.label(RichText::new(nexus_data::names::group_digits(h.quantity)).color(pal::DIM));
@@ -1729,7 +1729,9 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
                 // The page's commodity, or (rare goods taken as one) the row's own.
                 let (symbol, name) = q.commodity.as_ref().map_or(page_good, |c| (c.symbol.as_str(), c.name.as_str()));
                 row.set_selected(selected.is_some_and(|k| k.0 == q.market_id && k.1 == symbol));
-                let avg = Some(q.mean).filter(|m| *m > 0).or(average);
+                // A rare good against its own average, never the one over all of them; the page's commodity against
+                // the one this market reports or (carriers report none) the page's.
+                let avg = q.commodity.as_ref().map_or_else(|| Some(q.mean).filter(|m| *m > 0).or(average), |c| Some(c.mean));
                 row.col(|ui| {
                     // Pins the side it trades (where it buys, when it does both).
                     let pinned = [true, false].into_iter().find(|s| prefs.is_pinned(q.market_id, symbol, *s));
