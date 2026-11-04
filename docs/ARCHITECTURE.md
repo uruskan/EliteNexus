@@ -63,8 +63,10 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   (assistant.rs → nexus-ai on a worker thread; `ai_tools.rs` implements its tools over the model, galaxy DB,
   journal and Spansh), Spansh client, TTS. `ai_tools::TOOLS` describes each tool once: name, description, argument
   schema, the words Ask shows while it runs and under an answer, whether it only reads, whether it goes online, and
-  whether Ask's model or an MCP agent is offered it. A tool that can say more than its caller takes
-  (`NexusTools::budget`) builds its reply through `ai_tools::fit`, which keeps the most detail that fits. `mcp.rs` is
+  whether Ask's model or an MCP agent is offered it. Most tools that can say more than their caller takes
+  (`NexusTools::budget`) build their reply through `ai_tools::fit`, which keeps the most detail that fits; `knowledge`
+  gives each section a share and cuts a long one to the lines about the question. `NexusTools::call` cuts anything
+  still over the budget (`within`), saying so. `mcp.rs` is
   Settings › AI agents: `EliteNexus --mcp` (`mcp/stdio.rs`, started by the agent, before any window, lock or log)
   speaks MCP on stdin/stdout, both the 2026-07-28 revision (`server/discover`, `_meta` on every request) and the
   `initialize` revisions before it, and hands each call to the running app over a per-user named pipe (Unix socket

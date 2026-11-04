@@ -586,21 +586,53 @@ impl NexusTools {
         let Some(sys) = gs.exploration.systems.get(&gs.location.system_address) else {
             return Ok(json!({ "message": "No scans of the current system yet: FSS-scan it first." }));
         };
-        let bodies: Vec<Value> = sys
+        // The most valuable bodies first, each with its likely species, worked out once.
+        let mut bodies: Vec<(i64, Value, Vec<Value>)> = sys
             .bodies
             .values()
             .filter(|b| b.bio_signals > 0)
             .map(|b| {
-                json!({
+                let value = b.predicted_value(b.was_footfalled == Some(false));
+                let body = json!({
                     "body": b.name, "biological_signals": b.bio_signals, "distance_ls": b.distance_ls.round(),
                     "genera_from_dss": b.genuses,
                     "sampled": b.organics.iter().map(|o| json!({ "species": o.species, "samples": o.samples, "analysed": o.analysed })).collect::<Vec<_>>(),
-                    "likely_species": b.likely_species().iter().take(8).map(|p| json!({ "species": p.species, "value_cr": p.value, "likelihood_pct": (p.likelihood * 100.0).round(), "colony_range_m": p.colony_range_m })).collect::<Vec<_>>(),
-                    "expected_value_cr": b.predicted_value(b.was_footfalled == Some(false)),
-                })
+                    "expected_value_cr": value,
+                });
+                let species = b.likely_species().iter().take(8).map(|p| json!({ "species": p.species, "value_cr": p.value, "likelihood_pct": (p.likelihood * 100.0).round(), "colony_range_m": p.colony_range_m })).collect();
+                (value, body, species)
             })
             .collect();
-        Ok(json!({ "system": sys.name, "bio_bodies": bodies, "unsold_exobiology_data_cr": gs.exobio.unsold_value() }))
+        bodies.sort_by_key(|(value, _, _)| std::cmp::Reverse(*value));
+        let unsold = gs.exobio.unsold_value();
+        // What gives way when the reply is too long for the caller: the less likely species of each body, then the
+        // least valuable bodies, one by one, down to the first.
+        const SPECIES: [usize; 3] = [8, 3, 1];
+        let (out, _) = fit(self.budget, SPECIES.len() + bodies.len().saturating_sub(1), |level| {
+            let species = SPECIES[level.min(SPECIES.len() - 1)];
+            let shown = bodies.len() - level.saturating_sub(SPECIES.len() - 1).min(bodies.len().saturating_sub(1));
+            let listed: Vec<Value> = bodies[..shown]
+                .iter()
+                .map(|(_, body, likely)| {
+                    let mut b = body.clone();
+                    b["likely_species"] = json!(likely.iter().take(species).collect::<Vec<_>>());
+                    b
+                })
+                .collect();
+            let mut out = json!({ "system": sys.name, "bio_bodies": listed, "unsold_exobiology_data_cr": unsold });
+            let mut notes = Vec::new();
+            if species < SPECIES[0] {
+                notes.push(format!("Only the {species} likeliest species of each body, to fit."));
+            }
+            if shown < bodies.len() {
+                notes.push(format!("The {} least valuable bodies left out to fit.", bodies.len() - shown));
+            }
+            if !notes.is_empty() {
+                out["notes"] = json!(notes);
+            }
+            out
+        });
+        Ok(out)
     }
 
     /// Journal lines holding a text, newest first, in a period if one is given. It returns at most `limit` of them, and
@@ -1566,11 +1598,99 @@ fn strip_nulls(v: &mut Value) {
     }
 }
 
+/// `s` cut to at most `max` bytes, on a character boundary.
+fn clip_at(s: &str, max: usize) -> &str {
+    let mut end = max.min(s.len());
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// A knowledge section cut to about `cap` characters around what was asked: the lines holding most of the question's
+/// words, in their order, "…" where lines were left out; a line longer than what's left shows the stretch around its
+/// first match. Whole when it fits. Returns the text and whether it was cut.
+fn excerpt(text: &str, query: &str, cap: usize) -> (String, bool) {
+    if text.len() <= cap {
+        return (text.to_string(), false);
+    }
+    let words: Vec<String> = query.split(|c: char| !c.is_alphanumeric()).filter(|w| w.len() >= 3).map(str::to_lowercase).collect();
+    let lines: Vec<&str> = text.lines().collect();
+    let found = |l: &str| {
+        let low = l.to_lowercase();
+        words.iter().filter_map(|w| low.find(w.as_str())).collect::<Vec<usize>>()
+    };
+    let mut ranked: Vec<(usize, usize)> = lines.iter().enumerate().map(|(i, l)| (found(l).len(), i)).collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    let mut kept: Vec<Option<String>> = vec![None; lines.len()];
+    let mut left = cap;
+    for (hits, i) in ranked {
+        let line = lines[i];
+        if line.len() < left {
+            left -= line.len() + 1;
+            kept[i] = Some(line.to_string());
+        } else if hits > 0 && left >= 400 {
+            // The stretch of a long line (a row of the user guide's tables) around what was asked.
+            let at = found(line).into_iter().min().unwrap_or(0);
+            let start = clip_at(line, at.saturating_sub(left / 4)).len();
+            let piece = clip_at(&line[start..], left - 2);
+            kept[i] = Some(format!("{}{piece}{}", if start > 0 { "…" } else { "" }, if start + piece.len() < line.len() { "…" } else { "" }));
+            left = 0;
+        }
+    }
+    let mut out = String::new();
+    let mut gap = false;
+    for k in kept {
+        match k {
+            Some(l) => {
+                if gap && !out.is_empty() {
+                    out.push_str("…\n");
+                }
+                out.push_str(&l);
+                out.push('\n');
+                gap = false;
+            }
+            None => gap = true,
+        }
+    }
+    if gap {
+        out.push('…');
+    }
+    (out, true)
+}
+
+/// The last word on length: a reply still over the caller's budget is cut, and says so. No tool should need it.
+fn within(v: Value, budget: usize) -> Value {
+    let len = json_len(&v);
+    if len <= budget {
+        return v;
+    }
+    let text = v.to_string();
+    let note = format!("This answer was {len} characters, more than the {budget} this caller takes: here is its beginning, cut off. Ask for less to get all of it.");
+    // Quotes in the text are escaped once more inside the string: the longest beginning that still fits.
+    fit(budget, 20, |level| json!({ "partial_json": clip_at(&text, budget * (20 - level) / 20), "note": note })).0
+}
+
 impl NexusTools {
     fn knowledge(&self, a: &Value) -> Result<Value, String> {
         let q = arg_str(a, "query").ok_or("query is required")?;
         let hits = nexus_ai::knowledge::search(&q, 4);
-        Ok(json!({ "sections": hits.into_iter().map(|(t, x)| json!({ "title": t, "text": x })).collect::<Vec<_>>() }))
+        // Each section gets an equal share of the caller's length; a longer one is cut to what was asked about.
+        let share = self.budget.saturating_sub(1_000) / hits.len().max(1);
+        let mut cut = false;
+        let sections: Vec<Value> = hits
+            .into_iter()
+            .map(|(title, text)| {
+                let (text, c) = excerpt(&text, &q, share);
+                cut |= c;
+                json!({ "title": title, "text": text })
+            })
+            .collect();
+        let mut out = json!({ "sections": sections });
+        if cut {
+            out["note"] = json!("Long sections are cut to the lines about what was asked (… marks what was left out): ask a narrower question for more of one.");
+        }
+        Ok(out)
     }
 }
 
@@ -1581,7 +1701,7 @@ impl ToolHost for NexusTools {
 
     fn call(&self, name: &str, args: &Value) -> Result<Value, String> {
         match tool(name) {
-            Some(t) if t.offered_to(self.caller) => (t.run)(self, args),
+            Some(t) if t.offered_to(self.caller) => (t.run)(self, args).map(|v| within(v, self.budget)),
             _ => Err(format!("Unknown tool \"{name}\".")),
         }
     }
@@ -2397,6 +2517,41 @@ mod tests {
         assert_eq!(json_len(&json!({ "a": "é" })), r#"{"a":"é"}"#.len());
     }
 
+    /// A long section keeps the lines about what was asked, and the stretch of a long line around its match.
+    #[test]
+    fn long_knowledge_sections_keep_what_was_asked() {
+        let rows: Vec<String> = (0..200).map(|i| format!("| Page {i} | something about page {i} and its many settings |")).collect();
+        let text = format!("{}\n| Fleet | Where to buy a build: the nearest stations |\n{}", rows[..100].join("\n"), rows[100..].join("\n"));
+        let (cut, was_cut) = excerpt(&text, "where to buy", 1_000);
+        assert!(was_cut && cut.len() <= 1_100, "{} characters", cut.len());
+        assert!(cut.contains("| Fleet | Where to buy a build"), "{cut}");
+        assert!(cut.contains('…'), "says where lines were left out");
+        let long = format!("{} the AI agents switch {}", "x".repeat(3_000), "y".repeat(3_000));
+        let (stretch, _) = excerpt(&long, "agents", 1_000);
+        assert!(stretch.contains("the AI agents switch") && stretch.len() <= 1_100, "{stretch}");
+        assert_eq!(excerpt("short", "anything", 1_000), ("short".to_string(), false));
+    }
+
+    /// The user guide's Pages section alone is longer than an agent takes: knowledge answers within the caller's budget,
+    /// and the last guard cuts anything still over it.
+    #[test]
+    fn knowledge_and_every_reply_fit_the_callers_budget() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = agent_tools(commander(), &rt);
+        for budget in [Caller::Mcp.budget(), Caller::Ask.budget()] {
+            let tools = NexusTools { budget, ..agent_tools(commander(), &rt) };
+            let k = tools.call("knowledge", &json!({ "query": "Settings AI agents copy command Claude Code" })).unwrap();
+            assert!(json_len(&k) <= budget, "{} over {budget}", json_len(&k));
+            assert!(k["sections"].as_array().unwrap().iter().any(|s| s["text"].as_str().unwrap().contains("AI agents")), "{k}");
+        }
+        drop(tools);
+        let big = json!({ "rows": vec!["\"quoted\" text"; 5_000] });
+        let cut = within(big, 2_000);
+        assert!(json_len(&cut) <= 2_000 && cut["partial_json"].as_str().unwrap().starts_with("{\"rows\""), "{cut}");
+        assert!(cut["note"].as_str().unwrap().contains("more than the 2000 this caller takes"));
+        assert_eq!(within(json!({ "a": 1 }), 2_000), json!({ "a": 1 }), "a reply that fits is left alone");
+    }
+
     /// "Which systems did I pass through from 22 to 29 October?" (GitHub issue #4): any period of the journal, page by
     /// page, never more than the model is passed.
     #[test]
@@ -2651,11 +2806,16 @@ mod tests {
         let mcp = tools.call("fleet", &json!({})).unwrap();
         assert_eq!(mcp["ships"][0]["engineered"].as_array().map(Vec::len), Some(8), "{}", mcp["notes"]);
         assert!(mcp.get("notes").is_none() && mcp.to_string().len() <= Caller::Mcp.budget());
-        // And the other way: a caller that takes little gets the least detailed reply, never an error.
+        // And the other way: a caller that takes little gets fewer ships, the one being flown first…
+        tools.budget = 2_000;
+        let small = tools.call("fleet", &json!({})).unwrap();
+        let kept = small["ships"].as_array().map_or(0, Vec::len);
+        assert!((1..15).contains(&kept) && small["ships_omitted"] == json!(15 - kept) && json_len(&small) <= 2_000, "{small}");
+        assert_eq!(small["ships"][0]["current"], true, "{small}");
+        // …and one that takes less than even one ship gets the beginning, cut, and is told so: never an error.
         tools.budget = 500;
         let tiny = tools.call("fleet", &json!({})).unwrap();
-        assert_eq!(tiny["ships"].as_array().map(Vec::len), Some(1), "down to the ship being flown");
-        assert_eq!(tiny["ships_omitted"], 14);
+        assert!(json_len(&tiny) <= 500 && tiny["note"].as_str().unwrap().contains("this caller takes"), "{tiny}");
     }
 
     #[test]
