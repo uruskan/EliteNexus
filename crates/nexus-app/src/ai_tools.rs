@@ -3504,6 +3504,67 @@ mod tests {
         assert!(tools.call("where_to_buy", &json!({ "build": "not a build" })).is_err());
     }
 
+    /// Waits until a service listens, or says why it doesn't.
+    fn listening(service: &crate::mcp::McpService) -> Result<(), String> {
+        let until = Instant::now() + Duration::from_secs(10);
+        loop {
+            let s = service.status();
+            if s.listening {
+                return Ok(());
+            }
+            if let Some(e) = s.error {
+                return Err(e);
+            }
+            if Instant::now() > until {
+                return Err("neither listening nor failed after 10 s".into());
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// A second copy (another data folder) can't answer where the first does, and stopping it leaves the first's pipe or
+    /// socket alone: agents still reach the first.
+    #[test]
+    fn a_second_copy_leaves_the_first_answering() {
+        use crate::mcp::stdio::{Event, Session};
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let endpoint = crate::mcp::test_endpoint("two");
+        let mut first = crate::mcp::McpService::default();
+        first.start_at(endpoint.clone(), agent_tools(commander(), &rt), rt.handle());
+        listening(&first).unwrap();
+        let mut second = crate::mcp::McpService::default();
+        second.start_at(endpoint.clone(), agent_tools(commander(), &rt), rt.handle());
+        assert!(listening(&second).unwrap_err().contains("Another program already answers"));
+        drop(second);
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut session = Session::new(endpoint, tx);
+        let mut out = Vec::new();
+        let meta = json!({ "io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": {} });
+        session.handle(Event::Line(json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": { "name": "commander", "_meta": meta } }).to_string()), &mut out);
+        session.handle(rx.recv_timeout(Duration::from_secs(30)).unwrap(), &mut out);
+        let reply: Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(reply["result"]["isError"], false, "{reply}");
+        drop(first);
+    }
+
+    /// Switched off while an agent's connection is open, and on again at once: the connection is closed, so the name is
+    /// free and the app listens again.
+    #[cfg(windows)]
+    #[test]
+    fn off_and_on_again_with_a_connection_open() {
+        let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build().unwrap();
+        let endpoint = crate::mcp::test_endpoint("again");
+        let mut service = crate::mcp::McpService::default();
+        service.start_at(endpoint.clone(), agent_tools(commander(), &rt), rt.handle());
+        listening(&service).unwrap();
+        // An agent that connected and hasn't sent its call yet: its instance would otherwise stay taken for 10 s.
+        let held = std::fs::OpenOptions::new().read(true).write(true).open(&endpoint).unwrap();
+        service.apply(false, || unreachable!("on: not started"), rt.handle());
+        service.start_at(endpoint, agent_tools(commander(), &rt), rt.handle());
+        listening(&service).unwrap();
+        drop(held);
+    }
+
     /// An agent's call to a tool that answers from local data stays local: a system the galaxy database doesn't know
     /// isn't looked up on Spansh, so the call is the offline one its `online: false` (and openWorldHint) says.
     #[test]

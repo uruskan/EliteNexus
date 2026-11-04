@@ -153,6 +153,10 @@ struct Running {
     tools: crossbeam_channel::Sender<NexusTools>,
     /// Set when switched off: calls still queued are answered that it's off, and none runs.
     off: Arc<AtomicBool>,
+    /// Tells open connections to close when switched off, so their pipe instances don't keep the name taken.
+    shutdown: tokio::sync::watch::Sender<bool>,
+    /// This copy made the socket file (Unix): only then is it removed on stop, never another copy's.
+    bound: Arc<AtomicBool>,
     endpoint: String,
 }
 
@@ -201,9 +205,11 @@ impl McpService {
             self.status.lock().error = Some(format!("Couldn't start: {e}"));
             return;
         }
-        let (status, to_worker, at) = (self.status.clone(), calls.clone(), endpoint.clone());
+        let (shutdown, closing) = tokio::sync::watch::channel(false);
+        let bound = Arc::new(AtomicBool::new(false));
+        let (status, to_worker, at, made) = (self.status.clone(), calls.clone(), endpoint.clone(), bound.clone());
         let listener = rt.spawn(async move {
-            if let Err(e) = listen(&at, to_worker, status.clone()).await {
+            if let Err(e) = listen(&at, to_worker, status.clone(), closing, made).await {
                 tracing::warn!("MCP: stopped listening on {at}: {e}");
                 let mut s = status.lock();
                 s.listening = false;
@@ -215,19 +221,21 @@ impl McpService {
             }
         });
         tracing::info!("MCP: answering AI agents on {endpoint}");
-        self.running = Some(Running { listener, calls, tools: new_tools, off, endpoint });
+        self.running = Some(Running { listener, calls, tools: new_tools, off, shutdown, bound, endpoint });
     }
 
     fn stop(&mut self) {
         let Some(r) = self.running.take() else { return };
         // Nothing more runs, not even what is queued; the worker ends once the last connection lets go of the channel.
         r.off.store(true, Ordering::Relaxed);
+        // Open connections close now, their pipe instances with them: switched on again, the name is free.
+        let _ = r.shutdown.send(true);
         r.listener.abort();
         drop(r.calls);
-        #[cfg(not(windows))]
-        let _ = std::fs::remove_file(&r.endpoint);
-        #[cfg(windows)]
-        let _ = r.endpoint;
+        // Only the socket this copy made (Unix; never set on Windows): another copy's, from another data folder, stays.
+        if r.bound.load(Ordering::Relaxed) {
+            let _ = std::fs::remove_file(&r.endpoint);
+        }
         let mut s = self.status.lock();
         s.started = false;
         s.listening = false;
@@ -285,7 +293,7 @@ fn work(mut tools: NexusTools, inbox: crossbeam_channel::Receiver<Call>, swaps: 
 
 /// Waits for agents' connections and answers each in a task of its own.
 #[cfg(windows)]
-async fn listen(name: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<Mutex<Status>>) -> std::io::Result<()> {
+async fn listen(name: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<Mutex<Status>>, closing: tokio::sync::watch::Receiver<bool>, _bound: Arc<AtomicBool>) -> std::io::Result<()> {
     use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
     // Every instance with the user as owner and only the user let in.
     let user = win::user_sid().ok_or_else(|| std::io::Error::other("Windows didn't say which account this is"))?;
@@ -295,8 +303,15 @@ async fn listen(name: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<M
         // SAFETY: `attributes` is a valid SECURITY_ATTRIBUTES whose descriptor lives as long as `owner_only`.
         unsafe { ServerOptions::new().first_pipe_instance(first).reject_remote_clients(true).create_with_security_attributes_raw(name, (&raw mut attributes).cast()) }
     };
-    // The first instance must be ours: another program holding the name can't stand in for Elite Nexus.
-    let mut server = create(true)?;
+    // The first instance must be ours: another program holding the name can't stand in for Elite Nexus. Switched off
+    // and on again quickly, the last run's instances may still be closing: a few tries.
+    let until = Instant::now() + Duration::from_secs(3);
+    let mut server = loop {
+        match create(true) {
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied && Instant::now() < until => tokio::time::sleep(Duration::from_millis(100)).await,
+            r => break r?,
+        }
+    };
     status.lock().listening = true;
     loop {
         let connected = server.connect().await;
@@ -304,7 +319,7 @@ async fn listen(name: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<M
         let next = create(false)?;
         let conn = std::mem::replace(&mut server, next);
         match connected {
-            Ok(()) => drop(tokio::spawn(serve(conn, jobs.clone()))),
+            Ok(()) => drop(tokio::spawn(serve(conn, jobs.clone(), closing.clone()))),
             // An agent that came and went before it was answered: the next one is waited for all the same.
             Err(e) => tracing::debug!("MCP: a connection failed: {e}"),
         }
@@ -313,7 +328,7 @@ async fn listen(name: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<M
 
 /// Waits for agents' connections and answers each in a task of its own.
 #[cfg(not(windows))]
-async fn listen(path: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<Mutex<Status>>) -> std::io::Result<()> {
+async fn listen(path: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<Mutex<Status>>, closing: tokio::sync::watch::Receiver<bool>, bound: Arc<AtomicBool>) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     // A socket left behind by a run that ended abruptly answers nobody: it goes. One that answers is another app's.
     if std::path::Path::new(path).exists() {
@@ -323,11 +338,12 @@ async fn listen(path: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<M
         std::fs::remove_file(path)?;
     }
     let listener = tokio::net::UnixListener::bind(path)?;
+    bound.store(true, Ordering::Relaxed);
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     status.lock().listening = true;
     loop {
         match listener.accept().await {
-            Ok((conn, _)) => drop(tokio::spawn(serve(conn, jobs.clone()))),
+            Ok((conn, _)) => drop(tokio::spawn(serve(conn, jobs.clone(), closing.clone()))),
             // Out of file handles, say: wait a moment rather than spin, and go on listening.
             Err(e) => {
                 tracing::debug!("MCP: a connection failed: {e}");
@@ -337,8 +353,16 @@ async fn listen(path: &str, jobs: crossbeam_channel::Sender<Call>, status: Arc<M
     }
 }
 
-/// One connection: a call in, its answer out.
-async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(conn: S, jobs: crossbeam_channel::Sender<Call>) {
+/// One connection, closed as soon as AI agents are switched off.
+async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(conn: S, jobs: crossbeam_channel::Sender<Call>, mut closing: tokio::sync::watch::Receiver<bool>) {
+    tokio::select! {
+        () = serve_one(conn, jobs) => {}
+        _ = closing.wait_for(|off| *off) => {}
+    }
+}
+
+/// A call in, its answer out.
+async fn serve_one<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(conn: S, jobs: crossbeam_channel::Sender<Call>) {
     let (read, mut write) = tokio::io::split(conn);
     let mut line = String::new();
     let got = tokio::time::timeout(Duration::from_secs(10), BufReader::new(read.take(MAX_REQUEST)).read_line(&mut line)).await;
