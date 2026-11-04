@@ -1,10 +1,10 @@
-use crate::theme::{display, pal};
-use crate::widgets::{badge, bar, card, duration, empty, short_credits};
-use egui::{Grid, RichText, Ui};
+use crate::theme::{display, pal, size};
+use crate::widgets::{badge, badge_size, bar, card, duration, empty, short_credits};
+use egui::{Color32, Grid, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
 use nexus_journal::Timestamp;
-use nexus_model::missions::MissionOutcome;
+use nexus_model::missions::{Mission, MissionOutcome};
 use nexus_model::GameState;
 
 pub fn show(ui: &mut Ui, gs: &GameState) {
@@ -49,18 +49,74 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
         let now = Timestamp::now();
         let mut list: Vec<_> = gs.missions.active.values().collect();
         list.sort_by_key(|m| m.expiry.map(|e| e.0).unwrap_or(i64::MAX));
+        let destination = |m: &Mission| match (&m.destination_station, &m.destination_system) {
+            (Some(st), Some(sys)) => format!("{st} ({sys})"),
+            (None, Some(sys)) => sys.clone(),
+            _ => m.destination_settlement.clone().unwrap_or_default(),
+        };
+        let reward = |m: &Mission| m.reward.map(short_credits).unwrap_or_default();
+        let expires = |m: &Mission| {
+            m.seconds_left(now).map(|left| {
+                let col = if left < 3600 { pal::BAD } else if left < 6 * 3600 { pal::WARN } else { pal::DIM };
+                (if left > 0 { duration(left) } else { "expired".into() }, col)
+            })
+        };
+        // What Progress says, in its colour (None: the usual text colour); a redirected mission's is a badge.
+        let progress = |m: &Mission| -> Option<(String, Option<Color32>)> {
+            if m.redirected {
+                Some(("Complete — hand in".into(), None))
+            } else if let Some(k) = m.kill_count {
+                Some((format!("{}/{} kills", m.kills.min(k), k), None))
+            } else if m.cargo_total > 0 {
+                Some((format!("{}/{} delivered", m.cargo_delivered, m.cargo_total), None))
+            } else if let Some(c) = &m.commodity {
+                Some((format!("{} {}", m.count.unwrap_or(0), c), Some(pal::DIM)))
+            } else {
+                m.passenger_count.map(|p| (format!("{p} passengers"), Some(pal::DIM)))
+            }
+        };
+        // Every column measured, so the table fits the card at any window size: Reward, Expires and Progress as wide
+        // as their widest entry, and the three text columns share the rest. A title, faction or destination too long
+        // for its share ends in "…" and shows whole on hover; the wing badge always stays.
+        let heads = ["Mission", "Faction", "Destination", "Reward", "Expires", "Progress"];
+        let gap = ui.spacing().item_spacing.x;
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let text_w = |t: &str| ui.painter().layout_no_wrap(t.to_owned(), font.clone(), pal::TEXT).size().x + 8.0;
+        let wing_w = badge_size(ui, "wing").x;
+        let mut want = heads.map(|t| ui.painter().layout_no_wrap(t.to_owned(), display(size::FOOTNOTE), pal::DIM).size().x + 8.0);
+        let floor = want;
+        for m in &list {
+            let progress_w = match progress(m) {
+                Some((t, _)) if m.redirected => badge_size(ui, &t).x + 8.0,
+                Some((t, _)) => text_w(&t),
+                None => 0.0,
+            };
+            let row = [
+                text_w(&m.title) + if m.wing { gap + wing_w } else { 0.0 },
+                text_w(&m.faction),
+                text_w(&destination(m)),
+                text_w(&reward(m)),
+                expires(m).map_or(0.0, |(t, _)| text_w(&t)),
+                progress_w,
+            ];
+            for (w, r) in want.iter_mut().zip(row) {
+                *w = w.max(r);
+            }
+        }
+        let room = ui.available_width() - want[3..].iter().sum::<f32>() - gap * (heads.len() - 1) as f32;
+        let text = share([want[0], want[1], want[2]], [floor[0], floor[1], floor[2]], room);
         TableBuilder::new(ui)
             .striped(true)
             .resizable(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(Column::initial(300.0))
-            .column(Column::initial(180.0))
-            .column(Column::initial(200.0))
-            .column(Column::initial(100.0))
-            .column(Column::initial(90.0))
-            .column(Column::remainder())
+            .column(Column::exact(text[0]))
+            .column(Column::exact(text[1]))
+            .column(Column::exact(text[2]))
+            .column(Column::exact(want[3]))
+            .column(Column::exact(want[4]))
+            .column(Column::remainder().clip(true))
             .header(30.0, |mut h| {
-                for t in ["Mission", "Faction", "Destination", "Reward", "Expires", "Progress"] {
+                for t in heads {
                     h.col(|ui| {
                         crate::widgets::th(ui, t);
                     });
@@ -70,45 +126,40 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
                 body.rows(32.0, list.len(), |mut row| {
                     let m = list[row.index()];
                     row.col(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(&m.title);
-                            if m.wing {
-                                badge(ui, "wing", pal::CYAN);
-                            }
+                        let badge_room = if m.wing { gap + wing_w } else { 0.0 };
+                        ui.scope(|ui| {
+                            ui.set_max_width((ui.available_width() - badge_room).max(0.0));
+                            ui.add(egui::Label::new(&m.title).truncate());
                         });
-                    });
-                    row.col(|ui| {
-                        ui.label(RichText::new(&m.faction).color(pal::DIM));
-                    });
-                    row.col(|ui| {
-                        let dest = match (&m.destination_station, &m.destination_system) {
-                            (Some(st), Some(sys)) => format!("{st} ({sys})"),
-                            (None, Some(sys)) => sys.clone(),
-                            _ => m.destination_settlement.clone().unwrap_or_default(),
-                        };
-                        ui.label(dest);
-                    });
-                    row.col(|ui| {
-                        ui.label(RichText::new(m.reward.map(short_credits).unwrap_or_default()).color(pal::GOLD));
-                    });
-                    row.col(|ui| {
-                        if let Some(left) = m.seconds_left(now) {
-                            let col = if left < 3600 { pal::BAD } else if left < 6 * 3600 { pal::WARN } else { pal::DIM };
-                            ui.label(RichText::new(if left > 0 { duration(left) } else { "expired".into() }).color(col));
+                        if m.wing {
+                            badge(ui, "wing", pal::CYAN);
                         }
                     });
                     row.col(|ui| {
-                        if m.redirected {
-                            badge(ui, "Complete — hand in", pal::GOOD);
-                        } else if let Some(k) = m.kill_count {
-                            ui.label(format!("{}/{} kills", m.kills.min(k), k));
-                        } else if m.cargo_total > 0 {
-                            ui.label(format!("{}/{} delivered", m.cargo_delivered, m.cargo_total));
-                        } else if let Some(c) = &m.commodity {
-                            ui.label(RichText::new(format!("{} {}", m.count.unwrap_or(0), c)).color(pal::DIM));
-                        } else if let Some(p) = m.passenger_count {
-                            ui.label(RichText::new(format!("{p} passengers")).color(pal::DIM));
+                        ui.add(egui::Label::new(RichText::new(&m.faction).color(pal::DIM)).truncate());
+                    });
+                    row.col(|ui| {
+                        ui.add(egui::Label::new(destination(m)).truncate());
+                    });
+                    row.col(|ui| {
+                        ui.label(RichText::new(reward(m)).color(pal::GOLD));
+                    });
+                    row.col(|ui| {
+                        if let Some((t, col)) = expires(m) {
+                            ui.label(RichText::new(t).color(col));
                         }
+                    });
+                    row.col(|ui| match progress(m) {
+                        Some((t, _)) if m.redirected => {
+                            badge(ui, &t, pal::GOOD);
+                        }
+                        Some((t, Some(col))) => {
+                            ui.label(RichText::new(t).color(col));
+                        }
+                        Some((t, None)) => {
+                            ui.label(t);
+                        }
+                        None => {}
                     });
                 });
             });
@@ -139,4 +190,43 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
         });
         crate::widgets::footnote(ui, shared);
     });
+}
+
+/// Splits `room` between columns that want the widths `want`. When they all fit, the spare room is shared in
+/// proportion; when they don't, the widest are cut back to a common width first, so the shorter ones stay whole, and
+/// none goes below its `floor` (the width of its heading).
+fn share(want: [f32; 3], floor: [f32; 3], room: f32) -> [f32; 3] {
+    let total: f32 = want.iter().sum();
+    if total <= room {
+        return want.map(|w| w * room / total);
+    }
+    let mut order = [0, 1, 2];
+    order.sort_by(|a, b| want[*a].total_cmp(&want[*b]));
+    let (mut left, mut cap) = (room, room);
+    for (n, i) in order.into_iter().enumerate() {
+        cap = left / (want.len() - n) as f32;
+        if want[i] > cap {
+            break;
+        }
+        left -= want[i];
+    }
+    std::array::from_fn(|i| want[i].min(cap).max(floor[i]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_columns_share_the_room() {
+        let floor = [60.0; 3];
+        // Room to spare: every column grows in proportion.
+        assert_eq!(share([100.0, 200.0, 100.0], floor, 800.0), [200.0, 400.0, 200.0]);
+        // Too little: the widest is cut first and the short ones stay whole...
+        assert_eq!(share([400.0, 100.0, 150.0], floor, 450.0), [200.0, 100.0, 150.0]);
+        // ...then the two widest share what the shortest leaves.
+        assert_eq!(share([400.0, 100.0, 300.0], floor, 500.0), [200.0, 100.0, 200.0]);
+        // Never narrower than a heading.
+        assert_eq!(share([400.0, 100.0, 300.0], floor, 120.0), [60.0, 60.0, 60.0]);
+    }
 }

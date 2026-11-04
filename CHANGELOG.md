@@ -42,10 +42,19 @@ release time that section becomes the new version and the release workflow publi
   Supercharge Optimised Frame Shift Drive (SCO)" ran over the module's value. The Module column now widens to the
   longest name when the window has room, and a name that still doesn't fit ends in "…" and shows whole when you hover
   it.
+- **Fleet: engineering badges stay inside the loadout table.** In windows about 1,250 to 1,470 pixels wide, a module
+  with a long blueprint and an experimental effect ("G5 Power Distributor High Frequency" and "Stripped Down") ran
+  past the table's edge. The Engineering column now takes the room its badges need, and where the two don't fit side
+  by side, the experimental effect goes under the blueprint. The ship list sits beside the loadout only once the
+  window leaves the loadout enough room; in a narrower window the ships are a row of names above it.
 - **Missions and Statistics say why a wingmate's shared mission isn't counted** (GitHub issue #4). Your own missions,
   wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
   game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The
   Missions page and Statistics › Income and spending now say so; the credits still show in your balance.
+- **Missions: the Active missions table fits the window.** Below about 1,450 pixels wide it was wider than the window:
+  Expires and Progress were cut off, and the cards under it ran past the window's edge too. Its columns now fit any
+  window size, and a mission, faction or destination too long for its column ends in "…" and shows whole when you
+  hover it.
 - **Ask can look back through your whole journal** (GitHub issue #4). Its journal search returned only the newest 15
   matching lines (40 at most, fewer when they were long), so a question about last week's jumps saw only the last day
   or two, and nothing said so. It can now search a period you name ("where did I go from 22 to 29 October?") and page
