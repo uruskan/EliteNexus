@@ -183,10 +183,11 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> 
             crate::widgets::footnote(ui, shared);
             return;
         }
-        Grid::new("mhist").num_columns(4).striped(true).spacing([12.0, 3.0]).show(ui, |ui| {
+        // The title last, in the width the other columns leave: a long one ends in "…" (whole on hover) instead of
+        // widening the card past the window.
+        Grid::new("mhist").num_columns(4).striped(true).spacing([12.0, 3.0]).max_col_width(ui.available_width()).show(ui, |ui| {
             for r in gs.missions.history.iter().rev().take(40) {
                 ui.label(RichText::new(r.ts.to_local_string("%d %b %H:%M")).color(pal::FAINT));
-                ui.label(&r.title);
                 let (t, c) = match r.outcome {
                     MissionOutcome::Completed => ("completed", pal::GOOD),
                     MissionOutcome::Failed => ("failed", pal::BAD),
@@ -194,6 +195,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> 
                 };
                 badge(ui, t, c);
                 ui.label(RichText::new(short_credits(r.reward)).font(display(14.0)).color(pal::GOLD));
+                ui.add(egui::Label::new(&r.title).truncate());
                 ui.end_row();
             }
         });
