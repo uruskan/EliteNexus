@@ -646,23 +646,45 @@ fn materials(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi) {
                 }
                 items.retain(|(n, _, _)| filter.is_empty() || n.to_ascii_lowercase().contains(&filter));
                 items.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
-                Grid::new(("mats", i)).num_columns(3).striped(true).spacing([10.0, 2.0]).show(ui, |ui| {
-                    for (name, grade, n) in items {
-                        let cap = nexus_data::materials::cap(grade) as i64;
-                        ui.label(RichText::new(name).color(if n == 0 { pal::FAINT } else { pal::TEXT }));
-                        ui.label(RichText::new(if grade > 0 { format!("G{grade}") } else { String::new() }).small().color(pal::PURPLE));
-                        ui.scope(|ui| {
-                            ui.set_width(110.0);
-                            let full = cap > 0 && n >= cap;
-                            bar(ui, if cap > 0 { n as f32 / cap as f32 } else { 0.0 }, if full { pal::WARN } else { pal::ACCENT }, 12.0, Some(&if cap > 0 { format!("{n}/{cap}") } else { n.to_string() }));
-                        });
-                        ui.end_row();
+                ui.push_id(("mats", i), |ui| {
+                    // As close together as the grid they replace.
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    for (row, (name, grade, n)) in items.into_iter().enumerate() {
+                        material_row(ui, &name, grade, n, row % 2 == 1);
                     }
                 });
             });
             });
         }
     });
+}
+
+/// One material in the Materials cards: its name, grade and a bar of how many against the cap. The grade and the bar
+/// keep their place at the right, so a long name ("Guardian Sentinel Wreckage Components") ends in "…" (whole on
+/// hover) instead of widening the card past its column.
+fn material_row(ui: &mut Ui, name: &str, grade: u8, n: i64, stripe: bool) {
+    let cap = nexus_data::materials::cap(grade) as i64;
+    let background = ui.painter().add(egui::Shape::Noop);
+    let row = ui.horizontal(|ui| {
+        ui.set_min_height(24.0);
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // Narrow cards give the bar less room before the name has to give way.
+            let bar_w = (ui.available_width() * 0.32).clamp(72.0, 110.0);
+            ui.scope(|ui| {
+                ui.set_width(bar_w);
+                let full = cap > 0 && n >= cap;
+                bar(ui, if cap > 0 { n as f32 / cap as f32 } else { 0.0 }, if full { pal::WARN } else { pal::ACCENT }, 12.0, Some(&if cap > 0 { format!("{n}/{cap}") } else { n.to_string() }));
+            });
+            ui.label(RichText::new(if grade > 0 { format!("G{grade}") } else { String::new() }).small().color(pal::PURPLE));
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                ui.add(egui::Label::new(RichText::new(name).color(if n == 0 { pal::FAINT } else { pal::TEXT })).truncate());
+            });
+        });
+    });
+    if stripe {
+        let rect = row.response.rect.expand2(egui::vec2(4.0, 0.0));
+        ui.painter().set(background, egui::Shape::rect_filled(rect, 4.0, ui.visuals().faint_bg_color));
+    }
 }
 
 fn engineers(ui: &mut Ui, gs: &GameState) {

@@ -103,6 +103,9 @@ release time that section becomes the new version and the release workflow publi
   **Live** badge stays, with the feed's rate and the database's size beside it.
 
 ### Fixed
+- **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
+  Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
+  window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
 - **Market**: the live feed's "updates stored" counts only what the database kept. It counted every item a message
   turned into, so every body scanned anywhere, though from the feed Elite Nexus keeps only bodies with biology,
   Earth-like, water and ammonia worlds and terraformables, and every market report, even one older than the market
