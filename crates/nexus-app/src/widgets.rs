@@ -732,6 +732,8 @@ pub struct Completion {
     pub submitted: bool,
     /// The field has the keyboard focus (it's being typed in).
     pub focused: bool,
+    /// `picked` came from the whole list (`suggest("")`: the ▾, or the field empty), not from matches to typed text.
+    pub whole_list: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -770,6 +772,8 @@ fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: 
     let edit_id = id.with("edit");
     let mut s: CompletionState = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     let mut items = if s.open { suggest(if s.all { "" } else { text }) } else { Vec::new() };
+    // The items are the whole list, not matches to typed text.
+    let mut whole = s.all || text.trim().is_empty();
     // Arrow keys move the highlight; they are taken before the text field sees them.
     let mut moved = false;
     if s.open && !items.is_empty() && ui.memory(|m| m.has_focus(edit_id)) {
@@ -799,6 +803,7 @@ fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: 
         s.open = true;
         s.all = false;
         items = suggest(text);
+        whole = text.trim().is_empty();
         s.sel = if dropdown && !resp.changed() { current_entry(&items, text) } else { 0 };
     }
     let arrow = dropdown.then(|| {
@@ -828,6 +833,7 @@ fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: 
         s.open = true;
         s.all = true;
         items = suggest("");
+        whole = true;
         s.sel = current_entry(&items, text);
         s.scroll = true;
         ui.memory_mut(|m| m.request_focus(edit_id));
@@ -869,7 +875,8 @@ fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: 
         it.text
     });
     ui.data_mut(|d| d.insert_temp(id, s));
-    Completion { picked, submitted, focused: ui.memory(|m| m.has_focus(edit_id)) }
+    let whole_list = whole && picked.is_some();
+    Completion { picked, submitted, focused: ui.memory(|m| m.has_focus(edit_id)), whole_list }
 }
 
 fn suggestion_row(ui: &mut Ui, it: &Suggestion, selected: bool) -> Response {
