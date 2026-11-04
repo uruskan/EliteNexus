@@ -18,7 +18,7 @@ isn't slowed, and `tools\dev\shot.ps1` checks the UI with off-screen screenshots
 Parallel builds: set your own `CARGO_TARGET_DIR` (e.g. `target-agents\<name>`) to avoid lock contention.
 `EliteNexus.exe --page Exploration --screenshot out.png` renders a page after loading and saves a PNG (used for UI checks;
 the window is placed off-screen and never takes focus). `--size 1000x700` tests responsive layouts, `--tab <name>` opens
-a Market section (`abnormal`, `database`, …), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
+a Market section (`abnormal`, `database`, …; `routes` finds trade routes on the first frame), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
 screenshot run), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
 `royalpurple`, …), `--demo` adds a sample Ask conversation and an alert banner, `--overlay <moment>` shows an overlay

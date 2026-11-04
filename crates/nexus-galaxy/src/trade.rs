@@ -10,6 +10,9 @@
 //!    That bounds the work to `commodities x MAX_SELLERS x MAX_BUYER_SCAN` distance checks in the
 //!    worst case; in practice a seller stops after a handful.
 //! 4. Candidates are ranked by total profit, one route per (from, to) station pair.
+//!
+//! With `from_market`, that station is every commodity's only seller, so each of its goods may go to
+//! as many buyers as the result holds: one seller per commodity is cheap to scan.
 
 use crate::error::Result;
 use crate::index::StationFilter;
@@ -75,12 +78,16 @@ pub(crate) fn trade_routes(
         max_dist_ls: q.max_dist_ls.filter(|d| d.is_finite()).unwrap_or(-1.0),
     };
 
-    // 1. candidate stations
+    // 1. candidate stations (the station routes start from passes the filters: the commander is there)
+    let from_id = q.from_market.map(|m| m as i64);
     let stations: Vec<(i64, [f64; 3])> = {
         let idx = shared.stations.read();
         idx.iter()
             .filter_map(|(id, s)| {
-                if s.n_commodities == 0 || s.market_updated < cutoff || !filter.passes(s) {
+                if s.n_commodities == 0
+                    || s.market_updated < cutoff
+                    || (Some(id) != from_id && !filter.passes(s))
+                {
                     return None;
                 }
                 let p = s.pos?;
@@ -91,6 +98,19 @@ pub(crate) fn trade_routes(
     if stations.len() < 2 {
         return Ok(Vec::new());
     }
+    let from = match from_id {
+        Some(id) => match stations.iter().position(|s| s.0 == id) {
+            Some(i) => Some(i as u32),
+            // Its market is unknown, or older than the age limit.
+            None => return Ok(Vec::new()),
+        },
+        None => None,
+    };
+    let per_seller = if from.is_some() {
+        q.limit.clamp(1, 1000)
+    } else {
+        ROUTES_PER_SELLER
+    };
 
     // 2. market rows -> per-commodity books
     let ids: Vec<(u32, i64)> = stations
@@ -159,6 +179,9 @@ pub(crate) fn trade_routes(
         .par_iter_mut()
         .flat_map_iter(|(&cid, book)| {
             let mut found = Vec::new();
+            if let Some(f) = from {
+                book.sellers.retain(|o| o.station == f);
+            }
             if book.sellers.is_empty() || book.buyers.is_empty() {
                 return found.into_iter();
             }
@@ -205,7 +228,7 @@ pub(crate) fn trade_routes(
                         hop: d2.sqrt(),
                     });
                     n += 1;
-                    if n >= ROUTES_PER_SELLER {
+                    if n >= per_seller {
                         break;
                     }
                 }

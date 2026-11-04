@@ -90,6 +90,8 @@ pub struct MarketPrefs {
     /// Trade routes: area and longest hop.
     pub radius: f64,
     pub hop: f64,
+    /// Trade routes, while docked: only the routes that start at that station.
+    pub routes_here: bool,
     /// Sell my cargo: buyers within.
     pub sell_radius: f64,
     pub hotspot_signal: String,
@@ -130,6 +132,7 @@ impl Default for MarketPrefs {
             show_options: false,
             radius: 40.0,
             hop: 25.0,
+            routes_here: false,
             sell_radius: 60.0,
             hotspot_signal: "Low Temperature Diamonds".into(),
             hotspot_min: 2,
@@ -315,6 +318,10 @@ pub struct MarketUi {
     station_market: Slot<Result<Option<StationMarket>, String>>,
     station_key: Option<u64>,
     routes: Slot<Res<TradeRoute>>,
+    /// The station the shown routes start at (`None`: routes around you).
+    routes_from: Option<String>,
+    /// Find routes on the first frame (screenshot runs: `--tab routes`).
+    pub autorun: bool,
     service: usize,
     stations: Slot<Res<StationHit>>,
     /// What the Services list was searched for: (service, system, pad). It searches again when that changes.
@@ -370,6 +377,8 @@ impl MarketUi {
             station_market: Slot::default(),
             station_key: None,
             routes: Slot::default(),
+            routes_from: None,
+            autorun: false,
             service: 0,
             stations: Slot::default(),
             services_key: None,
@@ -705,37 +714,65 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
         Tab::Plan => nav = plan_tab(ui, gs, &db, st).or(nav),
         Tab::Routes => {
             let cargo = gs.fleet.current().map(|s| s.cargo_capacity as i64).unwrap_or(100);
+            // Docked, routes can start at this station: buy here, sell elsewhere.
+            let docked = gs.location.station.as_ref().filter(|s| gs.location.docked && s.market_id != 0);
+            if docked.is_some() {
+                if crate::widgets::segmented(ui, &mut st.prefs.routes_here, &[(false, "Around you"), (true, "From this station")]) {
+                    // The other kind's results would read as this kind's.
+                    st.routes = Slot::default();
+                }
+                ui.add_space(6.0);
+            }
+            let from = docked.filter(|_| st.prefs.routes_here);
+            let mut find = std::mem::take(&mut st.autorun);
             let p = &mut st.prefs;
             ui.horizontal_wrapped(|ui| {
-                ui.label("Routes within");
-                ui.add(egui::DragValue::new(&mut p.radius).range(5.0..=1000.0).suffix(" ly")).on_hover_text("Up to 1,000 ly. Every market in the area is loaded, so wide areas take a few seconds.");
-                ui.label("of here, hop up to");
-                ui.add(egui::DragValue::new(&mut p.hop).range(1.0..=500.0).suffix(" ly")).on_hover_text("Longest trip between buying and selling, up to 500 ly.");
+                match from {
+                    Some(s) => {
+                        ui.label(format!("Buy at {} and sell within", s.name));
+                        ui.add(egui::DragValue::new(&mut p.hop).range(1.0..=500.0).suffix(" ly")).on_hover_text("Up to 500 ly. Every market within reach is loaded, so far reaches take a few seconds.");
+                    }
+                    None => {
+                        ui.label("Routes within");
+                        ui.add(egui::DragValue::new(&mut p.radius).range(5.0..=1000.0).suffix(" ly")).on_hover_text("Up to 1,000 ly. Every market in the area is loaded, so wide areas take a few seconds.");
+                        ui.label("of here, hop up to");
+                        ui.add(egui::DragValue::new(&mut p.hop).range(1.0..=500.0).suffix(" ly")).on_hover_text("Longest trip between buying and selling, up to 500 ly.");
+                    }
+                }
                 pad_combo(ui, "rpad", &mut p.min_pad);
                 ui.label(format!("cargo {cargo} t, capital {}", short_credits(gs.cmdr.credits)));
                 crate::widgets::toggle(ui, &mut p.carriers, "Carriers");
-                if crate::widgets::primary_button(ui, "Find routes").clicked()
-                    && let Some(o) = origin {
-                        let q = TradeQuery {
-                            origin: o,
-                            radius_ly: p.radius,
-                            max_hop_ly: p.hop,
-                            min_pad: p.min_pad,
-                            cargo_capacity: cargo.max(1),
-                            capital: Some(gs.cmdr.credits.max(0)),
-                            max_age_hours: Some(p.max_age_h),
-                            include_carriers: p.carriers,
-                            include_planetary: p.planetary,
-                            ..Default::default()
-                        };
-                        let db = db.clone();
-                        st.routes.run(&ctx, move || db.trade_routes(&q).map_err(|e| e.to_string()));
-                    }
+                find |= crate::widgets::primary_button(ui, "Find routes").clicked();
             });
-            if st.routes.last.is_none() && !st.routes.busy() {
-                crate::widgets::footnote(ui, "Set the area and press Find routes. Every market in the area is loaded, so wide areas take a few seconds: this search waits for you.");
+            if find && let Some(o) = origin {
+                let p = &st.prefs;
+                let q = TradeQuery {
+                    origin: o,
+                    // From a station, the hop is how far from here a route sells.
+                    radius_ly: if from.is_some() { p.hop } else { p.radius },
+                    max_hop_ly: p.hop,
+                    min_pad: p.min_pad,
+                    cargo_capacity: cargo.max(1),
+                    capital: Some(gs.cmdr.credits.max(0)),
+                    max_age_hours: Some(p.max_age_h),
+                    include_carriers: p.carriers,
+                    include_planetary: p.planetary,
+                    from_market: from.map(|s| s.market_id),
+                    ..Default::default()
+                };
+                st.routes_from = from.map(|s| s.name.clone());
+                let db = db.clone();
+                st.routes.run(&ctx, move || db.trade_routes(&q).map_err(|e| e.to_string()));
             }
-            nav = results_routes(ui, &st.routes).or(nav);
+            // The game writes a station's prices (Market.json) when its commodity market is opened.
+            if from.is_some_and(|s| gs.market.as_ref().is_none_or(|m| m.market_id != s.market_id)) {
+                crate::widgets::footnote(ui, "Open the commodity market in the game for this station's latest prices. Until then Elite Nexus uses what its database holds for it, if anything.");
+            }
+            if st.routes.last.is_none() && !st.routes.busy() {
+                let what = if from.is_some() { "how far to sell" } else { "the area" };
+                crate::widgets::footnote(ui, &format!("Set {what} and press Find routes. Every market in the area is loaded, so wide areas take a few seconds: this search waits for you."));
+            }
+            nav = results_routes(ui, &st.routes, st.routes_from.as_deref()).or(nav);
         }
         Tab::Services => {
             ui.horizontal_wrapped(|ui| {
@@ -2307,16 +2344,23 @@ fn status<T>(ui: &mut Ui, slot: &Slot<Res<T>>) -> bool {
     }
 }
 
-fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>) -> Option<Nav> {
+/// `from`: the station the routes start at, when they were searched from one.
+fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>) -> Option<Nav> {
     if !status(ui, slot) {
         return None;
     }
     let Some(Ok(routes)) = &slot.last else { return None };
     if routes.is_empty() {
-        ui.label(RichText::new("No profitable routes in range with the current data.").color(pal::DIM));
+        let text = match from {
+            Some(station) => format!("Nothing you can buy at {station} sells for more within reach, with the prices Elite Nexus knows."),
+            None => "No profitable routes in range with the current data.".into(),
+        };
+        ui.label(RichText::new(text).color(pal::DIM));
         return None;
     }
     let mut nav = None;
+    // From one station, every route buys there: that column only needs the price.
+    let here = from.is_some();
     const TABLE: &str = "trade-routes";
     let mut sort = TableSort::load(ui, TABLE);
     let table = TableBuilder::new(ui)
@@ -2326,18 +2370,20 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>) -> Option<Nav> {
         .column(Column::initial(170.0))
         .column(Column::initial(90.0))
         .column(Column::initial(100.0))
-        .column(Column::initial(260.0))
+        .column(Column::initial(if here { 110.0 } else { 260.0 }))
         .column(Column::initial(260.0))
         .column(Column::remainder())
         .header(30.0, |mut h| {
-            // Buy at / Sell at sort by how far from you the station is.
-            let heads: Heads = vec![("Commodity", Some((0, false))), ("Profit/t", Some((1, true))), ("Trip profit", Some((2, true))), ("Buy at", Some((3, false))), ("Sell at", Some((4, false))), ("Hop", Some((5, false)))];
+            // Buy at / Sell at sort by how far from you the station is (Buy here by price).
+            let buy = if here { "Buy here" } else { "Buy at" };
+            let heads: Heads = vec![("Commodity", Some((0, false))), ("Profit/t", Some((1, true))), ("Trip profit", Some((2, true))), (buy, Some((3, false))), ("Sell at", Some((4, false))), ("Hop", Some((5, false)))];
             headings(&mut h, &heads, &mut sort, TABLE);
         });
     let order = sort.order(routes, |a, b, c| match c {
         0 => cmp_text(&a.commodity_name, &b.commodity_name),
         1 => a.profit_per_ton.cmp(&b.profit_per_ton),
         2 => a.total_profit.cmp(&b.total_profit),
+        3 if here => a.buy_price.cmp(&b.buy_price),
         3 => a.from.distance_from_origin_ly.total_cmp(&b.from.distance_from_origin_ly),
         4 => a.to.distance_from_origin_ly.total_cmp(&b.to.distance_from_origin_ly),
         _ => a.hop_ly.total_cmp(&b.hop_ly),
@@ -2357,13 +2403,18 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>) -> Option<Nav> {
                 row.col(|ui| {
                     ui.label(RichText::new(short_credits(r.total_profit)).color(pal::GOLD));
                 });
-                for (end, price) in [(&r.from, r.buy_price), (&r.to, r.sell_price)] {
+                for (end, price, buy) in [(&r.from, r.buy_price, true), (&r.to, r.sell_price, false)] {
                     row.col(|ui| {
                         ui.vertical(|ui| {
+                            let (a, c) = age(end.market_updated_unix);
+                            if buy && here {
+                                ui.label(format!("{} Cr", nexus_data::names::group_digits(price)));
+                                ui.label(RichText::new(format!("{a} ago")).small().color(c));
+                                return;
+                            }
                             if nav_label(ui, format!("{} — {} Cr", end.station, nexus_data::names::group_digits(price)), "Click for the station's whole market") {
                                 nav = Some(Nav::Station(end.market_id));
                             }
-                            let (a, c) = age(end.market_updated_unix);
                             ui.label(RichText::new(format!("{} · {:.1} ly · {}", end.system, end.distance_from_origin_ly, a)).small().color(c));
                         });
                     });

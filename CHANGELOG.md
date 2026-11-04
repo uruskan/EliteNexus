@@ -19,6 +19,9 @@ release time that section becomes the new version and the release workflow publi
   Merc Coins per roll, and the shopping list adds them up against your balance at your last login.
 - **Fleet** shows the landing pad each ship needs (S, M or L), in the ship list and on its Loadout card (asked for by
   Alvarrune on the Frontier Forums).
+- **Market** › Trade routes, while you're docked: **From this station** lists only the routes that start there, what
+  to buy at this station and where to sell it within the distance you set (asked for by NetworX on the Frontier
+  Forums). Open the commodity market in the game first, so Elite Nexus has the station's latest prices.
 - **Mining** › Surface radar numbers the deposits (an idea from Chequers2): 1, 2, 3… on each body in the order the
   Rhino records them, kept between runs, beside each deposit on the radar, in the list under it and on the overlay's
   radar. Each deposit in the list takes a note of your own, such as how many rigs fit, so two deposits of the same

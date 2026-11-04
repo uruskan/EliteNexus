@@ -685,6 +685,10 @@ pub struct TradeQuery {
     pub max_dist_ls: Option<f64>,
     pub min_profit_per_ton: i64,
     pub limit: usize,
+    /// Only routes that buy at this station (a market ID), such as the one the commander is docked at. The pad,
+    /// carrier, planetary and distance-from-star filters don't apply to it (the commander is there); its prices
+    /// must still be newer than `max_age_hours`.
+    pub from_market: Option<u64>,
 }
 
 impl Default for TradeQuery {
@@ -702,6 +706,7 @@ impl Default for TradeQuery {
             max_dist_ls: None,
             min_profit_per_ton: 1,
             limit: 25,
+            from_market: None,
         }
     }
 }
