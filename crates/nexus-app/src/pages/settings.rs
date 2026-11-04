@@ -80,12 +80,17 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                         });
                     });
                     g.row("Voice", "", |ui| {
-                        egui::ComboBox::from_id_salt("ttsvoice").selected_text(voice_name(&s.tts_voice, &cx.voices)).show_ui(ui, |ui| {
+                        // As wide as the voice's name, but no wider than the row leaves beside its title: a long SAPI
+                        // name ("Microsoft Zira Desktop - English (United States)") ends in "…" and shows whole on hover.
+                        let name = voice_name(&s.tts_voice, &cx.voices);
+                        let text_w = ui.painter().layout_no_wrap(name.clone(), egui::TextStyle::Button.resolve(ui.style()), pal::TEXT).size().x;
+                        let combo = egui::ComboBox::from_id_salt("ttsvoice").width((text_w + 40.0).min(ui.available_width())).truncate().selected_text(name.clone()).show_ui(ui, |ui| {
                             cx.changed |= ui.selectable_value(&mut s.tts_voice, String::new(), "Default").changed();
                             for v in &cx.voices {
                                 cx.changed |= ui.selectable_value(&mut s.tts_voice, v.id.clone(), &v.name).changed();
                             }
                         });
+                        combo.response.on_hover_text(name);
                     });
                 }
                 g.row("Speech rate", "", |ui| cx.changed |= slider(ui, &mut s.tts_rate, 0.5..=2.0, 2, "×"));
