@@ -294,6 +294,38 @@ fn stored_ships_in_transit_show_destination() {
     assert!(gs.fleet.ships.contains_key(&22), "current ship is kept");
 }
 
+/// Suit loadouts follow what the game says happened to them: deleted ones go, renames and weapon changes show.
+#[test]
+fn suit_loadouts_follow_deletions_renames_and_weapons() {
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:10:00Z", "event":"SuitLoadout", "SuitID":17, "SuitName":"tacticalsuit_class3", "SuitName_Localised":"$TacticalSuit_Class1_Name;", "SuitMods":[], "LoadoutID":4293000001, "LoadoutName":"Fighter", "Modules":[ { "SlotName":"PrimaryWeapon1", "SuitModuleID":1, "ModuleName":"wpn_m_assaultrifle_plasma_fauto", "ModuleName_Localised":"Manticore Tormentor", "Class":3, "WeaponMods":[] }, { "SlotName":"SecondaryWeapon", "SuitModuleID":2, "ModuleName":"wpn_s_pistol_kinetic_sauto", "ModuleName_Localised":"Karma P-15", "Class":1, "WeaponMods":[] } ] }"#,
+            r#"{ "timestamp":"2026-10-01T10:11:00Z", "event":"CreateSuitLoadout", "SuitID":18, "SuitName":"explorationsuit_class1", "SuitName_Localised":"Artemis Suit", "SuitMods":[], "LoadoutID":4293000002, "LoadoutName":"Loadout 2", "Modules":[] }"#,
+            r#"{ "timestamp":"2026-10-01T10:12:00Z", "event":"RenameSuitLoadout", "SuitID":17, "SuitName":"tacticalsuit_class3", "SuitName_Localised":"$TacticalSuit_Class1_Name;", "LoadoutID":4293000001, "LoadoutName":"Assault" }"#,
+            r#"{ "timestamp":"2026-10-01T10:13:00Z", "event":"LoadoutEquipModule", "LoadoutName":"Assault", "SuitID":17, "SuitName":"tacticalsuit_class3", "SuitName_Localised":"Dominator Suit", "LoadoutID":4293000001, "SlotName":"PrimaryWeapon2", "ModuleName":"wpn_m_sniper_plasma_charged", "ModuleName_Localised":"Manticore Executioner", "Class":4, "WeaponMods":["weapon_stability"], "SuitModuleID":3 }"#,
+            r#"{ "timestamp":"2026-10-01T10:14:00Z", "event":"LoadoutRemoveModule", "LoadoutName":"Assault", "SuitID":17, "SuitName":"tacticalsuit_class3", "SuitName_Localised":"Dominator Suit", "LoadoutID":4293000001, "SlotName":"SecondaryWeapon", "ModuleName":"wpn_s_pistol_kinetic_sauto", "ModuleName_Localised":"Karma P-15", "Class":1, "WeaponMods":[], "SuitModuleID":2 }"#,
+            r#"{ "timestamp":"2026-10-01T10:15:00Z", "event":"DeleteSuitLoadout", "SuitID":18, "SuitName":"explorationsuit_class1", "SuitName_Localised":"Artemis Suit", "LoadoutID":4293000002, "LoadoutName":"Loadout 2" }"#,
+            // A loadout never listed: a single weapon change doesn't make it up.
+            r#"{ "timestamp":"2026-10-01T10:16:00Z", "event":"LoadoutEquipModule", "LoadoutName":"Ghost", "SuitID":19, "SuitName":"utilitysuit_class1", "LoadoutID":4293000009, "SlotName":"PrimaryWeapon1", "ModuleName":"wpn_m_shotgun_plasma_doublebarrel", "ModuleName_Localised":"Manticore Intimidator", "Class":2, "WeaponMods":[], "SuitModuleID":4 }"#,
+        ],
+    );
+    let inv = &m.active().unwrap().inventory;
+    assert_eq!(inv.suit_loadouts.keys().copied().collect::<Vec<_>>(), [4293000001], "the deleted and the unknown loadouts aren't listed");
+    let l = &inv.suit_loadouts[&4293000001];
+    assert_eq!((l.name.as_str(), l.suit_name.as_str()), ("Assault", "Dominator Suit"), "renamed; the game's placeholder isn't shown as the suit's name");
+    let weapons: Vec<(&str, &str, u32)> = l.weapons.iter().map(|w| (w.0.as_str(), w.1.as_str(), w.2)).collect();
+    assert_eq!(weapons, [("PrimaryWeapon1", "Manticore Tormentor", 3), ("PrimaryWeapon2", "Manticore Executioner", 4)]);
+    assert_eq!(l.weapons[1].3, ["weapon_stability"]);
+    assert_eq!(inv.current_suit_loadout, Some(4293000001));
+    // Deleting the loadout in use leaves none in use.
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:17:00Z", "event":"DeleteSuitLoadout", "SuitID":17, "SuitName":"tacticalsuit_class3", "LoadoutID":4293000001, "LoadoutName":"Assault" }"#]);
+    let inv = &m.active().unwrap().inventory;
+    assert!(inv.suit_loadouts.is_empty() && inv.current_suit_loadout.is_none());
+}
+
 #[test]
 fn massacre_stack_end_to_end() {
     let mut m = Model::default();

@@ -779,6 +779,10 @@ impl GameState {
             }
             Event::SuitLoadout(s) | Event::SwitchSuitLoadout(s) => self.inventory.on_suit_loadout(s, true),
             Event::CreateSuitLoadout(s) => self.inventory.on_suit_loadout(s, false),
+            Event::DeleteSuitLoadout(d) => self.inventory.on_delete_suit_loadout(d),
+            Event::RenameSuitLoadout(r) => self.inventory.on_rename_suit_loadout(r),
+            Event::LoadoutEquipModule(m) => self.inventory.on_loadout_module(m, true),
+            Event::LoadoutRemoveModule(m) => self.inventory.on_loadout_module(m, false),
             Event::UpgradeSuit(u) | Event::UpgradeWeapon(u) => {
                 self.money(ts, LedgerCategory::Outfitting, -u.cost, format!("Upgraded {} to G{}", u.name_localised.clone().unwrap_or_else(|| u.name.clone()), u.class));
             }
