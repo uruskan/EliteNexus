@@ -87,6 +87,10 @@ release time that section becomes the new version and the release workflow publi
 - **BGS & Powerplay: "All time" says what it counts.** It said "Counting from 01 Jan 02:00", the date computer
   clocks count from (1 January 1970) in your time zone. It now says it counts all your journals, and the date of
   your first activity in them.
+- **BGS & Powerplay: a system's factions fit the window.** The table on each system's card had a column for every
+  kind of activity, and in a window about 1,000 pixels wide it ran past the edge: Missions failed and Murders were
+  cut off. It now has a column only for each kind of activity the system saw in the period, and where even those
+  don't fit side by side, each faction lists its activity under its name.
 - **Statistics and BGS & Powerplay: a bar's number is no longer cut off** (GitHub issue #4, with a screenshot).
   Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
   edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always
