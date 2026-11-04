@@ -114,15 +114,20 @@ mod tests {
     use std::os::windows::io::AsRawHandle;
 
     #[test]
-    fn the_user_owns_their_files_and_not_the_systems() {
+    fn the_user_owns_the_pipe_and_not_the_systems_files() {
+        use tokio::net::windows::named_pipe::ServerOptions;
         let me = user_sid().expect("this process's SID");
         assert!(me.text.starts_with("S-1-"), "{}", me.text);
-        assert!(OwnerOnly::new(&me).is_some());
-        let path = std::env::temp_dir().join(format!("enx-owner-{}.txt", std::process::id()));
-        let mine = std::fs::File::create(&path).unwrap();
-        assert!(owned_by(mine.as_raw_handle(), &me), "a file this test made is the user's");
-        drop(mine);
-        let _ = std::fs::remove_file(&path);
+        // A pipe made as the app makes it names the user as owner. A plain new file wouldn't do here: an elevated
+        // administrator's new files belong to the Administrators group (CI's Windows runners run that way).
+        let owner_only = OwnerOnly::new(&me).expect("the pipe's security descriptor");
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _in_runtime = rt.enter();
+        let mut attributes = owner_only.attributes();
+        // SAFETY: `attributes` is a valid SECURITY_ATTRIBUTES whose descriptor lives as long as `owner_only`.
+        let pipe = unsafe { ServerOptions::new().first_pipe_instance(true).create_with_security_attributes_raw(crate::mcp::test_endpoint("owner"), (&raw mut attributes).cast()) }.unwrap();
+        assert!(owned_by(pipe.as_raw_handle(), &me), "a pipe made with OwnerOnly is the user's");
+        drop(pipe);
         let system = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into()).join("System32").join("kernel32.dll");
         let theirs = std::fs::File::open(system).unwrap();
         assert!(!owned_by(theirs.as_raw_handle(), &me), "Windows' own files aren't the user's");
