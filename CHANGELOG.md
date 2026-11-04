@@ -17,9 +17,9 @@ release time that section becomes the new version and the release workflow publi
   gear (suit loadouts with their modifications and weapons, and what's in your ship locker and backpack) and where
   your credits went since you last loaded the game (or in the last few hours), newest first, with totals per
   category. It can tell you the factions of any system you have visited (influence, states, happiness and your own
-  reputation with each, as the game last told you). It can also say where to find a raw material (it reads the nearest
-  landable bodies, up to 500, stopping once it has 10 hits or after 60 seconds, and lists those richest first, so a
-  richer body may lie farther out).
+  reputation with each, as the game last told you). It can also say where to find a raw material: the landable bodies
+  that hold it most, or the nearest, within a distance you name (100 ly unless you say otherwise), from the scans
+  commanders shared that Spansh holds.
 - **BGS & Powerplay** shows the merits you earned in each system, on the system's card beside its factions'
   influence, bonds, profit and data (asked for by NetworX on the Frontier Forums). The journal doesn't say which
   system a merit award counts for, so each award is placed in the system you were in when the game awarded it. The

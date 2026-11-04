@@ -27,8 +27,8 @@ use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 
+mod bodies;
 mod cmdr;
-mod outfit;
 
 pub struct NexusTools {
     pub model: Arc<RwLock<Model>>,
@@ -2019,19 +2019,21 @@ pub static TOOLS: &[Tool] = &[
     },
     Tool {
         name: "find_material_body",
-        description: "Landable bodies near a system that hold a raw material (e.g. Polonium), from Spansh. Reads the nearest landable bodies page by page (up to 500), stops once it has 10 hits or after 60 seconds, and lists those richest first, so a richer body may lie farther out. max_gravity_g defaults to 1.0. A search can take tens of seconds.",
+        description: "Landable bodies near a system that hold a raw material (e.g. Polonium), from Spansh: the richest within a distance (default 100 ly), or the nearest. Spansh knows a body's materials only from scans commanders shared.",
         params: || {
             schema(
                 json!({
                     "material": { "type": "string", "description": "A raw material, e.g. Polonium, Tellurium, Niobium, Arsenic." },
                     "near_system": { "type": "string", "description": NEAR },
+                    "max_distance_ly": { "type": "number", "description": "Search radius, 1 to 1,000 ly. Default 100." },
+                    "sort": { "type": "string", "enum": ["richest", "nearest"], "description": "Default richest." },
                     "max_gravity_g": { "type": "number", "description": "Highest surface gravity in g. Default 1.0." },
                     "max_distance_ls": { "type": "number", "description": "Farthest from the arrival star, in ls. Default: any." }
                 }),
                 &["material"],
             )
         },
-        working: "Searching Spansh for bodies… (can take a while)",
+        working: "Asking Spansh where to find it…",
         noun: "Spansh",
         read_only: true,
         ask: true,
@@ -3325,8 +3327,8 @@ mod tests {
         assert!(!bodies.is_empty(), "{v}");
         let shares: Vec<f64> = bodies.iter().map(|b| b["share_pct"].as_f64().unwrap()).collect();
         assert!(shares.windows(2).all(|w| w[0] >= w[1]), "richest first: {shares:?}");
-        assert!(bodies.iter().all(|b| b["system"].is_string() && b["gravity_g"].is_number()));
-        assert!(v["searched_bodies"].as_u64().unwrap() <= 500);
+        assert!(bodies.iter().all(|b| b["system"].is_string() && b["gravity_g"].as_f64().is_some_and(|g| g <= 1.0)));
+        assert!(v["bodies_holding_it"].as_u64().unwrap() > 0);
     }
 }
 
