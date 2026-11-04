@@ -144,6 +144,14 @@ fn system_info(r: &Row) -> rusqlite::Result<SystemInfo> {
     })
 }
 
+/// A fleet carrier's docking access in the journal's spelling (`all`, `none`, `friends`, `squadron`,
+/// `squadronfriends`), however its source wrote it (Spansh: `Squadron Friends`); `None` for a station, or a carrier
+/// whose access was never reported.
+pub(crate) fn carrier_access(is_carrier: bool, raw: Option<String>) -> Option<String> {
+    let a = raw?.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase();
+    (is_carrier && !a.is_empty()).then_some(a)
+}
+
 /// SQL bounding box parameters for a sphere.
 fn bbox(o: [f64; 3], r: f64) -> [f64; 6] {
     [o[0] - r, o[0] + r, o[1] - r, o[1] + r, o[2] - r, o[2] + r]
@@ -305,13 +313,14 @@ pub(crate) fn search_commodity(
     cands.sort_by(cmp);
 
     let mut stmt = conn.prepare_cached(
-        "SELECT name, type, system_name, system_id64, x, y, z, dist_ls, max_pad, is_carrier, is_planetary \
+        "SELECT name, type, system_name, system_id64, x, y, z, dist_ls, max_pad, is_carrier, is_planetary, carrier_access \
          FROM stations WHERE market_id = ?1",
     )?;
     let mut out = Vec::with_capacity(cands.len());
     for c in cands {
         let hit = stmt
             .query_row([c.market_id], |r| {
+                let is_carrier = r.get::<_, i64>(9)? != 0;
                 Ok(CommodityHit {
                     system: r.get(2)?,
                     system_id64: r.get::<_, Option<i64>>(3)?.map(|v| v as u64),
@@ -325,8 +334,9 @@ pub(crate) fn search_commodity(
                     price: c.price,
                     quantity: c.qty,
                     updated_unix: c.updated,
-                    is_carrier: r.get::<_, i64>(9)? != 0,
+                    is_carrier,
                     is_planetary: r.get::<_, i64>(10)? != 0,
+                    carrier_access: carrier_access(is_carrier, r.get(11)?),
                     commodity: c.commodity.clone(),
                 })
             })
@@ -496,7 +506,7 @@ pub(crate) fn latest_prices(
 
     let mut stmt = conn.prepare_cached(
         "SELECT m.buy, m.sell, m.mean, m.stock, m.demand, m.updated, \
-                s.name, s.type, s.system_name, s.dist_ls, s.max_pad, s.is_carrier, s.is_planetary \
+                s.name, s.type, s.system_name, s.dist_ls, s.max_pad, s.is_carrier, s.is_planetary, s.carrier_access \
          FROM market AS m JOIN stations AS s ON s.market_id = m.market_id \
          WHERE m.market_id = ?1 AND m.commodity_id = ?2",
     )?;
@@ -504,6 +514,7 @@ pub(crate) fn latest_prices(
     for (market_id, _, d, cid, commodity) in cands {
         let quote = stmt
             .query_row(params![market_id, cid], |r| {
+                let is_carrier = r.get::<_, i64>(11)? != 0;
                 Ok(CommodityQuote {
                     market_id: market_id as u64,
                     buy: r.get(0)?,
@@ -518,8 +529,9 @@ pub(crate) fn latest_prices(
                     distance_ly: d,
                     dist_ls: r.get(9)?,
                     max_pad: Pad::from_code(r.get(10)?).map(Pad::as_char),
-                    is_carrier: r.get::<_, i64>(11)? != 0,
+                    is_carrier,
                     is_planetary: r.get::<_, i64>(12)? != 0,
+                    carrier_access: carrier_access(is_carrier, r.get(13)?),
                     commodity,
                 })
             })

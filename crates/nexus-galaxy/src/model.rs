@@ -376,6 +376,10 @@ pub struct CommodityHit {
     pub updated_unix: i64,
     pub is_carrier: bool,
     pub is_planetary: bool,
+    /// A fleet carrier's docking access as last reported (`all`, `none`, `friends`, `squadron`, `squadronfriends`);
+    /// `None` for a station, or a carrier whose access was never reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carrier_access: Option<String>,
     /// Rare goods searches: which commodity this row is. `None` in a search for one commodity (the row is that one).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub commodity: Option<RowCommodity>,
@@ -425,6 +429,9 @@ pub struct CommodityQuote {
     pub max_pad: Option<char>,
     pub is_carrier: bool,
     pub is_planetary: bool,
+    /// A fleet carrier's docking access as last reported (see [`CommodityHit::carrier_access`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carrier_access: Option<String>,
     /// 0 when the station does not sell it.
     pub buy: i64,
     /// 0 when the station does not buy it.
@@ -817,6 +824,9 @@ pub struct Deal {
     pub distance_ly: Option<f64>,
     pub max_pad: Option<char>,
     pub is_carrier: bool,
+    /// A fleet carrier's docking access as last reported (see [`CommodityHit::carrier_access`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub carrier_access: Option<String>,
     pub updated_unix: i64,
 }
 

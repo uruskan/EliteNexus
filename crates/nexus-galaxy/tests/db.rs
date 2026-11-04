@@ -302,6 +302,32 @@ fn commodity_search_filters_and_sorts() {
     assert!(db.search_commodity(&q).expect("q").is_empty());
 }
 
+/// A carrier's docking access, as its market reported it, reaches the list rows (in the journal's spelling, whatever
+/// the source wrote); stations, and carriers whose access was never reported, have none.
+#[test]
+fn carrier_access_reaches_the_lists() {
+    let t = TempDb::new("access");
+    let db = t.db();
+    populate(db);
+    // The Spansh dump writes "Squadron Friends", the journal and EDDN "squadronfriends".
+    db.ingest(Ingest::Market(MarketSnapshot {
+        carrier_docking_access: Some("Squadron Friends".into()),
+        ..match market(4, "Beta", "B-CARRIER", now() - 20, &[("gold", 7000, 0, 10, 0)]) {
+            Ingest::Market(m) => m,
+            _ => unreachable!("a market"),
+        }
+    }));
+    db.flush().expect("flush");
+    let q = CommodityQuery { commodity: "gold".into(), ..Default::default() };
+    let hits = db.search_commodity(&q).expect("q");
+    let access = |id: u64| hits.iter().find(|h| h.market_id == id).and_then(|h| h.carrier_access.clone());
+    assert_eq!(access(4).as_deref(), Some("squadronfriends"));
+    assert_eq!(access(1), None, "a station has none");
+    let latest = db.latest_prices(&q).expect("latest");
+    assert_eq!(latest.iter().find(|l| l.market_id == 4).and_then(|l| l.carrier_access.as_deref()), Some("squadronfriends"));
+    assert!(latest.iter().filter(|l| l.market_id != 4).all(|l| l.carrier_access.is_none()));
+}
+
 #[test]
 fn age_filter_and_freshest_sort() {
     let t = TempDb::new("age");

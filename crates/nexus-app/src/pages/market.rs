@@ -764,8 +764,9 @@ fn nav_label(ui: &mut Ui, text: impl Into<RichText>, tip: &str) -> bool {
     r.clicked()
 }
 
-/// Station name over its system (click the system to copy it), with a carrier or planet mark.
-fn station_cell(ui: &mut Ui, station: &str, system: &str, carrier: bool, planetary: bool, dist_ls: Option<f64>) {
+/// Station name over its system (click the system to copy it), with a carrier or planet mark; a carrier
+/// also shows who may dock (`access`, as last reported).
+fn station_cell(ui: &mut Ui, station: &str, system: &str, carrier: bool, planetary: bool, dist_ls: Option<f64>, access: Option<&str>) {
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let (name, tip) = if carrier {
@@ -775,7 +776,11 @@ fn station_cell(ui: &mut Ui, station: &str, system: &str, carrier: bool, planeta
         } else {
             (station.to_string(), None)
         };
-        let r = ui.add(egui::Label::new(RichText::new(name).color(pal::TEXT)).truncate());
+        let r = if carrier {
+            named_with_access(ui, RichText::new(name).color(pal::TEXT), access, |ui, text| ui.add(egui::Label::new(text).truncate()))
+        } else {
+            ui.add(egui::Label::new(RichText::new(name).color(pal::TEXT)).truncate())
+        };
         if let Some(t) = tip {
             r.on_hover_text(t);
         }
@@ -1607,7 +1612,7 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
                 row.col(|ui| {
                     ui.label(RichText::new(nexus_data::names::group_digits(h.quantity)).color(pal::DIM));
                 });
-                row.col(|ui| station_cell(ui, &h.station, &h.system, h.is_carrier, h.is_planetary, h.dist_ls));
+                row.col(|ui| station_cell(ui, &h.station, &h.system, h.is_carrier, h.is_planetary, h.dist_ls, h.carrier_access.as_deref()));
                 row.col(|ui| {
                     ui.label(RichText::new(h.distance_ly.map(|d| format!("{d:.1} ly")).unwrap_or_default()).color(pal::DIM));
                 });
@@ -1711,7 +1716,7 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
                         action = Some(open);
                     }
                 });
-                row.col(|ui| station_cell(ui, &q.station, &q.system, q.is_carrier, q.is_planetary, q.dist_ls));
+                row.col(|ui| station_cell(ui, &q.station, &q.system, q.is_carrier, q.is_planetary, q.dist_ls, q.carrier_access.as_deref()));
                 let price = |ui: &mut Ui, v: i64, qty: i64, col: Color32, what: &str| {
                     if v > 0 && qty > 0 {
                         let r = ui.label(RichText::new(cr(v)).color(col));
@@ -1756,9 +1761,9 @@ enum PickAction {
     Pin(Pin),
 }
 
-/// "all" / "squadronfriends" / ... as words.
+/// "all" / "squadronfriends" / ... as words (Spansh writes "Squadron Friends").
 fn carrier_access(a: &str) -> &str {
-    match a.to_ascii_lowercase().as_str() {
+    match access_key(a).as_str() {
         "all" => "everyone",
         "none" => "nobody but the owner",
         "friends" => "friends only",
@@ -1766,6 +1771,51 @@ fn carrier_access(a: &str) -> &str {
         "squadronfriends" => "squadron and friends",
         _ => a,
     }
+}
+
+/// A docking access value in the journal's spelling: lower case, no spaces.
+fn access_key(a: &str) -> String {
+    a.chars().filter(|c| !c.is_whitespace()).collect::<String>().to_ascii_lowercase()
+}
+
+/// A fleet carrier's docking access as a small badge: open, friends, squadron, owner only, or "?" when it was never
+/// reported. The tooltip has it in words, and says it's as last reported.
+fn access_badge(ui: &mut Ui, access: Option<&str>) -> egui::Response {
+    let (text, col) = access_badge_text(access);
+    let tip = match access {
+        Some(a) => format!("Docking: {}, as last reported with its market. Its owner can change that at any time, so it may differ when you get there.", carrier_access(a)),
+        None => "Who may dock was never reported for this carrier: older reports of its market don't include it.".to_string(),
+    };
+    badge(ui, text, col).on_hover_text(tip)
+}
+
+/// The badge's word and colour for a docking access (see [`access_badge`]).
+fn access_badge_text(access: Option<&str>) -> (&'static str, Color32) {
+    match access.map(access_key).as_deref() {
+        Some("all") => ("open", pal::GOOD),
+        Some("none") => ("owner only", pal::BAD),
+        Some("friends") => ("friends", pal::WARN),
+        Some("squadron") => ("squadron", pal::WARN),
+        Some("squadronfriends") => ("squadron, friends", pal::WARN),
+        Some(_) | None => ("?", pal::GRAY),
+    }
+}
+
+/// A carrier's name with its docking-access badge after it: the name gives up room (and ends in "…") before the
+/// badge does. `name` draws the name in the room left, so it can be a plain label or a link.
+fn named_with_access<R>(ui: &mut Ui, text: RichText, access: Option<&str>, name: impl FnOnce(&mut Ui, RichText) -> R) -> R {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let badge_w = crate::widgets::badge_size(ui, access_badge_text(access).0).x + ui.spacing().item_spacing.x;
+        let room = (ui.available_width() - badge_w).max(40.0);
+        let r = ui.scope(|ui| {
+            ui.set_max_width(room);
+            name(ui, text)
+        });
+        access_badge(ui, access);
+        r.inner
+    })
+    .inner
 }
 
 /// The picked market: what it is, the row's commodity there, its price history, and a way to its whole market.
@@ -2014,7 +2064,8 @@ fn abnormal_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -
     });
     table
         .body(|body| {
-            body.rows(34.0, deals.len(), |mut row| {
+            // As tall as the commodity lists' rows: a carrier's name line has its docking badge.
+            body.rows(40.0, deals.len(), |mut row| {
                 let d = &deals[order[row.index()]];
                 row.col(|ui| {
                     if pin_button(ui, p.is_pinned(d.market_id, &d.commodity, sell)) {
@@ -2061,7 +2112,12 @@ fn abnormal_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -
                         ui.spacing_mut().item_spacing.y = 0.0;
                         let name = if d.is_carrier { format!("{} {}", icon::ANCHOR, d.station) } else { d.station.clone() };
                         let tip = if d.is_carrier { "Fleet carrier: its owner sets these prices and who may dock. Click for its whole market." } else { "Click for the station's whole market" };
-                        if nav_label(ui, RichText::new(name).color(pal::TEXT), tip) {
+                        let clicked = if d.is_carrier {
+                            named_with_access(ui, RichText::new(name).color(pal::TEXT), d.carrier_access.as_deref(), |ui, text| nav_label(ui, text, tip))
+                        } else {
+                            nav_label(ui, RichText::new(name).color(pal::TEXT), tip)
+                        };
+                        if clicked {
                             nav = Some(Nav::Station(d.market_id));
                         }
                         if ui.add(egui::Label::new(RichText::new(&d.system).size(size::CAPTION).color(pal::DIM)).truncate().sense(egui::Sense::click())).on_hover_text("Click to copy the system").clicked() {
@@ -2218,6 +2274,12 @@ fn pins_panel(ui: &mut Ui, gs: &GameState, st: &mut MarketUi) -> Option<Nav> {
                         if nav_label(ui, RichText::new(name).color(pal::TEXT), "Click for the station's whole market") {
                             nav = Some(Nav::Station(p.market_id));
                         }
+                        // Who may dock, once the pin's market has loaded.
+                        if p.carrier
+                            && let Some(Some(m)) = live.and_then(|l| l.get(&p.market_id))
+                        {
+                            access_badge(ui, m.station.carrier_docking_access.as_deref());
+                        }
                         if ui.add(egui::Label::new(RichText::new(&system).size(size::CAPTION).color(pal::DIM)).truncate().sense(egui::Sense::click())).on_hover_text("Click to copy the system").clicked() {
                             ui.ctx().copy_text(system.clone());
                         }
@@ -2309,7 +2371,12 @@ fn carriers_card(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
         egui::ScrollArea::vertical().id_salt("carriers-here-list").max_height(180.0).show(ui, |ui| {
             Grid::new("carriers-grid").num_columns(3).striped(true).spacing([14.0, 4.0]).max_col_width(ui.available_width()).show(ui, |ui| {
                 for (name, cs) in &listed {
-                    ui.label(RichText::new(format!("{} {name}", icon::CHECK_CIRCLE)).color(pal::TEXT));
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{} {name}", icon::CHECK_CIRCLE)).color(pal::TEXT));
+                        if let Some(s) = known.get(cs) {
+                            access_badge(ui, s.carrier_docking_access.as_deref());
+                        }
+                    });
                     match known.get(cs) {
                         Some(s) if s.market_updated_unix > 0 => {
                             if nav_label(ui, RichText::new(format!("{} goods on its market", s.commodity_count)).color(pal::ACCENT_SOFT), "Click for its whole market") {
@@ -3261,8 +3328,8 @@ fn sell_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Op
             .resizable(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
             .vscroll(false)
-            .column(Column::initial(250.0))
-            .column(Column::initial(190.0))
+            .column(Column::initial(250.0).clip(true))
+            .column(Column::initial(190.0).clip(true))
             .column(Column::initial(70.0))
             .column(Column::initial(110.0))
             .column(Column::initial(90.0))
@@ -3293,17 +3360,24 @@ fn sell_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Op
                             } else if h.is_planetary {
                                 ui.label(RichText::new(icon::PLANET).color(pal::DIM)).on_hover_text("Planetary");
                             }
-                            if nav_label(ui, RichText::new(&h.station).color(pal::TEXT), "Click for the station's whole market") {
+                            let tip = "Click for the station's whole market";
+                            let clicked = if h.is_carrier {
+                                named_with_access(ui, RichText::new(&h.station).color(pal::TEXT), h.carrier_access.as_deref(), |ui, text| nav_label(ui, text, tip))
+                            } else {
+                                nav_label(ui, RichText::new(&h.station).color(pal::TEXT), tip)
+                            };
+                            if clicked {
                                 nav = Some(Nav::Station(h.market_id));
-                            }
-                            if let Some(ls) = h.dist_ls {
-                                ui.label(RichText::new(format!("{ls:.0} ls")).small().color(pal::DIM));
                             }
                         });
                     });
+                    // The system with the station's distance from the arrival star, as the other lists show it.
                     row.col(|ui| {
                         if ui.link(&h.system).on_hover_text("Click to copy").clicked() {
                             ui.ctx().copy_text(h.system.clone());
+                        }
+                        if let Some(ls) = h.dist_ls {
+                            ui.label(RichText::new(format!("{ls:.0} ls")).small().color(pal::DIM));
                         }
                     });
                     row.col(|ui| {
@@ -3517,6 +3591,23 @@ mod tests {
         assert_eq!(texts(category_suggestions(&all, "me")), vec!["Metals"]);
     }
 
+    /// A carrier's docking access as its badge says it, in the journal's spelling or Spansh's.
+    #[test]
+    fn docking_access_badges() {
+        let word = |a: Option<&str>| access_badge_text(a).0;
+        assert_eq!(word(Some("all")), "open");
+        assert_eq!(word(Some("All")), "open");
+        assert_eq!(word(Some("none")), "owner only");
+        assert_eq!(word(Some("friends")), "friends");
+        assert_eq!(word(Some("squadron")), "squadron");
+        assert_eq!(word(Some("squadronfriends")), "squadron, friends");
+        assert_eq!(word(Some("Squadron Friends")), "squadron, friends");
+        assert_eq!(word(None), "?", "never reported");
+        assert_eq!(word(Some("something new")), "?");
+        assert_eq!(carrier_access("Squadron Friends"), "squadron and friends");
+        assert_eq!(carrier_access("none"), "nobody but the owner");
+    }
+
     #[test]
     fn suggestions_rank_names_initials_and_words() {
         let all = sample();
@@ -3577,6 +3668,7 @@ mod tests {
             updated_unix: 0,
             is_carrier: true,
             is_planetary: false,
+            carrier_access: None,
             commodity: None,
         };
         let r = Relax::for_hit(&hit, &p, true);

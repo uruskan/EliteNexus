@@ -34,6 +34,11 @@ release time that section becomes the new version and the release workflow publi
   average. Rare goods are marked ★ in yellow, and the lists name the commodity in their first column. Clicking into
   either field selects its text; Tab takes the highlighted entry. The retired event rares (Classified Experimental
   Equipment, Galactic Travel Guide) are left out.
+- **Market**: fleet carriers say who may dock right in the lists (Find commodity, Abnormal prices, Sell my cargo,
+  your pins and the Station tab's carriers): **open**, **friends**, **squadron**, **squadron, friends** or **owner
+  only**, as last reported with the carrier's market, or **?** when no report has said. Until now it showed only
+  after clicking a row (asked for by hangerhead in GitHub discussion #1). The owner can change it at any time, so
+  it may differ when you get there.
 - **Market** › Trade routes, while you're docked: **From this station** lists only the routes that start there, what
   to buy at this station and where to sell it within the distance you set (asked for by NetworX on the Frontier
   Forums). Open the commodity market in the game first, so Elite Nexus has the station's latest prices.
