@@ -2564,9 +2564,6 @@ fn feed_header(ui: &mut Ui, svc: &mut MarketService) {
             ui.label(RichText::new(s).small().color(pal::DIM));
         }
     });
-    for l in svc.recent_headlines(4) {
-        ui.label(RichText::new(format!("{} {l}", icon::BROADCAST)).small().color(pal::DIM));
-    }
 }
 
 fn status<T>(ui: &mut Ui, slot: &Slot<Res<T>>) -> bool {

@@ -685,7 +685,7 @@ impl NexusApp {
                     self.settings.market.clone_from(&self.market_ui.prefs);
                     self.settings_dirty = Some(Instant::now());
                 }
-                // Feed counters and headlines move every second or so.
+                // The feed's counters move every second or so.
                 ui.ctx().request_repaint_after(Duration::from_millis(1000));
             }
         };

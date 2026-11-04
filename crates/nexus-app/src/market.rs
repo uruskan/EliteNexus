@@ -157,10 +157,6 @@ impl MarketService {
         Some((s.connected, line))
     }
 
-    pub fn recent_headlines(&self, n: usize) -> Vec<String> {
-        self.eddn.as_ref().map(|h| h.stats().headlines(n).into_iter().map(|h| h.text).collect()).unwrap_or_default()
-    }
-
     /// The last database counters; asking counts them again on a worker thread every [`STATS_EVERY`] at most.
     pub fn db_stats(&mut self) -> Option<&DbStats> {
         if let Some(job) = self.stats_job.as_mut() {
