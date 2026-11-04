@@ -856,11 +856,35 @@ pub struct CommodityInfo {
     pub is_rare: bool,
 }
 
+/// One point of a market's price history: a report just before or at a change. `buy` and `sell` 0 on the report
+/// before a commodity first appeared there (the market didn't list it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct PricePoint {
     pub ts_unix: i64,
     pub buy: i64,
     pub sell: i64,
+}
+
+/// How long a market's prices for one commodity have stood, as far as the price history can tell (see
+/// [`crate::GalaxyDb::price_since`]): what it sells for (you buy) and what it pays (you sell), each `None` when it
+/// doesn't trade that way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct PriceSince {
+    pub buy: Option<Stood>,
+    pub sell: Option<Stood>,
+}
+
+/// How long one price has stood (unix seconds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum Stood {
+    /// It changed to this price after `before`, the last report at the `previous` price (0: the market didn't
+    /// list the commodity then), and by `since`, the first report at this one.
+    Since { since: i64, before: i64, previous: i64 },
+    /// No change on record: it has stood at least since `since`, as far back as the history of this market reaches
+    /// (it keeps changes for 30 days, and only from the first report it compared).
+    AtLeast { since: i64 },
+    /// The history doesn't follow this market's prices yet (it does from its next report).
+    Unknown,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

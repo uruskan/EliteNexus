@@ -446,6 +446,18 @@ impl GalaxyDb {
         query::price_history(&*self.inner.pool.get()?, market_id, cid)
     }
 
+    /// How long a market's prices for one commodity have stood, as far as the price history can tell: since a
+    /// change (or since the commodity appeared there), at least since the history of this market begins, or not
+    /// known. `None` when the market doesn't list the commodity. The history keeps every change of a market it
+    /// compared reports of, for [`GalaxyOptions::price_history_days`].
+    pub fn price_since(&self, market_id: u64, commodity: &str) -> Result<Option<PriceSince>> {
+        let Some(cid) = self.inner.shared.commodities.read().resolve(commodity) else {
+            return Ok(None);
+        };
+        let kept_from = util::now_unix() - self.inner.opts.price_history_days.max(1) * 86_400;
+        query::price_since(&*self.inner.pool.get()?, market_id, cid, kept_from)
+    }
+
     /// All known commodities, sorted by category and name.
     pub fn commodities(&self) -> Vec<CommodityInfo> {
         let cache = self.inner.shared.commodities.read();

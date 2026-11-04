@@ -383,12 +383,14 @@ struct StationRow {
     market_updated: i64,
     n_commodities: i64,
     prohibited: Option<String>,
+    /// The market report since which the price history has every change at this market (see the schema).
+    history_since: Option<i64>,
 }
 
 const STATION_ROW_COLS: &str = "market_id, system_id64, system_name, system_name_lower, name, type, dist_ls, max_pad, \
      is_planetary, is_carrier, is_odyssey_settlement, services, mat_trader, tech_broker, economy, second_economy, \
      economies, faction, faction_state, government, allegiance, carrier_access, x, y, z, updated, market_updated, \
-     n_commodities, prohibited";
+     n_commodities, prohibited, history_since";
 
 fn opt_pos(x: Option<f64>, y: Option<f64>, z: Option<f64>) -> Option<[f64; 3]> {
     Some([x?, y?, z?])
@@ -424,6 +426,7 @@ impl StationRow {
             market_updated: 0,
             n_commodities: 0,
             prohibited: None,
+            history_since: None,
         }
     }
 
@@ -460,6 +463,7 @@ impl StationRow {
                     market_updated: r.get(26)?,
                     n_commodities: r.get(27)?,
                     prohibited: r.get(28)?,
+                    history_since: r.get(29)?,
                 })
             })
             .optional()?;
@@ -483,12 +487,12 @@ impl StationRow {
              services = ?12, mat_trader = ?13, tech_broker = ?14, economy = ?15, second_economy = ?16, \
              economies = ?17, faction = ?18, faction_state = ?19, government = ?20, allegiance = ?21, \
              carrier_access = ?22, x = ?23, y = ?24, z = ?25, updated = ?26, market_updated = ?27, \
-             n_commodities = ?28, prohibited = ?29 WHERE market_id = ?1"
+             n_commodities = ?28, prohibited = ?29, history_since = ?30 WHERE market_id = ?1"
                 .to_string()
         } else {
             format!(
                 "INSERT INTO stations ({STATION_ROW_COLS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, \
-                 ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)"
+                 ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)"
             )
         };
         tx.prepare_cached(&sql)?.execute(params![
@@ -521,6 +525,7 @@ impl StationRow {
             self.market_updated,
             self.n_commodities,
             self.prohibited,
+            self.history_since,
         ])?;
         dirty.push(self.market_id);
         Ok(())
@@ -903,6 +908,14 @@ impl Ctx {
         let history = live
             && self.opts.price_history
             && existing.as_ref().is_some_and(|e| e.n_commodities > 0);
+        // Since when the history has every change here: compared with the last report, it goes on from where it
+        // began (or, for a market stored before this was kept, from that last report); a market seen for the first
+        // time, or replaced without comparing (an import), starts afresh with this report.
+        row.history_since = match &existing {
+            Some(e) if history => e.history_since.or(Some(e.market_updated)),
+            _ if self.opts.price_history => Some(m.timestamp),
+            _ => None,
+        };
         if history {
             let mut stmt = tx.prepare_cached(
                 "SELECT commodity_id, buy, sell, updated FROM market WHERE market_id = ?1",
@@ -956,17 +969,23 @@ impl Ctx {
                     m.timestamp
                 ])?;
                 n += 1;
-                if let Some(&(ob, os, ou)) = old.get(&cid) {
-                    let min = self.opts.price_history_min_change;
-                    if price_changed(ob, it.buy, min) || price_changed(os, it.sell, min) {
-                        let mut rows = hist_old.execute(params![mid, cid, ou, ob, os])?;
-                        let point = params![mid, cid, m.timestamp, it.buy, it.sell];
-                        match hist_new.execute(point)? {
-                            0 => _ = hist_set.execute(point)?,
-                            n => rows += n,
-                        }
-                        self.history_added.set(self.history_added.get() + rows as i64);
+                // A change: the price before it (at its report) and this one. New on a market reported before (a
+                // carrier's new order, say): its last report, without it (0, 0), and this one.
+                let before = match old.get(&cid) {
+                    Some(&(ob, os, ou)) => {
+                        let min = self.opts.price_history_min_change;
+                        (price_changed(ob, it.buy, min) || price_changed(os, it.sell, min)).then_some((ou, ob, os))
                     }
+                    None => (history && (it.buy > 0 || it.sell > 0)).then(|| (existing.as_ref().map_or(0, |e| e.market_updated), 0, 0)),
+                };
+                if let Some((ou, ob, os)) = before {
+                    let mut rows = hist_old.execute(params![mid, cid, ou, ob, os])?;
+                    let point = params![mid, cid, m.timestamp, it.buy, it.sell];
+                    match hist_new.execute(point)? {
+                        0 => _ = hist_set.execute(point)?,
+                        n => rows += n,
+                    }
+                    self.history_added.set(self.history_added.get() + rows as i64);
                 }
             }
         }

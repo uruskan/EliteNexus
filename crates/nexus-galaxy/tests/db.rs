@@ -458,6 +458,71 @@ fn old_price_history_is_pruned_and_uncounted() {
     assert_eq!(t.db().stats().expect("stats").price_history_rows, Some(0));
 }
 
+/// How long a carrier's buy order has stood, from the reports the database compared: since a change, since it
+/// appeared, at least since the market was first reported (or since the 30 days kept), or not known.
+#[test]
+fn how_long_an_order_stood() {
+    let mut t = TempDb::new("since");
+    let db = t.db();
+    populate(db);
+    let n = now();
+    const D: i64 = 86_400;
+    let carrier = |mid: u64, ts: i64, items: &[(&str, i64, i64, i64, i64)]| market(mid, "Beta", "B-CARRIER", ts, items);
+    // Changed from 50,000 to 55,000 twelve days ago, reported unchanged since.
+    for (ts, p) in [(n - 20 * D, 50_000), (n - 12 * D, 55_000), (n - 3 * D, 55_000), (n - 3600, 55_000)] {
+        db.ingest(carrier(21, ts, &[("tritium", 0, p, 0, 9_000)]));
+    }
+    // The same price on every report for 25 days.
+    for ts in [n - 25 * D, n - 10 * D, n - 7200] {
+        db.ingest(carrier(22, ts, &[("tritium", 0, 101_000, 0, 8_000)]));
+    }
+    // A buy order that appeared since the report six days ago (which had only gold).
+    db.ingest(carrier(23, n - 6 * D, &[("gold", 8_000, 0, 400, 0)]));
+    db.ingest(carrier(23, n - 3 * 3600, &[("gold", 8_000, 0, 380, 0), ("tritium", 0, 62_000, 0, 5_000)]));
+    // One report only.
+    db.ingest(carrier(24, n - 5 * 3600, &[("tritium", 0, 58_000, 0, 2_500)]));
+    // Followed for 40 days, changed 35 days ago: those changes are pruned (on the next start).
+    for (ts, p) in [(n - 40 * D, 40_000), (n - 35 * D, 45_000), (n - 3600, 45_000)] {
+        db.ingest(carrier(25, ts, &[("tritium", 0, p, 0, 1_000)]));
+    }
+    db.flush().expect("flush");
+    let sell = |db: &GalaxyDb, mid: u64| db.price_since(mid, "tritium").expect("since").and_then(|s| s.sell);
+    assert_eq!(sell(db, 21), Some(Stood::Since { since: n - 12 * D, before: n - 20 * D, previous: 50_000 }));
+    assert_eq!(sell(db, 22), Some(Stood::AtLeast { since: n - 25 * D }));
+    assert_eq!(sell(db, 23), Some(Stood::Since { since: n - 3 * 3600, before: n - 6 * D, previous: 0 }), "a new order");
+    assert_eq!(sell(db, 24), Some(Stood::AtLeast { since: n - 5 * 3600 }));
+    assert_eq!(db.price_since(21, "tritium").expect("since").and_then(|s| s.buy), None, "it doesn't sell tritium");
+    assert_eq!(db.price_since(21, "gold").expect("since"), None, "not on its market");
+    // The new order's points don't show as price changes of their own: the report before it lists nothing.
+    let h = db.price_history(23, "tritium").expect("history");
+    assert_eq!(h.iter().map(|p| (p.ts_unix, p.sell)).collect::<Vec<_>>(), vec![(n - 6 * D, 0), (n - 3 * 3600, 62_000)]);
+
+    t.reopen();
+    let db = t.db();
+    db.flush().expect("flush");
+    match sell(db, 25) {
+        // At least the 30 days kept: what came before is gone.
+        Some(Stood::AtLeast { since }) => assert!((since - (n - 30 * D)).abs() < 600, "{since} vs {}", n - 30 * D),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(sell(db, 21), Some(Stood::Since { since: n - 12 * D, before: n - 20 * D, previous: 50_000 }), "kept");
+}
+
+/// Without price history, nothing can be said about how long a price stood.
+#[test]
+fn no_history_no_since() {
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("galaxy-nohistory-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    {
+        let db = GalaxyDb::open_with(dir.join("galaxy.db"), GalaxyOptions { price_history: false, ..Default::default() }).expect("open");
+        populate(&db);
+        db.ingest(market(1, "Alpha", "A Port", now() - 10, &[("gold", 9_100, 8_900, 100, 0)]));
+        db.flush().expect("flush");
+        assert_eq!(db.price_since(1, "gold").expect("since").and_then(|s| s.buy), Some(Stood::Unknown));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn market_before_system_is_linked_later() {
     let t = TempDb::new("link");

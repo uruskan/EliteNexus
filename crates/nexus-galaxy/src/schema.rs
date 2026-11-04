@@ -62,7 +62,10 @@ CREATE TABLE IF NOT EXISTS stations (
     updated               INTEGER NOT NULL DEFAULT 0,
     market_updated        INTEGER NOT NULL DEFAULT 0,
     n_commodities         INTEGER NOT NULL DEFAULT 0,
-    prohibited            TEXT
+    prohibited            TEXT,
+    -- The market report since which every price change and every new commodity at this market is in the price
+    -- history (unix seconds); NULL when its prices aren't followed (history off, or not reported since this column).
+    history_since         INTEGER
 );
 CREATE INDEX IF NOT EXISTS stations_system ON stations(system_id64);
 CREATE INDEX IF NOT EXISTS stations_unlinked ON stations(system_name_lower) WHERE system_id64 IS NULL;
@@ -177,7 +180,7 @@ CREATE INDEX IF NOT EXISTS bodies_name ON bodies(name);
 "#;
 
 /// Columns added to existing tables after they were first created: (table, column, type).
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("bodies", "checked_online", "INTEGER")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[("bodies", "checked_online", "INTEGER"), ("stations", "history_since", "INTEGER")];
 
 const DROP_ALL: &str = r#"
 DROP VIEW IF EXISTS market_goods;

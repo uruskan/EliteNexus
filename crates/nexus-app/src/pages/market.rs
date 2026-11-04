@@ -14,7 +14,7 @@ use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
 use nexus_galaxy::{
     CommodityHit, CommodityInfo, CommodityQuery, CommodityQuote, CommoditySummary, Deal, DealQuery, GalaxyDb, HotspotHit, HotspotQuery, MaterialTrader, PricePoint,
-    Services, Sort, StationHit, StationInfo, StationMarket, StationQuery, TechBroker, TradeMode, TradeQuery, TradeRoute,
+    PriceSince, Services, Sort, StationHit, StationInfo, StationMarket, StationQuery, Stood, TechBroker, TradeMode, TradeQuery, TradeRoute,
 };
 use nexus_model::GameState;
 use rustc_hash::FxHashMap;
@@ -295,10 +295,12 @@ pub struct CommodityPage {
     sell_hint: Option<CommodityHit>,
 }
 
-/// A market picked in a commodity page's list: everything it trades, and this commodity's price history there.
+/// A market picked in a commodity page's list: everything it trades, this commodity's price history there, and how
+/// long its prices have stood.
 pub struct PickDetail {
     market: Option<StationMarket>,
     history: Vec<PricePoint>,
+    since: Option<PriceSince>,
 }
 
 /// Somewhere a click on a commodity or station name leads.
@@ -1223,7 +1225,8 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
             st.detail.run(ui.ctx(), move || {
                 let market = db.station_market(key.0).map_err(|e| e.to_string())?;
                 let history = db.price_history(key.0, &key.1).map_err(|e| e.to_string())?;
-                Ok(PickDetail { market, history })
+                let since = db.price_since(key.0, &key.1).map_err(|e| e.to_string())?;
+                Ok(PickDetail { market, history, since })
             });
         }
         let current = st.detail_key.as_ref().is_some_and(|k| k.0 == id) && !st.detail.busy();
@@ -1890,13 +1893,21 @@ fn pick_card(ui: &mut Ui, d: &PickDetail, (symbol, name): (&str, &str), origin: 
                         ui.add(egui::Label::new(RichText::new(format!("Fleet carrier: its owner sets these prices. Docking: {who}.")).size(size::FOOTNOTE).color(pal::DIM)).wrap());
                     }
                     ui.add_space(6.0);
+                    // A carrier's order: how long it has stood at this price, as far as the price history tells.
+                    let since = |ui: &mut Ui, s: Option<Stood>| {
+                        if let Some(s) = s.filter(|_| st.is_carrier) {
+                            ui.add(egui::Label::new(RichText::new(stood_words(s)).size(size::FOOTNOTE).color(pal::DIM)).wrap());
+                        }
+                    };
                     match m.items.iter().find(|r| r.symbol == symbol) {
                         Some(r) => {
                             if r.buy > 0 && r.stock > 0 {
                                 ui.label(RichText::new(format!("Sells {} for {} · {} in stock", name, cr(r.buy), nexus_data::names::group_digits(r.stock))).color(pal::CYAN));
+                                since(ui, d.since.and_then(|s| s.buy));
                             }
                             if r.sell > 0 && r.demand > 0 {
                                 ui.label(RichText::new(format!("Buys {} for {} · {} wanted", name, cr(r.sell), nexus_data::names::group_digits(r.demand))).color(pal::GOOD));
+                                since(ui, d.since.and_then(|s| s.sell));
                             }
                             let (a, col) = age(r.updated_unix);
                             ui.label(RichText::new(format!("Updated {a} ago · {} goods on this market", m.items.len())).size(size::FOOTNOTE).color(col));
@@ -1911,6 +1922,27 @@ fn pick_card(ui: &mut Ui, d: &PickDetail, (symbol, name): (&str, &str), origin: 
         },
     );
     action
+}
+
+/// How long a carrier's order has stood at its price, in words. The price history is all there is to go by: neither
+/// the game nor the live feed says when an order was set up, only what a market listed each time it was reported.
+fn stood_words(s: Stood) -> String {
+    let when = |t: i64| nexus_journal::Timestamp(t).to_local_string("%d %b %H:%M");
+    let ago = |t: i64| age(t).0;
+    match s {
+        Stood::Since { since, before, previous: 0 } => {
+            format!("Order first reported {} ({} ago): the report before, {}, didn't list it.", when(since), ago(since), when(before))
+        }
+        Stood::Since { since, before, previous } => {
+            format!("Price unchanged since {} ({} ago). The report before, {}, had {}.", when(since), ago(since), when(before), cr(previous))
+        }
+        Stood::AtLeast { since } => format!(
+            "Price unchanged for at least {} (since {}). Elite Nexus can't see further back: it keeps 30 days of price changes, from the first report of this market it received.",
+            ago(since),
+            when(since)
+        ),
+        Stood::Unknown => "How long this price has stood isn't known: Elite Nexus follows this market's prices from its next report.".to_string(),
+    }
 }
 
 /// This commodity's recorded prices at one market.

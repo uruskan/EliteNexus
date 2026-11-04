@@ -916,6 +916,56 @@ pub(crate) fn price_history(
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+/// How long a market's prices for a commodity have stood (see [`Stood`]); `None` when the market doesn't list it.
+/// `kept_from`: the oldest time the history still holds every change from (older ones are pruned).
+pub(crate) fn price_since(conn: &Connection, market_id: u64, cid: i64, kept_from: i64) -> Result<Option<PriceSince>> {
+    let row = conn
+        .prepare_cached(
+            "SELECT m.buy, m.sell, s.history_since FROM market AS m JOIN stations AS s ON s.market_id = m.market_id \
+             WHERE m.market_id = ?1 AND m.commodity_id = ?2",
+        )?
+        .query_row(params![market_id as i64, cid], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<i64>>(2)?)))
+        .optional()?;
+    let Some((buy, sell, tracked)) = row else {
+        return Ok(None);
+    };
+    let points = price_history(conn, market_id, cid)?;
+    let side = |now: i64, of: fn(&PricePoint) -> i64| {
+        (now > 0).then(|| {
+            let pts: Vec<(i64, i64)> = points.iter().map(|p| (p.ts_unix, of(p))).collect();
+            stood(&pts, now, tracked, kept_from)
+        })
+    };
+    Ok(Some(PriceSince { buy: side(buy, |p| p.buy), sell: side(sell, |p| p.sell) }))
+}
+
+/// How long `price` has stood, from one side's history points (time, price; oldest first). `tracked`: the report
+/// since which the history has every change at this market; `kept_from`: changes before this may have been pruned.
+pub(crate) fn stood(points: &[(i64, i64)], price: i64, tracked: Option<i64>, kept_from: i64) -> Stood {
+    let Some(tracked) = tracked else {
+        return Stood::Unknown;
+    };
+    // Points from before an unfollowed stretch (an import replaced the prices) say nothing about since.
+    let pts: Vec<(i64, i64)> = points.iter().copied().filter(|p| p.0 >= tracked).collect();
+    // The newest points at this price, back to the change that brought it.
+    let first = pts.iter().rposition(|p| p.1 != price).map_or(0, |i| i + 1);
+    match (first.checked_sub(1).map(|i| pts[i]), pts.get(first)) {
+        // A change on record: from the report before it to the first at this price.
+        (Some(before), Some(at)) => Stood::Since { since: at.0, before: before.0, previous: before.1 },
+        // The newest point isn't this price: a change went unrecorded (too small to keep, say).
+        (Some(_), None) => Stood::Unknown,
+        // No change on record since the history began here. Changes older than what's kept are gone: with nothing
+        // left, the price has stood since then at least; with points left, the first may be the one that brought it
+        // (its report before pruned away), so only from that one.
+        (None, at) => Stood::AtLeast {
+            since: match at {
+                Some(at) if tracked < kept_from => at.0,
+                _ => tracked.max(kept_from),
+            },
+        },
+    }
+}
+
 /// Row counts. Station / market numbers come from the in-memory index; the rest are `COUNT(*)`s, except the price
 /// history (the writer keeps that count, see `GalaxyDb::stats`).
 pub(crate) fn stats(conn: &Connection, index: &RwLock<StationIndex>) -> Result<DbStats> {
@@ -945,4 +995,39 @@ pub(crate) fn stats(conn: &Connection, index: &RwLock<StationIndex>) -> Result<D
     }
     s.newest_market_update = (newest > 0).then_some(newest);
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DAY: i64 = 86_400;
+
+    /// What a price's history says about how long it stood, case by case (times in days; 30 days kept).
+    #[test]
+    fn how_long_a_price_stood() {
+        let now = 100 * DAY;
+        let kept = now - 30 * DAY;
+        let pts = |v: &[(i64, i64)]| v.iter().map(|&(d, p)| (d * DAY, p)).collect::<Vec<_>>();
+        let tracked = Some(80 * DAY);
+        // Changed from 50 to 55 between day 82 and day 88; unchanged since.
+        assert_eq!(stood(&pts(&[(82, 50), (88, 55)]), 55, tracked, kept), Stood::Since { since: 88 * DAY, before: 82 * DAY, previous: 50 });
+        // A later change of the other side adds points at this price: still since day 88.
+        assert_eq!(stood(&pts(&[(82, 50), (88, 55), (90, 55), (95, 55)]), 55, tracked, kept), Stood::Since { since: 88 * DAY, before: 82 * DAY, previous: 50 });
+        // New on the market: the report before didn't list it.
+        assert_eq!(stood(&pts(&[(85, 0), (86, 60)]), 60, tracked, kept), Stood::Since { since: 86 * DAY, before: 85 * DAY, previous: 0 });
+        // No change since the history of this market began.
+        assert_eq!(stood(&[], 55, tracked, kept), Stood::AtLeast { since: 80 * DAY });
+        assert_eq!(stood(&pts(&[(84, 55), (90, 55)]), 55, tracked, kept), Stood::AtLeast { since: 80 * DAY }, "only the other side changed");
+        // Followed for longer than the history keeps: at least since what's kept...
+        assert_eq!(stood(&[], 55, Some(10 * DAY), kept), Stood::AtLeast { since: kept });
+        // ...or, with a point left whose report before was pruned, since that point only.
+        assert_eq!(stood(&pts(&[(75, 55)]), 55, Some(10 * DAY), kept), Stood::AtLeast { since: 75 * DAY });
+        // Points from before the prices were last replaced without comparing don't count.
+        assert_eq!(stood(&pts(&[(70, 40), (72, 55)]), 55, Some(80 * DAY), kept), Stood::AtLeast { since: 80 * DAY });
+        // The newest point isn't the price now (a change too small to keep): no answer.
+        assert_eq!(stood(&pts(&[(82, 50), (88, 55)]), 56, tracked, kept), Stood::Unknown);
+        // Not followed.
+        assert_eq!(stood(&pts(&[(82, 50)]), 55, None, kept), Stood::Unknown);
+    }
 }
