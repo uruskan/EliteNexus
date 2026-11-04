@@ -63,12 +63,7 @@ impl Timestamp {
     /// day's start.
     pub fn local_day(date: &str) -> Option<(Self, Self)> {
         let day = chrono::NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d").ok()?;
-        let start = |d: chrono::NaiveDate| {
-            let at = |h| d.and_hms_opt(h, 0, 0).and_then(|t| t.and_local_timezone(chrono::Local).earliest());
-            // Midnight can fall in a daylight-saving gap; that day then starts an hour later.
-            at(0).or_else(|| at(1)).map(|t| Timestamp(t.timestamp()))
-        };
-        Some((start(day)?, start(day.succ_opt()?)?))
+        Some((Timestamp(day_start(day, &chrono::Local)?), Timestamp(day_start(day.succ_opt()?, &chrono::Local)?)))
     }
 
     pub fn secs_since(self, earlier: Timestamp) -> i64 {
@@ -77,6 +72,52 @@ impl Timestamp {
 
     pub fn is_zero(self) -> bool {
         self.0 == 0
+    }
+}
+
+/// When `date` starts in `tz`, in unix seconds. Midnight can fall in a daylight-saving gap; that day then starts an
+/// hour later.
+fn day_start<Tz: chrono::TimeZone>(date: chrono::NaiveDate, tz: &Tz) -> Option<i64> {
+    let at = |h| date.and_hms_opt(h, 0, 0).and_then(|t| t.and_local_timezone(tz.clone()).earliest());
+    at(0).or_else(|| at(1)).map(|t| t.timestamp())
+}
+
+/// Sorts instants into the commander's calendar days (local time), numbered as days since 1970-01-01: the slots of a
+/// chart that counts per day, whose dates [`LocalDays::label`] writes. A chart's bars, axis and tooltips all go by it,
+/// so each day is the date its events happened on the commander's clock. (Counting UTC days and naming each after the
+/// local date of its UTC midnight put most of a day under the date before, west of UTC.) It works out a day's bounds
+/// once and keeps them rather than asking for the time zone at every instant, which is a system call on Windows, and
+/// the charts count again every frame. Instants in order are quickest.
+#[derive(Debug, Clone, Default)]
+pub struct LocalDays {
+    /// The day met last and the instants it covers, `from..to` (none at first).
+    day: i64,
+    from: i64,
+    to: i64,
+}
+
+impl LocalDays {
+    /// The day `t` falls on.
+    pub fn day(&mut self, t: Timestamp) -> i64 {
+        self.day_in(t, &chrono::Local)
+    }
+
+    fn day_in<Tz: chrono::TimeZone>(&mut self, t: Timestamp, tz: &Tz) -> i64 {
+        if !(self.from..self.to).contains(&t.0) {
+            let date = t.to_chrono().with_timezone(tz).date_naive();
+            self.day = i64::from(date.to_epoch_days());
+            // A day lasts 23 or 25 hours where the clocks change; if its bounds don't come out, only `t` is kept.
+            (self.from, self.to) = match (day_start(date, tz), date.succ_opt().and_then(|d| day_start(d, tz))) {
+                (Some(from), Some(to)) if (from..to).contains(&t.0) => (from, to),
+                _ => (t.0, t.0.saturating_add(1)),
+            };
+        }
+        self.day
+    }
+
+    /// A day's date, `fmt` as for chrono (`%d %b` writes "03 Nov"); empty for a day outside chrono's calendar.
+    pub fn label(day: i64, fmt: &str) -> String {
+        i32::try_from(day).ok().and_then(chrono::NaiveDate::from_epoch_days).map(|d| d.format(fmt).to_string()).unwrap_or_default()
     }
 }
 
@@ -147,5 +188,34 @@ mod tests {
         assert_eq!(end.to_local_string("%Y-%m-%d %H:%M"), "2026-10-23 00:00");
         assert!((82_800..=90_000).contains(&(end.0 - start.0)), "a day, give or take a daylight-saving hour");
         assert!(Timestamp::local_day("22/10/2026").is_none());
+    }
+
+    #[test]
+    fn days_as_the_commanders_clock_shows_them() {
+        let at = |s: &str| Timestamp::parse(s).unwrap();
+        // 02:00 UTC on 3 November is the evening of the 2nd in New York (UTC-5) and the morning of the 3rd in
+        // Istanbul (UTC+3): each counts it on its own date, and the label writes that date. Noon UTC is the morning of
+        // the 3rd in New York, which UTC days named after the local date of their midnight called the 2nd.
+        let new_york = chrono::FixedOffset::west_opt(5 * 3_600).unwrap();
+        let istanbul = chrono::FixedOffset::east_opt(3 * 3_600).unwrap();
+        let t = at("2026-11-03T02:00:00Z");
+        assert_eq!(LocalDays::label(LocalDays::default().day_in(t, &new_york), "%d %b %Y"), "02 Nov 2026");
+        assert_eq!(LocalDays::label(LocalDays::default().day_in(t, &istanbul), "%d %b %Y"), "03 Nov 2026");
+        assert_eq!(LocalDays::label(LocalDays::default().day_in(at("2026-11-03T12:00:00Z"), &new_york), "%d %b"), "03 Nov");
+        // A day runs from local midnight to local midnight, whichever order the instants come in.
+        let nov2 = at("2026-11-02T00:00:00Z").0 / 86_400;
+        let mut days = LocalDays::default();
+        let seen: Vec<i64> = ["2026-11-02T05:00:00Z", "2026-11-03T04:59:59Z", "2026-11-03T05:00:00Z", "2026-11-02T04:59:59Z", "2026-11-02T12:00:00Z"]
+            .into_iter()
+            .map(|s| days.day_in(at(s), &new_york))
+            .collect();
+        assert_eq!(seen, [nov2, nov2, nov2 + 1, nov2 - 1, nov2]);
+        // On this computer's clock, a day's label is the date its instants have there.
+        let mut days = LocalDays::default();
+        for s in ["2026-01-15T00:30:00Z", "2026-07-01T23:30:00Z", "2026-11-04T12:00:00Z"] {
+            let (from, to) = Timestamp::local_day(&LocalDays::label(days.day(at(s)), "%Y-%m-%d")).unwrap();
+            assert!(from <= at(s) && at(s) < to, "{s}");
+        }
+        assert_eq!(LocalDays::label(i64::MAX, "%d %b"), "");
     }
 }

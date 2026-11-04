@@ -27,6 +27,11 @@ release time that section becomes the new version and the release workflow publi
   over the period, every label up its side was the same ("1.23 B" eleven times): the chart spanned a tenth of a
   credit. A flat or nearly flat balance now sits in a band of a tenth of its value above and below it, with labels
   that differ.
+- **Statistics and BGS & Powerplay: per-day charts go by your own days.** Jumps per day and the Powerplay merits chart
+  cut the days at midnight UTC and named each after your date when that midnight came, which west of UTC (the
+  Americas) is the day before: most of a day's jumps and merits showed under the previous date, on the axis and when
+  you hovered a bar. Both now count your calendar days, midnight to midnight on your clock, under the dates it shows,
+  and the merits chart no longer writes the same date on every tick when your merits fit in a day or two.
 - **Fleet: long module names stay in their column** (GitHub issue #4, with a screenshot). A name such as "8A Mk II
   Supercharge Optimised Frame Shift Drive (SCO)" ran over the module's value. The Module column now widens to the
   longest name when the window has room, and a name that still doesn't fit ends in "…" and shows whole when you hover

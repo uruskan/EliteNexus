@@ -881,6 +881,12 @@ pub fn bar_tooltip<R>(plot: &egui_plot::PlotResponse<R>, label: impl FnOnce(i64)
     });
 }
 
+/// The x axis of a chart per day (days from `nexus_journal::time::LocalDays`, bars at day + 0.5): each day's mark
+/// named by its date. Finer marks stay blank, or a chart of a day or two would write its date on every tenth of a day.
+pub fn day_axis(m: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>) -> String {
+    if m.step_size < 1.0 { String::new() } else { nexus_journal::time::LocalDays::label(m.value.round() as i64, "%d %b") }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The overlay's island
 

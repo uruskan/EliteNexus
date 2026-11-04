@@ -5,6 +5,7 @@ use crate::theme::{display, pal, size};
 use crate::widgets::{card, short_credits};
 use egui::{Grid, RichText, Ui};
 use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints};
+use nexus_journal::time::LocalDays;
 use nexus_journal::Timestamp;
 use nexus_model::GameState;
 use nexus_model::history::LedgerCategory;
@@ -170,9 +171,11 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
     });
     ui.add_space(10.0);
     card(ui, "Jumps per day", |ui| {
+        // Days are the commander's calendar days (local time), for the bars, the axis and the tooltip alike.
+        let mut calendar = LocalDays::default();
         let mut per_day: std::collections::BTreeMap<i64, (u32, f64)> = Default::default();
         for j in &jumps {
-            let e = per_day.entry(j.ts.0.div_euclid(86_400)).or_default();
+            let e = per_day.entry(calendar.day(j.ts)).or_default();
             e.0 += 1;
             e.1 += j.dist;
         }
@@ -188,14 +191,14 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
             .allow_scroll(false)
             .allow_drag(false)
             .allow_zoom(false)
-            .include_x(start.div_euclid(86_400) as f64)
-            .include_x(now.div_euclid(86_400) as f64 + 1.0)
+            .include_x(calendar.day(since) as f64)
+            .include_x(calendar.day(Timestamp(now)) as f64 + 1.0)
             .include_y(0.0)
-            .x_axis_formatter(|m, _| Timestamp((m.value * DAY) as i64).to_local_string("%d %b"))
+            .x_axis_formatter(crate::widgets::day_axis)
             .y_axis_formatter(|m, _| if m.value.fract() == 0.0 && m.value >= 0.0 { format!("{}", m.value as i64) } else { String::new() })
             .show(ui, |p| p.bar_chart(BarChart::new("Jumps", bars).element_formatter(Box::new(|_, _| String::new()))));
         crate::widgets::bar_tooltip(&plot, |day| {
-            let date = Timestamp(day * 86_400).to_local_string("%d %b");
+            let date = LocalDays::label(day, "%d %b");
             Some(match per_day.get(&day) {
                 Some((n, ly)) => format!("{date}\n{n} {} · {ly:.0} ly", if *n == 1 { "jump" } else { "jumps" }),
                 None => format!("{date}\nno jumps"),
