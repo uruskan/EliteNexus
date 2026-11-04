@@ -213,7 +213,9 @@ fn powerplay(ui: &mut Ui, gs: &GameState, since: Timestamp) {
                 .include_x(last as f64 + 1.0)
                 .include_y(0.0)
                 .x_axis_formatter(crate::widgets::day_axis)
-                .show(ui,|p| p.bar_chart(BarChart::new("merits", bars).element_formatter(Box::new(|_, _| String::new()))));
+                .y_grid_spacer(crate::widgets::round_marks(1.0))
+                .y_axis_formatter(|m, _| group_digits(m.value.round() as i64))
+                .show(ui, |p| p.bar_chart(BarChart::new("merits", bars).element_formatter(Box::new(|_, _| String::new()))));
             crate::widgets::bar_tooltip(&plot, |day| {
                 let date = LocalDays::label(day, "%d %b");
                 Some(match per_day.get(&day) {

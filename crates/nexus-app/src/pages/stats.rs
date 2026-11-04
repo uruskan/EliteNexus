@@ -4,7 +4,7 @@
 use crate::theme::{display, pal, size};
 use crate::widgets::{card, short_credits};
 use egui::{Grid, RichText, Ui};
-use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints};
+use egui_plot::{Bar, BarChart, GridInput, GridMark, Line, Plot, PlotPoints};
 use nexus_journal::time::LocalDays;
 use nexus_journal::Timestamp;
 use nexus_model::GameState;
@@ -46,11 +46,10 @@ pub(crate) fn credit_steps(samples: &[(Timestamp, i64)], start: i64, now: i64, c
 }
 
 /// The y range the Credits chart shows: its line with a little room above and below, so it isn't drawn on the edge.
-/// egui_plot labels the axis at every multiple of the finest power of ten that leaves room between labels, and the
-/// labels keep three figures ("1.23 B"): a balance that didn't move spanned a tenth of a credit, and every label read
-/// "1.23 B". So a flat or nearly flat line gets a band of a tenth of its value above and below it, which labels of two
-/// figures ("1.2 M", "12 k", the coarsest they get) still tell apart. On the log scale the line holds powers of ten,
-/// and a tenth of one is room enough.
+/// The labels keep three figures ("1.23 B"): a balance that didn't move spanned a tenth of a credit, and every label
+/// read "1.23 B". So a flat or nearly flat line gets a band of a tenth of its value above and below it, which labels of
+/// two figures ("1.2 M", "12 k", the coarsest they get) still tell apart. On the log scale the line holds powers of
+/// ten, and a tenth of one is room enough.
 fn credit_y_range(lo: f64, hi: f64, log: bool) -> (f64, f64) {
     if log {
         return (lo - 0.1, hi + 0.1);
@@ -58,6 +57,62 @@ fn credit_y_range(lo: f64, hi: f64, log: bool) -> (f64, f64) {
     let span = ((hi - lo) * 1.1).max(lo.abs().max(hi.abs()) * 0.2).max(20.0);
     let mid = (lo + hi) / 2.0;
     (mid - span / 2.0, mid + span / 2.0)
+}
+
+/// The finest step the Credits chart's labels (`compact_credits`) tell apart up to `v`: 0.01 B among billions, 0.1 M
+/// among millions, 1 k from 10 k, single credits below that.
+fn credit_resolution(v: f64) -> f64 {
+    match v.abs() {
+        a if a >= 1e9 => 1e7,
+        a if a >= 1e6 => 1e5,
+        a if a >= 1e4 => 1e3,
+        _ => 1.0,
+    }
+}
+
+/// The marks up the Credits chart's side, only within `band` (its y range: a label in the room egui_plot adds around
+/// it sits on the chart's edge and runs into the dates), at steps its labels tell apart.
+fn credit_marks(band: (f64, f64), log: bool) -> impl Fn(GridInput) -> Vec<GridMark> {
+    move |mut input| {
+        input.bounds = (input.bounds.0.max(band.0), input.bounds.1.min(band.1));
+        if log { log_credit_marks(&input) } else { crate::widgets::round_marks(credit_resolution(band.0.abs().max(band.1.abs())))(input) }
+    }
+}
+
+/// Marks on the log scale, where the chart holds log10 of the balance (labelling whole powers of ten only left a
+/// balance between 2 and 5 billion with no label at all): powers of ten, then 2 and 5 times one, then 3, 4, 6, 7, 8
+/// and 9 times one, each where it keeps its gap from those already there. Within less than a power of ten, a round
+/// step in credits takes over where it gives as many: the finest whose top two marks, the closest on this scale, keep
+/// the gap.
+fn log_credit_marks(input: &GridInput) -> Vec<GridMark> {
+    use crate::widgets::{marks_every, round_step, value_per_point, LABEL_GAP};
+    let gap = value_per_point(input) * LABEL_GAP;
+    let (lo, hi) = input.bounds;
+    if !(gap > 0.0 && lo <= hi && hi - lo < 1_000.0) {
+        return Vec::new();
+    }
+    let mut values: Vec<f64> = Vec::new();
+    for tier in [&[1.0][..], &[2.0, 5.0], &[3.0, 4.0, 6.0, 7.0, 8.0, 9.0]] {
+        // From 1 Cr up: the line holds nothing below.
+        for power in (lo.floor() as i64).max(0)..=hi.ceil() as i64 {
+            for m in tier {
+                let v = power as f64 + f64::log10(*m);
+                if (lo..=hi).contains(&v) && values.iter().all(|c| (c - v).abs() >= gap) {
+                    values.push(v);
+                }
+            }
+        }
+    }
+    if hi - lo < 1.0 {
+        let top = 10f64.powf(hi);
+        let step = round_step(top * (1.0 - 10f64.powf(-gap)), credit_resolution(top));
+        let even: Vec<f64> = marks_every((10f64.powf(lo), top), step).into_iter().filter(|m| m.value >= 1.0).map(|m| m.value.log10()).collect();
+        if even.len() >= values.len() {
+            values = even;
+        }
+    }
+    values.sort_by(f64::total_cmp);
+    values.into_iter().map(|value| GridMark { value, step_size: gap }).collect()
 }
 
 pub fn show(ui: &mut Ui, gs: &GameState) {
@@ -144,17 +199,8 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
                         .include_y(bottom)
                         .include_y(top)
                         .x_axis_formatter(|m, _| Timestamp((m.value * DAY) as i64).to_local_string("%d %b"))
-                        .y_axis_formatter(move |m, _| {
-                            // On the log scale only whole powers of ten are labelled (1 M, 10 M, 100 M, ...). On the
-                            // linear one only marks within the range above: a mark in the room egui_plot adds around
-                            // it sits on the chart's edge, and its label runs into the dates.
-                            let unlabelled = if log { (m.value - m.value.round()).abs() > 1e-6 } else { !(bottom..=top).contains(&m.value) };
-                            if unlabelled {
-                                String::new()
-                            } else {
-                                nexus_data::names::compact_credits(credits(m.value).round() as i64)
-                            }
-                        })
+                        .y_grid_spacer(credit_marks((bottom, top), log))
+                        .y_axis_formatter(move |m, _| nexus_data::names::compact_credits(credits(m.value).round() as i64))
                         .label_formatter(move |h| {
                             let (x, v) = crate::widgets::hover_xy(h);
                             Some(format!("{}\n{} Cr", Timestamp((x * DAY) as i64).to_local_string("%d %b %H:%M"), nexus_data::names::group_digits(credits(v).round() as i64)))
@@ -195,6 +241,7 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
             .include_x(calendar.day(Timestamp(now)) as f64 + 1.0)
             .include_y(0.0)
             .x_axis_formatter(crate::widgets::day_axis)
+            .y_grid_spacer(crate::widgets::round_marks(1.0))
             .y_axis_formatter(|m, _| if m.value.fract() == 0.0 && m.value >= 0.0 { format!("{}", m.value as i64) } else { String::new() })
             .show(ui, |p| p.bar_chart(BarChart::new("Jumps", bars).element_formatter(Box::new(|_, _| String::new()))));
         crate::widgets::bar_tooltip(&plot, |day| {
@@ -333,29 +380,32 @@ mod tests {
         assert_eq!(range_start(0, 100 * d, Some(3)), 3);
     }
 
+    /// The labels up the Credits chart, `height` points tall, for a line from `lo` to `hi` (log10 of the balance on the
+    /// log scale): egui_plot adds 5 % of room above and below the chart's range, and labels the marks it's given. The
+    /// chart is 240 points tall with its dates, about 223 without.
+    fn labels((lo, hi): (f64, f64), log: bool, height: f64) -> Vec<String> {
+        let band = credit_y_range(lo, hi, log);
+        let room = (band.1 - band.0) * 0.05;
+        let input = || crate::widgets::grid_input((band.0 - room, band.1 + room), height);
+        let credits = |v: f64| if log { 10f64.powf(v) } else { v };
+        crate::widgets::labelled(credit_marks(band, log)(input()), &input()).into_iter().map(|v| nexus_data::names::compact_credits(credits(v).round() as i64)).collect()
+    }
+
     #[test]
     fn a_flat_balance_gets_labels_that_differ() {
-        // The y labels of a range on a plot `height` points tall. egui_plot adds 5 % of room to each side and has a
-        // mark at every multiple of the finest power of ten whose marks are more than 20 points apart (its label
-        // spacing); the chart labels those within the range. It is 240 points tall with its dates, about 223 without.
-        let labels = |(bottom, top): (f64, f64), height: f64| -> Vec<String> {
-            let per_credit = height / ((top - bottom) * 1.1);
-            let mut step = 10f64.powf((20.0 / per_credit).log10().floor());
-            while step * per_credit <= 20.0 {
-                step *= 10.0;
-            }
-            ((bottom / step).ceil() as i64..=(top / step).floor() as i64).map(|i| nexus_data::names::compact_credits((i as f64 * step).round() as i64)).collect()
-        };
-        // What a flat balance used to get: a tenth of a credit, and "1.23 B" on every line.
-        let old = labels((1_234_567_889.95, 1_234_567_890.05), 223.0);
+        // What a flat balance used to get: a tenth of a credit, where egui_plot's own marks wrote "1.23 B" on every line.
+        let input = || crate::widgets::grid_input((1_234_567_889.945, 1_234_567_890.055), 223.0);
+        let old: Vec<String> =
+            crate::widgets::labelled(egui_plot::log_grid_spacer(10)(input()), &input()).into_iter().filter(|v| (1_234_567_889.95..=1_234_567_890.05).contains(v)).map(|v| nexus_data::names::compact_credits(v.round() as i64)).collect();
         assert!(old.len() > 2 && old.iter().all(|l| l == "1.23 B"), "{old:?}");
-        // Balances from nothing to a trillion, flat and moving by less than the labels show.
+        // Balances from nothing to a trillion, flat and moving by less than the labels show: two labels at least, all
+        // different.
         let mut v = 0.0;
         while v < 1e12 {
             for (lo, hi) in [(v, v), (v, v * 1.001 + 1.0)] {
                 for height in [200.0, 223.0, 300.0] {
-                    let l = labels(credit_y_range(lo, hi, false), height);
-                    assert!(!l.is_empty() && l.windows(2).all(|w| w[0] != w[1]), "{lo}..{hi} at {height} pt: {l:?}");
+                    let l = labels((lo, hi), false, height);
+                    assert!(l.len() >= 2 && l.windows(2).all(|w| w[0] != w[1]), "{lo}..{hi} at {height} pt: {l:?}");
                 }
             }
             v = (v * 1.07 + 1.0).round();
@@ -366,5 +416,25 @@ mod tests {
         assert!(near(credit_y_range(2e9, 2e9, false), (1.8e9, 2.2e9)));
         assert!(near(credit_y_range(100e6, 300e6, false), (90e6, 310e6)));
         assert!(near(credit_y_range(8.0, 9.0, true), (7.9, 9.1)));
+    }
+
+    #[test]
+    fn the_log_scale_always_has_labels() {
+        // A balance between 2.1 and 4.6 billion reaches no power of ten: labelled at whole powers only, it had none.
+        assert_eq!(labels((2.1e9f64.log10(), 4.6e9f64.log10()), true, 223.0), ["2.00 B", "3.00 B", "4.00 B", "5.00 B"]);
+        // A climb over powers of ten is labelled at each one, or at 1, 2 and 5 times one where there's room.
+        assert_eq!(labels((3.0, 9.0), true, 223.0), ["1000", "10 k", "100 k", "1.0 M", "10.0 M", "100.0 M", "1.00 B"]);
+        assert_eq!(labels((6.0, 3e7f64.log10()), true, 223.0), ["1.0 M", "2.0 M", "5.0 M", "10.0 M", "20.0 M"]);
+        // From 100 Cr to a trillion, flat or climbing up to ten thousandfold: two labels at least, all different.
+        let mut v = 100.0;
+        while v < 1e12 {
+            for k in [1.0, 1.001, 2.5, 30.0, 1e4] {
+                for height in [200.0, 223.0, 300.0] {
+                    let l = labels((f64::log10(v), f64::log10(v * k)), true, height);
+                    assert!(l.len() >= 2 && l.windows(2).all(|w| w[0] != w[1]), "{v} x{k} at {height} pt: {l:?}");
+                }
+            }
+            v = (v * 1.07).round();
+        }
     }
 }

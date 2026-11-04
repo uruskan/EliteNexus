@@ -893,6 +893,50 @@ pub fn day_axis(m: egui_plot::GridMark, _: &std::ops::RangeInclusive<f64>) -> St
     if m.step_size < 1.0 { String::new() } else { nexus_journal::time::LocalDays::label(m.value.round() as i64, "%d %b") }
 }
 
+/// The points between two labels up a chart's side, at least: egui_plot fades a label that comes closer and drops it
+/// within 20.
+pub const LABEL_GAP: f64 = 30.0;
+
+/// The value a grid spacer's `base_step_size` spans per point: egui_plot passes the value of `grid_spacing`'s lower
+/// bound, 8 points unless a chart sets its own (none here does).
+pub fn value_per_point(input: &egui_plot::GridInput) -> f64 {
+    input.base_step_size / 8.0
+}
+
+/// Marks up a chart's side (its `y_grid_spacer`) at a round step (see [`round_step`]; `unit` is 1 for counts), the
+/// finest whose labels stand `LABEL_GAP` apart. egui_plot's own marks go by powers of ten only: a chart up to 800
+/// merits had marks every 100, too close together to label, and every 1,000, where only 0 was on it.
+pub fn round_marks(unit: f64) -> impl Fn(egui_plot::GridInput) -> Vec<egui_plot::GridMark> {
+    move |input| marks_every(input.bounds, round_step(value_per_point(&input) * LABEL_GAP, unit))
+}
+
+/// A mark at every multiple of `step` from `lo` to `hi` (none for a step that would make more than a thousand).
+pub fn marks_every((lo, hi): (f64, f64), step: f64) -> Vec<egui_plot::GridMark> {
+    if !(step.is_finite() && step > 0.0 && lo <= hi) || (hi - lo) / step > 1_000.0 {
+        return Vec::new();
+    }
+    ((lo / step).ceil() as i64..=(hi / step).floor() as i64).map(|i| egui_plot::GridMark { value: i as f64 * step, step_size: step }).collect()
+}
+
+/// The smallest of 1, 2, 2.5 and 5 times a power of ten that is at least `least` and a whole number of `unit`s (a power
+/// of ten: what the labels can write). 2.5 times a power of ten is one from 25 units up: 25 or 250 merits, not 2.5.
+pub fn round_step(least: f64, unit: f64) -> f64 {
+    let least = least.max(unit);
+    if !(least.is_finite() && least > 0.0) {
+        return 1.0;
+    }
+    let mut power = 10f64.powf(least.log10().floor());
+    loop {
+        for m in [1.0, 2.0, 2.5, 5.0] {
+            // A hair's leeway: 200 can come out of the logarithm as 199.99…
+            if (m != 2.5 || power >= 10.0 * unit * (1.0 - 1e-9)) && m * power >= least * (1.0 - 1e-9) {
+                return m * power;
+            }
+        }
+        power *= 10.0;
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The overlay's island
 
@@ -1140,6 +1184,18 @@ pub mod island {
     }
 }
 
+/// What a chart `height` points tall gives a grid spacer for `bounds`, as egui_plot works it out.
+#[cfg(test)]
+pub fn grid_input(bounds: (f64, f64), height: f64) -> egui_plot::GridInput {
+    egui_plot::GridInput { bounds, base_step_size: (bounds.1 - bounds.0) / height * 8.0 }
+}
+
+/// The values egui_plot labels among `marks`: those whose step leaves more than 20 points between labels.
+#[cfg(test)]
+pub fn labelled(marks: Vec<egui_plot::GridMark>, input: &egui_plot::GridInput) -> Vec<f64> {
+    marks.into_iter().filter(|m| m.step_size / value_per_point(input) > 20.0).map(|m| m.value).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1164,5 +1220,29 @@ mod tests {
         assert_eq!(TableSort { column: Some(0), descending: false }.order(&rows, cmp), vec![1, 0, 2], "text ignores case");
         assert_eq!(TableSort { column: Some(1), descending: false }.order(&rows, cmp), vec![2, 0, 1], "unknown last");
         assert_eq!(TableSort { column: Some(1), descending: true }.order(&rows, cmp), vec![1, 0, 2]);
+    }
+
+    #[test]
+    fn counts_get_labels_up_the_side() {
+        // A merits chart up to 800 a day, 122 points tall, with the 5 % of room egui_plot adds above and below: its own
+        // marks, every 10, 100 and 1,000, labelled only 0.
+        let input = grid_input((-40.0, 840.0), 122.0);
+        assert_eq!(labelled(egui_plot::log_grid_spacer(10)(grid_input((-40.0, 840.0), 122.0)), &input), [0.0]);
+        assert_eq!(labelled(round_marks(1.0)(grid_input((-40.0, 840.0), 122.0)), &input), [0.0, 250.0, 500.0, 750.0]);
+        // Up to a million a day on charts 100 to 400 points tall: every mark labelled, at least two, at whole numbers.
+        for height in [100.0, 122.0, 182.0, 400.0] {
+            let mut top = 1.0;
+            while top < 1e6 {
+                let bounds = (-0.05 * top, 1.05 * top);
+                let marks = round_marks(1.0)(grid_input(bounds, height));
+                let values = labelled(marks.clone(), &grid_input(bounds, height));
+                assert!(values.len() == marks.len() && values.len() >= 2 && values.iter().all(|v| v.fract() == 0.0), "up to {top} at {height} pt: {values:?}");
+                top = (top * 1.13).ceil();
+            }
+        }
+        // Steps of 1, 2, 2.5 and 5 times a power of ten, whole numbers of the unit: 2.5 only from 25 units up.
+        for (least, unit, step) in [(0.3, 1.0, 1.0), (1.5, 1.0, 2.0), (2.01, 1.0, 5.0), (7.0, 1.0, 10.0), (21.0, 1.0, 25.0), (216.0, 1.0, 250.0), (0.3, 0.1, 0.5), (2.2e5, 1e5, 5e5), (2.2e6, 1e5, 2.5e6)] {
+            assert!((round_step(least, unit) - step).abs() < 1e-9 * step, "{least} in units of {unit}: {}", round_step(least, unit));
+        }
     }
 }

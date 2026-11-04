@@ -91,6 +91,12 @@ release time that section becomes the new version and the release workflow publi
   kind of activity, and in a window about 1,000 pixels wide it ran past the edge: Missions failed and Murders were
   cut off. It now has a column only for each kind of activity the system saw in the period, and where even those
   don't fit side by side, each faction lists its activity under its name.
+- **Statistics and BGS & Powerplay: every chart labels its side.** The Powerplay merits chart could have "0" as its
+  only label when your best day was a few hundred merits, and so could Jumps per day with up to about nine jumps a
+  day: the marks went by tens, hundreds and thousands, and the ones close enough together had no room for their
+  labels. The charts are now marked in round steps (1, 2, 2.5 or 5 times ten, a hundred, …), as fine as their labels
+  have room for. On the Credits chart's **Log scale**, a balance that stayed between two powers of ten (2 to 5
+  billion, say) had no label at all; it now gets 2 B, 3 B, 4 B and 5 B.
 - **Statistics and BGS & Powerplay: a bar's number is no longer cut off** (GitHub issue #4, with a screenshot).
   Hovering a tall bar in Jumps per day or the Powerplay merits chart wrote its number above the bar, where the chart's
   edge cut it off (the last day's too). The day and its number now show in a tooltip by the pointer, which always
