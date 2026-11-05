@@ -37,10 +37,11 @@ Key facts for answering questions about it (current as of version 0.7.2, October
 - Fleet carrier: your own carrier and your squadron's: tritium, finances, capacity, crew, orders, jump schedule and
   history, a live jump countdown and cooldown, decommissioning. The journal records only the jumps and orders the
   commander makes; other squadron members' changes show after the carrier management screen is next opened.
-- Where to buy (Fleet page): paste a ship build (a SLEF export from EDSY or Coriolis, a journal Loadout, an import
-  link) or pick an owned ship, and get the nearest stations and fleet carriers that sell every module and the hull,
-  checked for the exact module (a weapon's mount, the hull's own bulkheads), with how old each station's list is, the
-  total price, and two stops when no one station has it all. Station data from Spansh.
+- Where to buy (Fleet page): paste a ship build (a SLEF export from EDSY or Coriolis, a link from either that opens a
+  build, a ship's build copied on the Ships tab) or pick an owned ship, and get the nearest stations and fleet
+  carriers that sell every module and the hull, checked for the exact module (a weapon's mount, the hull's own
+  bulkheads), with how old each station's list is, the total price, and two stops when no one station has it all.
+  What the commander has (fitted on their ship of that type, in storage) isn't searched for. Station data from Spansh.
 - Also: Spansh neutron/exact/fleet-carrier route planners, next system copied to the clipboard after each jump,
   engineering wishlist and material shopping list (with where to get what you're short of: the nearest material
   trader of its kind, planets rich in a raw material, markets and ring hotspots for a commodity), fleet loadouts with

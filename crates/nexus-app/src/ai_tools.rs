@@ -2296,7 +2296,7 @@ pub static TOOLS: &[Tool] = &[
     Tool {
         name: "where_to_buy",
         title: "Where to buy a build",
-        description: "The nearest stations that sell a whole ship build (default: the current ship's; modules in storage aren't searched for), or the stops that cover it between them, with cost and data age, from Spansh's outfitting lists. items= narrows it to some modules or a hull, or searches those alone.",
+        description: "The nearest stations that sell a whole ship build (default: the current ship's), or the stops that cover it between them, with cost and data age, from Spansh's outfitting lists. What the commander has isn't searched for: a hull of that type they own, the modules fitted on it (a build for a hull they own is a refit of it) and modules in storage. items= narrows it to some modules or a hull; items alone searches for those, also to buy them again.",
         params: || {
             schema(
                 json!({
@@ -3482,8 +3482,8 @@ mod tests {
         }
     }
 
-    /// What a build needs bought, before Spansh is asked: a module in storage isn't searched for, the ship flown is owned,
-    /// and items named with a ship must be on it.
+    /// What a build needs bought, before Spansh is asked: a module fitted on the ship or in storage isn't searched for, the
+    /// ship flown is owned, and items named with a ship must be on it.
     #[test]
     fn where_to_buy_searches_only_what_you_still_need() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -3496,7 +3496,7 @@ mod tests {
         let v = tools.call("where_to_buy", &json!({ "ship": "Anaconda", "items": ["6A FSD"] })).unwrap();
         assert_eq!(v["to_buy"], json!([]), "{v}");
         let why = |item: &str| v["not_searched"].as_array().unwrap().iter().find(|n| n["item"] == item).map(|n| n["why"].clone());
-        assert_eq!(why("6A Frame Shift Drive"), Some(json!("In your storage in Alpha")), "{v}");
+        assert_eq!(why("6A Frame Shift Drive"), Some(json!("1 fitted on your Anaconda, 1 in your storage in Alpha")), "{v}");
         assert!(why("Anaconda").unwrap().as_str().unwrap().starts_with("You own one"), "{v}");
         let not_fitted = tools.call("where_to_buy", &json!({ "ship": "Anaconda", "items": ["5A Thrusters"] })).unwrap_err();
         assert_eq!(not_fitted, "Not in that build: 5A Thrusters.");

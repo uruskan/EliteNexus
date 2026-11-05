@@ -75,7 +75,7 @@ fn unlock(sku: Option<&str>) -> Option<sku::Unlock> {
 /// What buying `item` alone needs.
 fn need(item: Item) -> Need {
     match item {
-        Item::Hull(s) => Need { group: Group::Hull, symbol: s.symbol.clone(), name: s.name.clone(), count: 1, engineering: Vec::new(), buy: true, note: None, unlock: unlock(s.entitlement.as_deref()) },
+        Item::Hull(s) => Need { group: Group::Hull, symbol: s.symbol.clone(), name: s.name.clone(), count: 1, engineering: Vec::new(), buy: true, had: false, note: None, unlock: unlock(s.entitlement.as_deref()) },
         Item::Module(m) => Need {
             group: match m.category {
                 ModuleCategory::Standard => Group::Core,
@@ -88,6 +88,7 @@ fn need(item: Item) -> Need {
             count: 1,
             engineering: Vec::new(),
             buy: true,
+            had: false,
             note: None,
             unlock: unlock(m.entitlement.as_deref()),
         },
@@ -311,7 +312,7 @@ impl NexusTools {
             let mut v = json!({
                 "searched_for": what, "to_buy": [],
                 "not_searched": needs.iter().map(|x| json!({ "item": x.name, "why": x.note })).collect::<Vec<_>>(),
-                "notes": ["Nothing to buy: the commander has all of it (in storage or as their own ship), or it comes with the hull."],
+                "notes": ["Nothing to buy: the commander has all of it (fitted on their own ship of that type, in storage, or the hull itself), or it comes with the hull."],
             });
             strip_nulls(&mut v);
             return Ok(v);

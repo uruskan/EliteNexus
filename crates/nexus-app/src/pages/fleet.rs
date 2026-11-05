@@ -466,6 +466,11 @@ fn build_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi) {
         |ui| {
             let to_buy = st.needs.iter().filter(|n| n.buy).count();
             ui.label(RichText::new(format!("{to_buy} of {} to buy · from {}", st.needs.len(), st.source)).color(pal::DIM));
+            // A build they have all of (one of their own ships): say so, rather than leave an empty list to puzzle over.
+            if to_buy == 0 && st.needs.iter().all(|n| n.had) {
+                ui.add_space(4.0);
+                ui.add(Label::new(RichText::new(format!("{} You have all of it already: the hull, and every module fitted on it or in your storage. Tick what you'd buy again, for a second ship like it.", icon::CHECK_CIRCLE)).color(pal::GOOD)).wrap());
+            }
             ui.add_space(2.0);
             let mut last = None;
             for n in &mut st.needs {
@@ -511,7 +516,7 @@ fn need_row(ui: &mut Ui, n: &mut Need) {
 fn paste_box(ui: &mut Ui, gs: &GameState, st: &mut BuyUi) {
     ui.add(
         Label::new(
-            RichText::new("Paste a build: a SLEF export from EDSY (OPS › Export… › SLEF) or Coriolis (name the build, then Export › SLEF), a journal Loadout event, or an EDSY or Coriolis import link.")
+            RichText::new("Paste a ship build: exported from EDSY (OPS › Export… › SLEF) or Coriolis (name the build, then Export › SLEF), a link from EDSY or Coriolis that opens a build, or one of your ships' builds copied on the Ships tab.")
                 .color(pal::DIM),
         )
         .wrap(),
@@ -543,7 +548,9 @@ fn paste_box(ui: &mut Ui, gs: &GameState, st: &mut BuyUi) {
         ui.add_space(4.0);
         ui.add(Label::new(RichText::new(format!("{} {e}", icon::WARNING_CIRCLE)).color(pal::BAD)).wrap());
     }
-    let mine: Vec<&Ship> = gs.fleet.ships.values().filter(|s| s.loadout_json.is_some()).collect();
+    // Every ship, in the Ships tab's order; one whose modules the journal never recorded can't be picked, and says why.
+    let mut mine: Vec<&Ship> = gs.fleet.ships.values().collect();
+    mine.sort_by(|a, b| (Some(b.id) == gs.fleet.current_ship_id).cmp(&(Some(a.id) == gs.fleet.current_ship_id)).then(b.total_value().cmp(&a.total_value())));
     if !mine.is_empty() {
         ui.add_space(10.0);
         ui.label(RichText::new("Or start from one of your ships").color(pal::DIM));
@@ -551,18 +558,36 @@ fn paste_box(ui: &mut Ui, gs: &GameState, st: &mut BuyUi) {
         let mut pick = None;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-            for s in mine {
+            for s in &mine {
                 let name = if s.name.trim().is_empty() { s.type_name.clone() } else { format!("{} · {}", s.name.trim(), s.type_name) };
-                if widgets::pill(ui, false, &name).clicked() {
-                    pick = Some(s);
+                let known = s.loadout_json.is_some();
+                let r = ui.add_enabled_ui(known, |ui| widgets::pill(ui, false, &name)).inner;
+                if r.clicked() {
+                    pick = Some(*s);
+                }
+                if !known {
+                    r.on_disabled_hover_text(format!("No recorded build yet. {WHEN_BUILDS_ARE_RECORDED}"));
                 }
             }
         });
+        let unknown = mine.iter().filter(|s| s.loadout_json.is_none()).count();
+        if unknown > 0 {
+            ui.add_space(2.0);
+            let which = match unknown {
+                n if n == mine.len() => "None of your ships has a recorded build yet".to_string(),
+                1 => "One of your ships has no recorded build yet, so it can't be picked".to_string(),
+                n => format!("{n} of your {} ships have no recorded build yet, so they can't be picked", mine.len()),
+            };
+            footnote(ui, &format!("{which}. {WHEN_BUILDS_ARE_RECORDED}"));
+        }
         if let Some(s) = pick {
             st.load_ship(s, gs);
         }
     }
 }
+
+/// Why a ship has no build to start from.
+const WHEN_BUILDS_ARE_RECORDED: &str = "The game writes a ship's modules to its journal only while you fly it (when you board it, log in in it or change its outfitting), and the journals Elite Nexus has read have none for ships you haven't flown since they begin. Fly a ship once and its build appears.";
 
 /// Where to search, the search button and what it found.
 fn search_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt: &tokio::runtime::Handle, search_now: bool) -> Option<FleetAction> {

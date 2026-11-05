@@ -40,13 +40,14 @@ pub struct Fitted {
 const HOW_TO_EXPORT: &str = "EDSY: OPS › Export… › SLEF. Coriolis: name the build, then the Export button › SLEF.";
 
 /// Reads a build from pasted text: a SLEF export (EDSY, Coriolis, EDOMH, EDDiscovery), a journal
-/// `Loadout` event, or an EDSY or Coriolis import link (the kind EDMC and Elite Nexus open).
+/// `Loadout` event (what Copy build on the Ships tab copies), or an EDSY or Coriolis import link
+/// (the kind EDMC and Elite Nexus open).
 pub fn parse_build(text: &str) -> Result<Build, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("Paste a build first.".into());
     }
-    let not_a_build = || format!("That isn't a build Elite Nexus can read. Paste a SLEF export ({HOW_TO_EXPORT}), a journal Loadout event or an EDSY or Coriolis import link.");
+    let not_a_build = || format!("That isn't a ship build Elite Nexus can read. Paste one exported from EDSY or Coriolis as SLEF ({HOW_TO_EXPORT}), a link from EDSY or Coriolis that opens a build, or a ship's build copied on the Ships tab.");
     let json = if text.starts_with('{') || text.starts_with('[') {
         text.to_string()
     } else if let Some(json) = crate::export::decode_link(text) {
@@ -171,17 +172,25 @@ pub struct Need {
     pub engineering: Vec<String>,
     /// Ticked: the search looks for it.
     pub buy: bool,
+    /// What the commander has covers it (their hull, fitted, stored), or it comes with the hull.
+    pub had: bool,
     /// What the commander already has, or that it comes with the hull.
     pub note: Option<String>,
     pub unlock: Option<sku::Unlock>,
 }
 
 /// What `build` needs bought: the hull, then each module once with how many the build fits.
-/// Modules in the commander's storage, the bulkheads every new hull comes with and a hull they
-/// already own start unticked, with a note saying why.
+/// What the commander has already starts unticked, with a note saying why: a hull of that type
+/// they own and the modules fitted on it (a build for a hull they own is a refit of it), modules in
+/// their storage, and the bulkheads every new hull comes with.
 pub fn needs(build: &Build, fleet: &Fleet) -> Vec<Need> {
     let ship_name = ships::ship_name(&build.ship);
-    let owned = fleet.ships.values().find(|s| s.ship_type.eq_ignore_ascii_case(&build.ship));
+    // Their ship of this type with most of the build fitted, the one they fly when that's a tie.
+    let owned = fleet
+        .ships
+        .values()
+        .filter(|s| s.ship_type.eq_ignore_ascii_case(&build.ship))
+        .max_by_key(|s| (build.modules.iter().filter(|f| s.modules.iter().any(|m| m.item == f.item)).count(), fleet.current_ship_id == Some(s.id)));
     let mut out = vec![Need {
         group: Group::Hull,
         symbol: build.ship.clone(),
@@ -189,6 +198,7 @@ pub fn needs(build: &Build, fleet: &Fleet) -> Vec<Need> {
         count: 1,
         engineering: Vec::new(),
         buy: owned.is_none(),
+        had: owned.is_some(),
         note: owned.map(|s| format!("You own one: {}{}", s.display_name(), where_is(s, fleet))),
         unlock: ships::ship(&build.ship).and_then(|h| h.entitlement.as_deref()).and_then(unlock),
     }];
@@ -205,34 +215,48 @@ pub fn needs(build: &Build, fleet: &Fleet) -> Vec<Need> {
             count: 1,
             engineering: f.engineering.iter().cloned().collect(),
             buy: true,
+            had: false,
             note: None,
             unlock: outfitting::module(&f.item).and_then(|m| m.entitlement.as_deref()).and_then(unlock),
         });
     }
+    let ship = owned.map(Ship::display_name).unwrap_or_default();
     for n in out.iter_mut().filter(|n| n.group != Group::Hull) {
         if comes_with_hull(&n.symbol) {
             n.buy = false;
+            n.had = true;
             n.note = Some(format!("Comes with every new {ship_name}"));
             continue;
         }
+        let fitted = owned.map_or(0, |s| s.modules.iter().filter(|m| m.item == n.symbol).count()) as u32;
         let stored: Vec<_> = fleet.stored_modules.iter().filter(|m| m.name == n.symbol).collect();
-        if stored.is_empty() {
-            continue;
-        }
         let mut places: Vec<&str> = stored.iter().filter_map(|m| m.system.as_deref()).collect();
         places.sort_unstable();
         places.dedup();
         let at = if places.is_empty() { String::new() } else { format!(" in {}", places.join(", ")) };
-        let have = stored.len() as u32;
-        if have >= n.count {
+        n.note = have_note(n.count, fitted, &ship, stored.len() as u32, &at);
+        if fitted + stored.len() as u32 >= n.count {
             n.buy = false;
-            n.note = Some(if n.count == 1 { format!("In your storage{at}") } else { format!("{have} in your storage{at}") });
-        } else {
-            n.note = Some(format!("{have} of {} in your storage{at}", n.count));
+            n.had = true;
         }
     }
     out.sort_by_key(|n| n.group);
     out
+}
+
+/// What the commander has of a module a build fits `count` of: `fitted` on their `ship` of its type,
+/// `stored` in their storage `at` (" in Sol"). `None` when they have none.
+fn have_note(count: u32, fitted: u32, ship: &str, stored: u32, at: &str) -> Option<String> {
+    let one = count == 1;
+    Some(match (fitted, stored) {
+        (0, 0) => return None,
+        (f, 0) if f >= count => if one { format!("Fitted on your {ship}") } else { format!("{f} fitted on your {ship}") },
+        (0, s) if s >= count => if one { format!("In your storage{at}") } else { format!("{s} in your storage{at}") },
+        (f, 0) => format!("{f} of {count} fitted on your {ship}"),
+        (0, s) => format!("{s} of {count} in your storage{at}"),
+        (f, s) if f + s >= count => format!("{f} fitted on your {ship}, {s} in your storage{at}"),
+        (f, s) => format!("{f} fitted on your {ship} and {s} in your storage{at}, of {count}"),
+    })
 }
 
 /// The unlock a SKU needs: tech brokers and Powerplay. FDevIDs keeps "early access" on hulls that
@@ -670,6 +694,54 @@ mod tests {
         // A hull they own already starts unticked.
         fleet.ships.insert(7, nexus_model::fleet::Ship::new(7, "anaconda"));
         assert!(!needs(&b, &fleet)[0].buy);
+    }
+
+    /// Play-test finding 14 (2026-11-04): Where to buy listed everything on a ship the commander had bought and
+    /// outfitted. A build for a hull they own is a refit of it: what's fitted on it already isn't bought.
+    #[test]
+    fn a_build_for_a_hull_they_own_is_a_refit() {
+        use nexus_model::fleet::{Ship, ShipModule};
+        let b = parse_build(EDSY_SLEF).expect("build");
+        let mut fleet = Fleet::default();
+        let fit = |s: &mut Ship, slot: &str, item: &str| s.modules.push(ShipModule { slot: slot.into(), item: item.into(), on: true, ..Default::default() });
+        // Their Anaconda has the FSD and one of the build's two beam lasers; the other laser is in storage.
+        let mut mine = Ship::new(7, "anaconda");
+        mine.name = "Bonecrusher".into();
+        fit(&mut mine, "FrameShiftDrive", "int_hyperdrive_size6_class5");
+        fit(&mut mine, "LargeHardpoint1", "hpt_beamlaser_gimbal_large");
+        fleet.ships.insert(7, mine);
+        // Another Anaconda with less of the build fitted isn't the one compared.
+        fleet.ships.insert(8, Ship::new(8, "anaconda"));
+        fleet.stored_modules.push(StoredModuleInfo { name: "hpt_beamlaser_gimbal_large".into(), system: Some("Sol".into()), ..Default::default() });
+        let list = needs(&b, &fleet);
+        let row = |sym: &str| list.iter().find(|n| n.symbol == sym).expect(sym);
+        assert!(!list[0].buy && list[0].note.as_deref().is_some_and(|n| n.starts_with("You own one: Bonecrusher (Anaconda)")), "{:?}", list[0].note);
+        let fsd = row("int_hyperdrive_size6_class5");
+        assert_eq!((fsd.buy, fsd.note.as_deref()), (false, Some("Fitted on your Bonecrusher (Anaconda)")));
+        let beams = row("hpt_beamlaser_gimbal_large");
+        assert_eq!((beams.buy, beams.note.as_deref()), (false, Some("1 fitted on your Bonecrusher (Anaconda), 1 in your storage in Sol")));
+        let plant = row("int_powerplant_size8_class5");
+        assert_eq!((plant.buy, plant.note.as_deref()), (true, None), "not fitted: still to buy");
+        // A ship's own build: all of it is fitted, nothing to buy.
+        let mut whole = Ship::new(9, "anaconda");
+        for m in &b.modules {
+            fit(&mut whole, &m.slot, &m.item);
+        }
+        let mut fleet = Fleet::default();
+        fleet.ships.insert(9, whole);
+        assert!(needs(&b, &fleet).iter().all(|n| !n.buy && n.had));
+        // Without a ship of that type or storage, only the bulkheads every hull comes with are had.
+        assert!(needs(&b, &Fleet::default()).iter().all(|n| n.had == comes_with_hull(&n.symbol)));
+    }
+
+    #[test]
+    fn notes_say_where_what_they_have_is() {
+        assert_eq!(have_note(1, 0, "Python", 0, ""), None);
+        assert_eq!(have_note(1, 1, "Python", 0, "").as_deref(), Some("Fitted on your Python"));
+        assert_eq!(have_note(2, 2, "Python", 0, "").as_deref(), Some("2 fitted on your Python"));
+        assert_eq!(have_note(3, 1, "Python", 0, "").as_deref(), Some("1 of 3 fitted on your Python"));
+        assert_eq!(have_note(2, 0, "Python", 2, " in Sol").as_deref(), Some("2 in your storage in Sol"));
+        assert_eq!(have_note(3, 1, "Python", 1, " in Sol").as_deref(), Some("1 fitted on your Python and 1 in your storage in Sol, of 3"));
     }
 
     #[test]

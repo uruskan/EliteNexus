@@ -135,6 +135,16 @@ release time that section becomes the new version and the release workflow publi
   into each ingredient against what you have, instead of a run of "3× Vanadium (0)" in coloured brackets.
 - **Market**: the four lines of live-feed messages under every tab are gone, so each tab starts higher up. The
   **Live** badge stays, with the feed's rate and the database's size beside it.
+- **Fleet › Where to buy: a build for a ship you own is a refit of it.** Modules already fitted on your ship of that
+  type count as yours, like those in your storage, and start unticked ("Fitted on your Python"). A build of one of
+  your own ships says you have all of it, instead of listing every module to buy again. Ask's where to buy counts them
+  the same way.
+- **Fleet › Where to buy says it in plain words.** It asked for "a journal Loadout event"; it now names what to paste:
+  a build exported from EDSY or Coriolis, a link from either that opens a build, or one of your ships' builds copied
+  on the Ships tab.
+- **Fleet › Where to buy offers every ship to start from.** It offered only ships whose modules the game had recorded,
+  one of seventeen in a play-test. The others are listed too, greyed, saying why: the game writes a ship's modules to
+  its journal only while you fly it.
 
 ### Fixed
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
