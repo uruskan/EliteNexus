@@ -767,6 +767,7 @@ fn surface_mining_remembers_the_location() {
     assert_eq!((site.visits, site.landings.as_slice()), (1, [(10.0, 20.0)].as_slice()));
     assert_eq!(site.spots.len(), 2, "one deposit per place, within 200 m");
     assert_eq!(site.spots[0].refined.len(), 2, "the by-product counts at the deposit it came from");
+    assert_eq!(site.spots[0].points, [(10.01, 20.0)], "refines 5 m apart are one place");
     assert_eq!(gs.mining.spots_rev, 3, "two deposits and one new commodity: saved three times, not per tonne");
     assert_eq!(gs.mining.session.as_ref().unwrap().sites, [key]);
     assert_eq!(gs.exploration.systems[&100].bodies[&1].mining_locations, 13);

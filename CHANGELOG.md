@@ -90,6 +90,12 @@ release time that section becomes the new version and the release workflow publi
   Rhino records them, kept between runs, beside each deposit on the radar, in the list under it and on the overlay's
   radar. Each deposit in the list takes a note of your own, such as how many rigs fit, so two deposits of the same
   commodity can be told apart. Deposits kept by 0.7.3-beta.1 are numbered too, oldest first.
+- **Mining** › Surface radar helps with rigs. Each deposit gets a ring: the ground the Rhino refined on there, where
+  your rigs stood. A north-up minimap beside the radar frames the deposits near you with their rings, the places the
+  Rhino refined, your ship, where it landed and you. **Placing rigs** says how far apart rigs go and how many fit a
+  deposit: about 75 m apart and up to six at once, so a round deposit takes 2 from 75 m across and 6 from 150 m.
+  Frontier hasn't published the spacing, so the page says it's what commanders report. In the Rhino it shows before
+  your first deposit too.
 - **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
   the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
   for later starts.
