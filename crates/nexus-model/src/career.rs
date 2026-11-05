@@ -59,7 +59,8 @@ pub const GROUPS: &[Group] = &[
 
 use Unit::*;
 
-/// What each known figure is: (group, key, label, unit), in the order the page lists them.
+/// What each known figure is: (group, key, label, unit), in the order the page lists them. A quantity whose unit the
+/// game doesn't state (goods traded, quantity mined, fuel scooped) is a plain count: tonnes would be a guess.
 const FIGURES: &[(&str, &str, &str, Unit)] = &[
     ("Bank_Account", "Current_Wealth", "Wealth (credits and assets)", Credits),
     ("Bank_Account", "Owned_Ship_Count", "Ships owned", Count),
@@ -83,7 +84,7 @@ const FIGURES: &[(&str, &str, &str, Unit)] = &[
     ("Bank_Account", "MercCoins_Spent_On_MercGear", "Merc Coins spent on MercGear", Count),
     ("Bank_Account", "MercCoins_Spent_On_Engineering", "Merc Coins spent on engineering", Count),
     ("Trading", "Market_Profits", "Profit from trade", Credits),
-    ("Trading", "Resources_Traded", "Goods traded", Tonnes),
+    ("Trading", "Resources_Traded", "Goods traded", Count),
     ("Trading", "Markets_Traded_With", "Markets traded with", Count),
     ("Trading", "Highest_Single_Transaction", "Best single sale", Credits),
     ("Trading", "Average_Profit", "Average profit, as the game works it out", Credits),
@@ -91,7 +92,7 @@ const FIGURES: &[(&str, &str, &str, Unit)] = &[
     ("Trading", "Goods_Sold", "Goods sold on foot", Count),
     ("Trading", "Assets_Sold", "Assets sold on foot", Count),
     ("Mining", "Mining_Profits", "Profit from mining", Credits),
-    ("Mining", "Quantity_Mined", "Mined and refined", Tonnes),
+    ("Mining", "Quantity_Mined", "Quantity mined", Count),
     ("Mining", "Materials_Collected", "Materials collected", Count),
     ("Exploration", "Time_Played", "Time played", Seconds),
     ("Exploration", "Total_Hyperspace_Distance", "Distance jumped", Ly),
@@ -103,8 +104,8 @@ const FIGURES: &[(&str, &str, &str, Unit)] = &[
     ("Exploration", "Planets_Scanned_To_Level_2", "Planets scanned (level 2)", Count),
     ("Exploration", "Planets_Scanned_To_Level_3", "Planets mapped (level 3)", Count),
     ("Exploration", "Efficient_Scans", "Planets mapped within the probe target", Count),
-    ("Exploration", "Fuel_Scooped", "Fuel scooped", Tonnes),
-    ("Exploration", "Fuel_Purchased", "Fuel bought", Tonnes),
+    ("Exploration", "Fuel_Scooped", "Fuel scooped", Count),
+    ("Exploration", "Fuel_Purchased", "Fuel bought", Count),
     ("Exploration", "Planet_Footfalls", "Planets walked on", Count),
     ("Exploration", "First_Footfalls", "First footfalls", Count),
     ("Exploration", "Settlements_Visited", "Settlements visited", Count),
@@ -222,8 +223,8 @@ const FIGURES: &[(&str, &str, &str, Unit)] = &[
     ("FLEETCARRIER", "FLEETCARRIER_DISTANCE_TRAVELLED", "Distance the carrier jumped", Ly),
     ("FLEETCARRIER", "FLEETCARRIER_TRADEPROFIT_TOTAL", "Earned by the carrier's market", Credits),
     ("FLEETCARRIER", "FLEETCARRIER_TRADESPEND_TOTAL", "Spent by the carrier's market", Credits),
-    ("FLEETCARRIER", "FLEETCARRIER_EXPORT_TOTAL", "Goods the carrier sold", Tonnes),
-    ("FLEETCARRIER", "FLEETCARRIER_IMPORT_TOTAL", "Goods the carrier bought", Tonnes),
+    ("FLEETCARRIER", "FLEETCARRIER_EXPORT_TOTAL", "Goods the carrier sold", Count),
+    ("FLEETCARRIER", "FLEETCARRIER_IMPORT_TOTAL", "Goods the carrier bought", Count),
     ("FLEETCARRIER", "FLEETCARRIER_STOLENPROFIT_TOTAL", "Earned from stolen goods at the carrier", Credits),
     ("FLEETCARRIER", "FLEETCARRIER_STOLENSPEND_TOTAL", "Spent on stolen goods at the carrier", Credits),
     ("FLEETCARRIER", "FLEETCARRIER_SHIPYARD_SOLD", "Ships sold at the carrier", Count),
@@ -250,7 +251,7 @@ const FIGURES: &[(&str, &str, &str, Unit)] = &[
     ("Squadron", "Squadron_Bank_Ships_Deposited_Value", "Value of ships deposited", Credits),
     ("Squadron", "Squadron_Leaderboard_podiums", "Leaderboard podiums", Count),
     ("Smuggling", "Black_Markets_Profits", "Profit at black markets", Credits),
-    ("Smuggling", "Resources_Smuggled", "Goods smuggled", Tonnes),
+    ("Smuggling", "Resources_Smuggled", "Goods smuggled", Count),
     ("Smuggling", "Black_Markets_Traded_With", "Black markets traded with", Count),
     ("Smuggling", "Highest_Single_Transaction", "Best single black-market sale", Credits),
     ("Smuggling", "Average_Profit", "Average black-market profit, as the game works it out", Credits),
@@ -796,6 +797,9 @@ mod tests {
         // The table's own order: the headline figures come first.
         let trade: Vec<String> = c.figures("Trading").into_iter().map(|f| f.label).collect();
         assert_eq!(trade[0], "Profit from trade");
+        // A quantity the game gives no unit for reads as a plain count, not as tonnes.
+        let goods = c.figures("Trading").into_iter().find(|f| f.label == "Goods traded").map(|f| f.shown());
+        assert_eq!(goods.as_deref(), Some("4,158"));
         // Passengers by kind, and keys the table doesn't know yet.
         assert_eq!(describe("Passengers", "Passengers_Missions_ScienceTeams_vip_ejected").0, "Science teams ejected (VIP)");
         assert_eq!(describe("Passengers", "Passengers_Missions_Refugee_bulk_delivered").0, "Refugees delivered (bulk)");
