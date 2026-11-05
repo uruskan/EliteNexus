@@ -126,20 +126,22 @@ focus, so the game keeps your keyboard and joystick. Unlock it to drag it elsewh
 in the main window. **Where** puts it at the top left, centre or right of the game's screen; **Size** scales it
 (100 to 250 %), whatever size the main window uses.
 
-**See-through** draws just the island over the game, with a soft shadow, changing shape as it opens and closes. It
-applies after a restart. Off, the island is an opaque window of its own that fits what it shows: a small capsule for a
-word or two, larger only while it's open, in the same place as the see-through island. It switches size instead of
-changing shape, and its content crossfades. On Windows that window has the island's rounded shape; on Linux and
-macOS its corners are square. Changing size costs nothing you'd notice: the window is resized only when the island
-changes shape, and nothing is drawn while it's still. On Windows, see-through uses DirectX 12 through
-DirectComposition; on a PC without DirectX 12 the island stays its own opaque window, and Settings › Overlay says so.
+**See-through** draws only the island, and the game shows all around it. The island has a soft shadow and changes
+shape as it opens and closes. It applies after a restart. Off, the island is an opaque window of its own that fits
+what it shows: a small capsule for a word or two, larger only while it's open, in the same place as the see-through
+island. It switches size instead of changing shape, and its content crossfades. On Windows that window has the
+island's rounded shape; on Linux and macOS its corners are square. Changing size costs nothing you'd notice: the
+window is resized only when the island changes shape, and nothing is drawn while it's still. On Windows, see-through
+uses DirectX 12 through DirectComposition; on a PC without DirectX 12 the island stays its own opaque window, and
+Settings › Overlay says so.
 
 What each system can do:
 
 * **Windows**: in exclusive **Fullscreen** the game hides every other window, the overlay too: set Options ›
   Graphics › Display to **Borderless** or **Windowed**.
 * **Linux**: on X11 (and XWayland) it stays on top and knows which window is in front; see-through needs a compositing
-  window manager. Wayland lets no app keep a window on top or say which one is in front: start Elite Nexus as
+  window manager running when Elite Nexus starts, and without one the island stays its own opaque window and Settings
+  › Overlay says so. Wayland lets no app keep a window on top or say which one is in front: start Elite Nexus as
   `WAYLAND_DISPLAY= ./EliteNexus` to run it through XWayland.
 * **macOS**: a game in full screen has a Space of its own, where other apps' windows don't show: run the game in a
   window. macOS doesn't say which window is in front, so the overlay always shows; with see-through off, macOS may

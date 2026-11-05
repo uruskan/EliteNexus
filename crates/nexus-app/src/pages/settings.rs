@@ -328,13 +328,16 @@ fn overlay(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
         });
         changed |= g.switch(&mut o.keep_minimal, "Keep it when idle", "A small empty island stays at the top instead of fading away when there's nothing to say.");
         changed |= g.switch(&mut o.always_visible, "Visible over every window", "Off, it shows only while Elite Dangerous or Elite Nexus is the window in front. Wayland and macOS don't say which window that is, so there it always shows.");
-        let opaque = if cfg!(windows) { "Off: the island is an opaque window in its own shape that changes size instead." } else { "Off: the island is an opaque black window its own size, with square corners, that changes size instead." };
-        changed |= g.switch(&mut o.see_through, "See-through", &format!("Just the island over the game, with a soft shadow, changing shape as it opens and closes. {opaque} Applies after a restart."));
-        // Set up at start: on Windows only a DirectX 12 adapter draws a see-through window.
-        let renderer = crate::overlay::window::SEE_THROUGH_RENDERER.load(std::sync::atomic::Ordering::Relaxed);
-        if o.see_through && !renderer {
+        let opaque = if cfg!(windows) {
+            "Off, the island is a small opaque window in its rounded shape that switches size instead of changing shape smoothly."
+        } else {
+            "Off, the island is a small opaque black window with square corners that switches size instead of changing shape smoothly."
+        };
+        changed |= g.switch(&mut o.see_through, "See-through", &format!("Only the island is drawn, and the game shows all around it. {opaque} Applies after a restart."));
+        // Found at start: some computers can't draw a see-through window at all.
+        if let Some(why) = crate::overlay::window::NoSeeThrough::found().filter(|_| o.see_through) {
             g.content(|ui| {
-                ui.add(egui::Label::new(RichText::new("This PC's graphics can't draw a see-through window here (on Windows that takes DirectX 12), so the island stays an opaque window of its own.").size(size::FOOTNOTE).color(pal::WARN)).wrap());
+                ui.add(egui::Label::new(RichText::new(why.words()).size(size::FOOTNOTE).color(pal::WARN)).wrap());
             });
         } else if o.see_through != running {
             g.content(|ui| {

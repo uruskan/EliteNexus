@@ -105,10 +105,13 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   `widgets::island`) never lock the model and only repaint while it moves. `overlay/window.rs` creates the window
   hidden and inactive, shows it once it has painted, switches click-through on only after that, and hides it while the
   game isn't in front (`overlay/platform.rs`: the foreground window's class on Windows, `_NET_ACTIVE_WINDOW` on X11).
-  See-through needs the renderer set up for it at start (`main.rs`; DirectComposition on Windows). With see-through
-  off the window is the island's own (`draw::cutout`): sized to what it shows, where the island would be in the
-  see-through canvas, resized from `logic` (which also runs while the main window is minimised or behind the game)
-  only when the island changes shape, and on Windows cut to its shape with a window region (`platform.rs`).
+  See-through needs the renderer set up for it at start (`main.rs`; DirectComposition on Windows), and on Windows a
+  window that shows nothing of its own (`Desktop::see_through`: no frame, and the surface Windows keeps under the
+  island painted black, which composes as nothing); where it can't work (`window::NoSeeThrough`: no DirectX 12, X11
+  without a compositor) the island is its own window, as with see-through off. With see-through off the window is
+  the island's own (`draw::cutout`): sized to what it shows, where the island would be in the see-through canvas,
+  resized from `logic` (which also runs while the main window is minimised or behind the game) only when the island
+  changes shape, and on Windows cut to its shape with a window region (`platform.rs`).
 * Alerts: `App::notify` shows each one as a banner and keeps it in `alert_history.rs`, the list behind the bell in the
   toolbar (this run's last 200, in memory; a repeat within 20 seconds is left out of both).
 * Whether the game runs: a crash writes no `Shutdown`, so `game_process.rs` looks for the game's process every 5 s

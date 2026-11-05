@@ -332,6 +332,10 @@ release time that section becomes the new version and the release workflow publi
   the list; it used to appear only after switching the speech engine. A new voice, speed or volume no longer waits
   until the line being spoken, and every alert queued before it, has been said: a new speed or volume applies at
   once, even to the line being spoken, and a new voice from the next line.
+- **Overlay: See-through is see-through.** Only the island is drawn now, and the game shows all around it. On Windows
+  it sat on a white rectangle the size of its whole window (GitHub issue #4). On X11 with no compositor running, where
+  nothing can be see-through, the island is its own opaque window, as on a PC without DirectX 12, and Settings ›
+  Overlay says why.
 - **Overlay: Keep it when idle works with See-through off.** It kept nothing there: with nothing to say, the opaque
   panel hid anyway, and switching the setting on didn't bring it back. The small empty island now stays, as it does
   see-through, and so does the small island while a cockpit panel is open.

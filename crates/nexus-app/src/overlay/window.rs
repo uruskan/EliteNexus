@@ -7,7 +7,8 @@
 //! creation, Windows never shows it), and once it's on the window gets no input at all, so locking and unlocking live
 //! in the main window. It hides (no frames at all) while the game isn't in front, and when there's nothing to say.
 //!
-//! See-through, the window is a fixed transparent canvas the island morphs in. With see-through off it's the island
+//! See-through, the window is a fixed transparent canvas the island morphs in, and nothing of the window itself shows
+//! ([`Desktop::see_through`]). With see-through off it's the island
 //! itself ([`draw::cutout`]): sized to what it shows, where the island would be in that canvas, and on Windows cut to
 //! its shape. It changes size only when the island changes shape, which costs a resize of a small window then, and
 //! nothing while it's still: it isn't drawn at all between changes.
@@ -21,17 +22,53 @@ use nexus_model::{Alert, GameState};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The window's title. It has no title bar; Windows finds the window by it.
 const TITLE: &str = "Elite Nexus overlay";
 
-/// Whether the renderer can draw a see-through window, as `main.rs` found when it picked the graphics adapter: on
-/// Windows only DirectX 12 draws through DirectComposition, and on another adapter a see-through window would be an
-/// opaque black canvas. Without it the island is its own window, as with see-through off.
-pub static SEE_THROUGH_RENDERER: AtomicBool = AtomicBool::new(true);
+/// Why this computer can't draw a see-through window, as `main.rs` found at start. The island is then a window of its
+/// own, as with see-through off, and Settings › Overlay says why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoSeeThrough {
+    /// Windows: the graphics adapter isn't a DirectX 12 one, the only kind that draws through DirectComposition. On
+    /// another, a see-through window is an opaque black canvas.
+    NoDirectX12,
+    /// The graphics driver offers no window surface with transparency.
+    NoTransparency,
+    /// X11 with no compositing manager running: nothing puts a window over what's behind it.
+    NoCompositor,
+}
+
+/// What [`NoSeeThrough::record`] noted: 0 for nothing, otherwise the reason's place in [`NoSeeThrough::ALL`] plus one.
+static NO_SEE_THROUGH: AtomicU8 = AtomicU8::new(0);
+
+impl NoSeeThrough {
+    const ALL: [NoSeeThrough; 3] = [NoSeeThrough::NoDirectX12, NoSeeThrough::NoTransparency, NoSeeThrough::NoCompositor];
+
+    /// Notes what `main.rs` found at start; None: see-through can work. (macOS has nothing to rule it out.)
+    #[cfg(any(windows, target_os = "linux"))]
+    pub fn record(why: Option<NoSeeThrough>) {
+        let n = why.and_then(|w| Self::ALL.iter().position(|a| *a == w)).map_or(0, |i| i as u8 + 1);
+        NO_SEE_THROUGH.store(n, Ordering::Relaxed);
+    }
+
+    /// Why see-through can't work on this computer, when it can't.
+    pub fn found() -> Option<NoSeeThrough> {
+        Self::ALL.get(usize::from(NO_SEE_THROUGH.load(Ordering::Relaxed)).checked_sub(1)?).copied()
+    }
+
+    /// Why, in plain words (Settings › Overlay).
+    pub fn words(self) -> &'static str {
+        match self {
+            NoSeeThrough::NoDirectX12 => "This PC's graphics can't draw a see-through window (on Windows that takes DirectX 12), so the island stays an opaque window of its own.",
+            NoSeeThrough::NoTransparency => "This computer's graphics driver can't draw a see-through window, so the island stays an opaque window of its own.",
+            NoSeeThrough::NoCompositor => "No compositor was running on this X11 desktop when Elite Nexus started, and without one nothing can be see-through, so the island stays an opaque window of its own. Start one, then restart Elite Nexus.",
+        }
+    }
+}
 
 /// The overlay's settings (Settings › Overlay).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -227,10 +264,10 @@ pub fn place(anchor: Anchor, monitor: Rect, canvas: Vec2) -> Pos2 {
 }
 
 impl Overlay {
-    /// `see_through`: the renderer was set up for it at start (and could be: [`SEE_THROUGH_RENDERER`]). `allowed`: off
-    /// in screenshot runs. `demo`: the `--overlay` moment.
+    /// `see_through`: the renderer was set up for it at start (and nothing ruled it out: [`NoSeeThrough`]). `allowed`:
+    /// off in screenshot runs. `demo`: the `--overlay` moment.
     pub fn new(see_through: bool, allowed: bool, demo: Option<(IslandView, IslandView)>) -> Self {
-        let see_through = see_through && SEE_THROUGH_RENDERER.load(Ordering::Relaxed);
+        let see_through = see_through && NoSeeThrough::found().is_none();
         Overlay {
             id: ViewportId::from_hash_of("elite-nexus-overlay"),
             shared: Default::default(),
@@ -347,6 +384,13 @@ impl Overlay {
         }
         // Its own frames give it the island's shape (Windows), once it has the size the island was cut for.
         let window = if self.sent.open { self.desktop.window(TITLE) } else { None };
+        // See-through, nothing of the window itself shows, only the island (Windows); before it's first shown.
+        if look.see_through
+            && !look.vr
+            && let Some(w) = window
+        {
+            self.desktop.see_through(w);
+        }
         let mut s = self.shared.lock();
         s.window = window;
         // Nothing to say: gone once it has faded away, and never shown before there's something to show (an opaque
