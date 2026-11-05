@@ -40,7 +40,8 @@ impl FleetUi {
     /// drive) on the first frame. `--tab buy-build` opens A whole build, with nothing loaded.
     /// `--tab plan` opens Plan a loadout with the current ship; `--tab plan-fsd` with its frame
     /// shift drive's list open and engineering planned for it; `--tab plan-new` at its start (a
-    /// hull, a ship or a pasted build to start from); `--tab plan-hull` with a new Python.
+    /// hull, a ship or a pasted build to start from); `--tab plan-hull` with a new Python;
+    /// `--tab plan-defence`, `plan-weapons`, `plan-power`, `plan-travel` with the current ship on that panel.
     pub fn new(tab: Option<&str>, shot: bool) -> Self {
         let mut st = FleetUi::default();
         match tab.map(str::to_ascii_lowercase).as_deref() {
@@ -54,6 +55,11 @@ impl FleetUi {
                 st.plan_demo = true;
             }
             Some("plan-new") => st.tab = Tab::Plan,
+            Some(p @ ("plan-defence" | "plan-weapons" | "plan-power" | "plan-travel")) => {
+                st.tab = Tab::Plan;
+                st.plan_autostart = true;
+                st.plan.show_panel(p.trim_start_matches("plan-"));
+            }
             Some("plan-hull") => {
                 st.tab = Tab::Plan;
                 st.plan.start_new("python");
