@@ -220,6 +220,37 @@ pub fn planned(item: &str, base: &dyn Fn(&str) -> Option<f64>, blueprint: &str, 
     Some(Engineered { stats, damage })
 }
 
+/// A curve's ends and its speed and turning shares: they move with its middle, so they aren't typed on their own.
+pub fn is_curve_end(key: &str) -> bool {
+    matches!(key, "minmass" | "maxmass" | "minmul" | "maxmul" | "minmulspeed" | "optmulspeed" | "maxmulspeed" | "minmulrotation" | "optmulrotation" | "maxmulrotation")
+}
+
+/// What `goal` makes of a module: [`planned`] at its roll, then the figures typed in exactly. An exact optimal mass or
+/// multiplier moves the curve's ends with it.
+pub fn planned_goal(item: &str, base: &dyn Fn(&str) -> Option<f64>, goal: &super::Goal) -> Option<Engineered> {
+    let mut e = planned(item, base, &goal.blueprint, goal.grade, goal.roll, goal.experimental.as_deref())?;
+    for (k, v) in &goal.exact {
+        if !v.is_finite() {
+            continue;
+        }
+        let was = e.stats.get(k).copied().or_else(|| base(k));
+        let ends: &[&str] = match k.as_str() {
+            "optmass" => &["minmass", "maxmass"],
+            "optmul" => &["minmul", "maxmul", "minmulspeed", "optmulspeed", "maxmulspeed", "minmulrotation", "optmulrotation", "maxmulrotation"],
+            _ => &[],
+        };
+        if let Some(was) = was.filter(|w| *w != 0.0) {
+            for end in ends {
+                if let Some(x) = e.stats.get(*end).copied().or_else(|| base(end)) {
+                    e.stats.insert((*end).to_string(), x * v / was);
+                }
+            }
+        }
+        e.stats.insert(k.clone(), *v);
+    }
+    Some(e)
+}
+
 /// The damage types an experimental effect makes a weapon deal, if it changes them (Incendiary Rounds: mostly
 /// thermal).
 pub fn effect_damage(experimental: &str) -> Option<DamageDist> {
@@ -286,6 +317,34 @@ mod tests {
         }
         let x = planned("int_shieldgenerator_size5_class5", &base, "ShieldGenerator_Thermic", 5, 1.0, Some("special_shield_thermic")).expect("figures");
         assert!((x.stats["thermres"] - (thermal + 0.08 * (1.0 - thermal))).abs() < 1e-9, "{x:?}");
+    }
+
+    #[test]
+    fn a_figure_typed_exactly_replaces_the_roll() {
+        let base = |k: &str| match k {
+            "optmass" => Some(1000.0),
+            "minmass" => Some(500.0),
+            "maxmass" => Some(1500.0),
+            "optmul" => Some(1.0),
+            "minmul" => Some(0.9),
+            "maxmul" => Some(1.1),
+            "mass" => Some(10.0),
+            "power" => Some(5.0),
+            "integrity" => Some(100.0),
+            "thermload" => Some(1.3),
+            _ => None,
+        };
+        let plain = super::super::Goal::new("Engine_Dirty", 5);
+        let rolled = planned_goal("int_engine_size5_class5", &base, &plain).expect("figures");
+        // An optimal mass typed in replaces the roll's and moves the curve's ends with it; the rest stays as rolled.
+        let goal = super::super::Goal { exact: vec![("optmass".into(), 1200.0), ("power".into(), 6.0)], ..plain };
+        let e = planned_goal("int_engine_size5_class5", &base, &goal).expect("figures");
+        assert_eq!((e.stats["optmass"], e.stats["power"]), (1200.0, 6.0));
+        let was = rolled.stats.get("optmass").copied().unwrap_or(1000.0);
+        let min = rolled.stats.get("minmass").copied().unwrap_or(500.0);
+        assert!((e.stats["minmass"] - min * 1200.0 / was).abs() < 1e-9, "{e:?}");
+        assert_eq!(e.stats.get("optmul"), rolled.stats.get("optmul"));
+        assert!(is_curve_end("maxmul") && !is_curve_end("optmul"));
     }
 
     #[test]

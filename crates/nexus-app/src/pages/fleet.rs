@@ -29,9 +29,10 @@ pub struct FleetUi {
     buy: BuyUi,
     plan: plan::PlanUi,
     /// Plan a loadout starts from the current ship (once, in a screenshot run), with engineering planned for its frame
-    /// shift drive (`plan_demo`).
+    /// shift drive (`plan_demo`), on one of its panels (`plan_panel`).
     plan_autostart: bool,
     plan_demo: bool,
+    plan_panel: Option<String>,
 }
 
 impl FleetUi {
@@ -40,8 +41,9 @@ impl FleetUi {
     /// drive) on the first frame. `--tab buy-build` opens A whole build, with nothing loaded.
     /// `--tab plan` opens Plan a loadout with the current ship; `--tab plan-fsd` with its frame
     /// shift drive's list open and engineering planned for it; `--tab plan-new` at its start (a
-    /// hull, a ship or a pasted build to start from); `--tab plan-hull` with a new Python;
-    /// `--tab plan-defence`, `plan-weapons`, `plan-power`, `plan-travel` with the current ship on that panel.
+    /// hull, a ship, a saved build or a pasted build to start from, and every hull); `--tab plan-hull` with a new
+    /// Python; `--tab plan-defence`, `plan-weapons`, `plan-power`, `plan-travel`, `plan-compare` with the current ship
+    /// on that panel (Compare: beside the hull as a shipyard sells it; Weapons: against an Anaconda as sold).
     pub fn new(tab: Option<&str>, shot: bool) -> Self {
         let mut st = FleetUi::default();
         match tab.map(str::to_ascii_lowercase).as_deref() {
@@ -55,10 +57,10 @@ impl FleetUi {
                 st.plan_demo = true;
             }
             Some("plan-new") => st.tab = Tab::Plan,
-            Some(p @ ("plan-defence" | "plan-weapons" | "plan-power" | "plan-travel")) => {
+            Some(p @ ("plan-defence" | "plan-weapons" | "plan-power" | "plan-travel" | "plan-compare")) => {
                 st.tab = Tab::Plan;
                 st.plan_autostart = true;
-                st.plan.show_panel(p.trim_start_matches("plan-"));
+                st.plan_panel = Some(p.trim_start_matches("plan-").to_string());
             }
             Some("plan-hull") => {
                 st.tab = Tab::Plan;
@@ -234,6 +236,9 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut FleetUi, spansh: &Spansh, rt: 
         st.plan.start_from_ship(s);
         if st.plan_demo {
             st.plan.demo_fsd();
+        }
+        if let Some(p) = st.plan_panel.take() {
+            st.plan.show_panel(&p);
         }
     }
     match st.tab {

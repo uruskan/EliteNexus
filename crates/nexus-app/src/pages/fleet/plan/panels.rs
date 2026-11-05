@@ -1,8 +1,9 @@
 //! The right side of Plan a loadout: what the build comes to, in panels. Overview (the main figures as tiles),
 //! Defence (shields and armour against each damage type, recharge), Weapons (damage, draw, heat, ammunition), Power &
-//! heat (priority groups, switching modules, heat), and Travel (jump range, speed and turning by pips). The pips and
-//! what's carried sit above the panels they change.
+//! heat (priority groups, switching modules, heat), Travel (jump range, speed and turning by pips) and Compare (beside
+//! another build). The pips, what's carried and a discount sit above the panels they change.
 
+use super::compare::{Choice, Pick};
 use crate::theme::{display, pal, size};
 use crate::widgets::{self, card, card_tinted, footnote, short_credits};
 use egui::{Color32, CornerRadius, Label, Rect, RichText, Sense, Ui, Vec2};
@@ -20,31 +21,43 @@ pub enum Panel {
     Weapons,
     Power,
     Travel,
+    Compare,
 }
 
 impl Panel {
-    /// Pips or what's carried change its figures.
+    /// Pips, what's carried or a discount change its figures.
     pub fn uses_setup(self) -> bool {
-        matches!(self, Panel::Defence | Panel::Weapons | Panel::Travel)
+        matches!(self, Panel::Overview | Panel::Defence | Panel::Weapons | Panel::Travel)
     }
 }
 
 pub fn tabs(ui: &mut Ui, panel: &mut Panel) {
-    if let Some(p) = widgets::tabs(ui, *panel, &[(Panel::Overview, "Overview"), (Panel::Defence, "Defence"), (Panel::Weapons, "Weapons"), (Panel::Power, "Power & heat"), (Panel::Travel, "Travel")]) {
+    if let Some(p) = widgets::tabs(ui, *panel, &[(Panel::Overview, "Overview"), (Panel::Defence, "Defence"), (Panel::Weapons, "Weapons"), (Panel::Power, "Power & heat"), (Panel::Travel, "Travel"), (Panel::Compare, "Compare")]) {
         *panel = p;
     }
 }
 
 // ---------------------------------------------------------------------------------------------
-// Pips and what's carried
+// Pips, what's carried, a discount
 
-/// The pips, and with `carried` what's in the hold and the tank, in a settings bar. True when something changed.
-pub fn setup_bar(ui: &mut Ui, setup: &mut Setup, f: &Figures, carried: bool) -> bool {
+/// The pips, and what `panel` shows besides (the cargo and fuel carried on Travel, a discount on Overview), in a
+/// settings bar. True when something changed.
+pub fn setup_bar(ui: &mut Ui, setup: &mut Setup, f: &Figures, panel: Panel) -> bool {
     let mut changed = false;
+    let carried = panel == Panel::Travel;
     widgets::settings_bar(ui, |bar| {
         bar.field("Pips", "Systems, engines, weapons: a click moves a pip there, as the game's buttons do. Systems pips harden the shields and recharge them, engine pips speed the ship and its turns, weapon pips recharge the weapons capacitor.", |ui| {
             changed |= pips(ui, &mut setup.pips);
         });
+        if panel == Panel::Overview {
+            bar.field("Discount", "Stations in some systems sell ships and modules for less than their list price: the hull's and modules' prices, and the rebuy, are worked out at this discount.", |ui| {
+                let mut pct = (setup.discount * 100.0).round();
+                if widgets::number(ui, &mut pct, 0.0..=50.0, widgets::Steps::Through(&[0.0, 5.0, 10.0, 15.0, 20.0, 25.0, 30.0]), 0, " %").changed() {
+                    setup.discount = (pct / 100.0).clamp(0.0, 0.5);
+                    changed = true;
+                }
+            });
+        }
         if carried && f.cargo > 0.0 {
             bar.field("Cargo carried", "Tonnes in the hold: the jump range and speed below are for this much", |ui| {
                 let mut c = setup.cargo.min(f.cargo);
@@ -187,7 +200,7 @@ pub fn overview(ui: &mut Ui, hull: &Hull, plan: &Plan, f: &Figures, before: Opti
         }
         c.add(|ui| {
             tile(ui, icon::COINS, "Cost", pal::GOLD, &short_credits(f.total_cost() as i64), diff(f.total_cost() / 1e6, before.map(|b| b.total_cost() / 1e6), 1, false, " M"), compared, &[
-                format!("Hull {} · modules {}", short_credits(f.hull_cost as i64), short_credits(f.modules_cost as i64)),
+                format!("Hull {} · modules {}{}", short_credits(f.hull_cost as i64), short_credits(f.modules_cost as i64), if f.setup.discount > 0.0 { format!(", {:.0}\u{a0}% off", f.setup.discount * 100.0) } else { String::new() }),
                 format!("Rebuy {}{}", short_credits(f.rebuy() as i64), if f.ammo_cost > 0.0 { format!(" · ammunition {}", short_credits(f.ammo_cost as i64)) } else { String::new() }),
                 // What the commander paid can differ from list prices.
                 game.filter(|g| g.value > 0).map(|g| format!("The game values this ship at {}, rebuy {}", short_credits(g.value), short_credits(g.rebuy))).unwrap_or_default(),
@@ -216,6 +229,11 @@ fn drain_line(f: &Figures) -> String {
         Some(t) => format!("All firing, the weapons capacitor lasts {t:.0} s at {} weapon pips", pips_text(f.setup.pips.wep)),
         None => format!("All firing, the weapons capacitor keeps up at {} weapon pips", pips_text(f.setup.pips.wep)),
     }
+}
+
+/// "5 s", "2.5 s".
+fn seconds(s: f64) -> String {
+    if (s - s.round()).abs() < 0.05 { format!("{s:.0}\u{a0}s") } else { format!("{s:.1}\u{a0}s") }
 }
 
 /// 2, 2.5.
@@ -371,13 +389,15 @@ fn capitalise(s: &str) -> String {
 // ---------------------------------------------------------------------------------------------
 // Weapons
 
-/// Each weapon's damage, draw, heat, range and ammunition, what they come to together, and against a target's armour.
-pub fn weapons(ui: &mut Ui, f: &Figures, target: &mut String) {
+/// Each weapon's damage, draw, heat, range and ammunition, what they come to together, and against a target (`target`:
+/// what's typed to pick one; `chosen`: its name and figures; `options`: what can be picked). Returns a target picked,
+/// and the name it was picked by.
+pub fn weapons(ui: &mut Ui, f: &Figures, target: &mut String, chosen: Option<(&str, &Figures)>, options: &[Choice]) -> Option<(Pick, String)> {
     if f.weapons.is_empty() {
         card(ui, "Weapons", |ui| {
             ui.label(RichText::new("No weapons fitted.").color(pal::DIM));
         });
-        return;
+        return None;
     }
     let sdps: f64 = f.weapons.iter().map(|w| w.sustained_dps).sum();
     let dps: f64 = f.weapons.iter().map(|w| w.dps).sum();
@@ -416,15 +436,21 @@ pub fn weapons(ui: &mut Ui, f: &Figures, target: &mut String) {
     ui.add_space(widgets::GAP);
     card(ui, "Each weapon", |ui| {
         let rows = &f.weapons;
+        // A narrow window keeps four columns: the range goes under the weapon, the heat under its draw.
+        let narrow = ui.available_width() < 540.0;
+        let columns: Vec<Column> = if narrow {
+            vec![widgets::flex_column(120.0), Column::exact(48.0), Column::exact(58.0), Column::exact(108.0).clip(true)]
+        } else {
+            vec![widgets::flex_column(140.0), Column::exact(50.0), Column::exact(50.0), Column::exact(44.0), Column::exact(88.0), Column::exact(120.0).clip(true)]
+        };
+        let heads: &[&str] = if narrow { &["Weapon", "DPS", "Draw", "Ammunition"] } else { &["Weapon", "DPS", "Draw", "Heat", "Range", "Ammunition"] };
         widgets::table(ui, "plan-weapons", |t| {
-            t.column(widgets::flex_column(170.0))
-                .column(Column::initial(52.0).at_least(44.0))
-                .column(Column::initial(52.0).at_least(44.0))
-                .column(Column::initial(48.0).at_least(40.0))
-                .column(Column::initial(92.0).at_least(70.0))
-                .column(Column::initial(112.0).at_least(72.0).clip(true))
-                .header(28.0, |mut h| {
-                    for t in ["Weapon", "DPS", "Draw", "Heat", "Range", "Ammunition"] {
+            let mut t = t.vscroll(false);
+            for c in columns {
+                t = t.column(c);
+            }
+            t.header(28.0, |mut h| {
+                    for t in heads {
                         h.col(|ui| widgets::th(ui, t));
                     }
                 })
@@ -436,35 +462,53 @@ pub fn weapons(ui: &mut Ui, f: &Figures, target: &mut String) {
                                 ui.spacing_mut().item_spacing.y = 1.0;
                                 ui.add(Label::new(top).truncate());
                                 ui.add(Label::new(RichText::new(under).size(size::CAPTION).color(pal::DIM)).truncate());
-                            });
+                            })
+                            .response
+                        };
+                        let falls = if w.range <= 0.0 {
+                            String::new()
+                        } else if w.falloff < w.range {
+                            format!("Full damage to {:.0} m, then less and less to {:.0} m", w.falloff, w.range)
+                        } else {
+                            format!("Full damage to {:.0} m", w.range)
                         };
                         row.col(|ui| {
-                            two(ui, outfitting::display_name(&w.item), w.dist.describe());
+                            let under = if narrow && w.range > 0.0 { format!("{} · {:.0}\u{a0}m", w.dist.describe(), w.range) } else { w.dist.describe() };
+                            two(ui, outfitting::display_name(&w.item), under).on_hover_text(format!("{} · {}{}", outfitting::display_name(&w.item), outfitting::slot_display(&w.slot), if narrow && !falls.is_empty() { format!("\n{falls}") } else { String::new() }));
                         });
                         row.col(|ui| {
                             ui.label(format!("{:.1}", w.sustained_dps)).on_hover_text(format!("{:.1} while the clip lasts, {:.2} shots a second", w.dps, w.rate));
                         });
                         row.col(|ui| {
-                            ui.label(format!("{:.2}", w.eps));
-                        });
-                        row.col(|ui| {
-                            ui.label(format!("{:.1}", w.hps));
-                        });
-                        row.col(|ui| {
-                            if w.range > 0.0 {
-                                two(ui, format!("{:.0}\u{a0}m", w.range), format!("full to {:.0}\u{a0}m", w.falloff));
+                            if narrow {
+                                two(ui, format!("{:.2}", w.eps), format!("{:.1} heat", w.hps)).on_hover_text("Draw on the weapons capacitor, MJ a second, and heat a second, while firing");
                             } else {
-                                ui.label("—");
+                                ui.label(format!("{:.2}", w.eps));
                             }
                         });
+                        if !narrow {
+                            row.col(|ui| {
+                                ui.label(format!("{:.1}", w.hps));
+                            });
+                            row.col(|ui| {
+                                if w.range > 0.0 {
+                                    two(ui, format!("{:.0}\u{a0}m", w.range), format!("full to {:.0}\u{a0}m", w.falloff)).on_hover_text(falls.clone());
+                                } else {
+                                    ui.label("—");
+                                }
+                            });
+                        }
                         row.col(|ui| {
-                            let reload = if w.reload > 0.0 { format!(" · reload {:.1}\u{a0}s", w.reload) } else { String::new() };
-                            match w.time_to_empty {
+                            // Clip and reserve over how long they last firing and the reload; the whole of it on hover.
+                            let reload = if w.reload > 0.0 { format!(" · {}\u{a0}reload", seconds(w.reload)) } else { String::new() };
+                            let whole = format!("Clip {:.0}, reserve {:.0}{}{}", w.clip, w.ammo, w.time_to_empty.map(|t| format!(": {} of firing", widgets::duration(t.round() as i64))).unwrap_or_default(), if w.reload > 0.0 { format!(", reloading in {}", seconds(w.reload)) } else { String::new() });
+                            let r = match w.time_to_empty {
                                 Some(t) => two(ui, format!("{:.0} + {:.0}", w.clip, w.ammo), format!("{}{reload}", widgets::duration(t.round() as i64))),
                                 None if w.clip > 0.0 => two(ui, "Unlimited".into(), format!("clip {:.0}{reload}", w.clip)),
-                                None => {
-                                    ui.label("Unlimited");
-                                }
+                                None => ui.label("Unlimited"),
+                            };
+                            if w.clip > 0.0 {
+                                r.on_hover_text(whole);
                             }
                         });
                     });
@@ -473,26 +517,78 @@ pub fn weapons(ui: &mut Ui, f: &Figures, target: &mut String) {
         footnote(ui, "DPS over time, reloads included; draw on the weapons capacitor in MJ a second and heat a second, while firing; the range it reaches and how far its damage stays full; clip and reserve, how long they last firing, and the reload.");
     });
     ui.add_space(widgets::GAP);
-    card(ui, "Against a target's hull", |ui| {
-        ui.add(Label::new(RichText::new("Weapons that pierce less than a hull's hardness do less to it. Pick a ship to see what gets through its armour.").color(pal::DIM)).wrap());
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            widgets::combobox(ui, "plan-target", target, "A ship: Anaconda, Python, Federal Corvette…", 320.0, |typed| {
-                let k = nexus_data::commodities::name_key(typed);
-                fitting::hulls()
-                    .iter()
-                    .filter(|h| k.is_empty() || nexus_data::commodities::name_key(&h.name).contains(&k))
-                    .map(|h| widgets::Suggestion { text: h.name.clone(), detail: format!("hardness {:.0}", h.hardness), starred: false })
-                    .collect()
-            });
-        });
-        if let Some(h) = fitting::hulls().iter().find(|h| h.name.eq_ignore_ascii_case(target.trim())) {
-            let through: f64 = f.weapons.iter().map(|w| w.sustained_dps * w.against_hardness(h.hardness)).sum();
-            ui.add_space(4.0);
-            ui.label(RichText::new(format!("{through:.1} of {sdps:.1} DPS gets through a {}'s armour (hardness {:.0})", h.name, h.hardness)).font(display(size::CALLOUT)));
-            footnote(ui, "Before its resistances and shields, which depend on how it's fitted.");
+    against_card(ui, f, target, chosen, options)
+}
+
+/// "45 s", "3m 05s".
+fn span(secs: f64) -> String {
+    if secs < 59.5 { format!("{secs:.0}\u{a0}s") } else { widgets::duration(secs.round() as i64) }
+}
+
+/// How long the weapons take to break a target's shields and destroy its hull: a ship as a shipyard sells it, a saved
+/// build or one of the commander's (`options`, picked by typing in `text`; `chosen`: its name and figures). Returns the
+/// name of one picked.
+fn against_card(ui: &mut Ui, f: &Figures, text: &mut String, chosen: Option<(&str, &Figures)>, options: &[Choice]) -> Option<(Pick, String)> {
+    let mut picked = None;
+    card(ui, "Against a target", |ui| {
+        ui.add(Label::new(RichText::new("Pick a ship as a shipyard sells it, a saved build or one of yours: how long your weapons take to break its shields and destroy its hull.").color(pal::DIM)).wrap());
+        ui.add_space(6.0);
+        let width = (ui.available_width() - 44.0).clamp(200.0, 380.0);
+        let hint = chosen.map_or("A ship: Anaconda, Python, Federal Corvette…", |(label, _)| label);
+        let done = ui
+            .horizontal(|ui| {
+                widgets::combobox_grouped(ui, "plan-target", text, hint, width, |typed| super::compare::rows(options, typed))
+            })
+            .inner;
+        if let Some(c) = done.picked.and_then(|name| options.iter().find(|c| c.label == name)) {
+            text.clear();
+            picked = Some((c.pick.clone(), c.label.clone()));
         }
+        let Some((label, t)) = chosen else { return };
+        let a = fitting::against(&f.weapons, t.shield.as_ref(), t.armour, &t.hull_res, t.hardness);
+        ui.add_space(8.0);
+        ui.label(RichText::new(label).font(display(size::CALLOUT)));
+        ui.add_space(4.0);
+        let shields = match (t.shield, a.shield_secs) {
+            (None, _) => "None".to_string(),
+            (Some(s), Some(secs)) => format!("{:.0} MJ, broken in {}", s.strength, span(secs)),
+            (Some(s), None) => format!("{:.0} MJ, nothing gets through", s.strength),
+        };
+        let hull = match a.hull_secs {
+            Some(secs) => format!("{:.0}, then destroyed in {}", t.armour, span(secs)),
+            None => format!("{:.0}, nothing gets through", t.armour),
+        };
+        let total = match (t.shield.is_some(), a.shield_secs, a.hull_secs) {
+            (false, _, Some(h)) => Some(h),
+            (true, Some(s), Some(h)) => Some(s + h),
+            _ => None,
+        };
+        facts(ui, "plan-target-facts", &[
+            ("Shields", shields),
+            ("On its shields", format!("{:.1} damage a second", a.shield_dps)),
+            ("Hull", hull),
+            ("On its hull", format!("{:.1} a second, hardness {:.0}", a.hull_dps, t.hardness)),
+            ("In all", total.map_or_else(|| "Never, with these weapons".to_string(), span)),
+        ]);
+        let capacitor = match f.wep.time_to_empty {
+            Some(secs) => format!(" Your weapons capacitor lasts {} at {} weapon pips: past that, weapons that draw on it fire slower.", span(secs), pips_text(f.setup.pips.wep)),
+            None => String::new(),
+        };
+        // Weapons whose ammunition runs out before the end stop then, and the sums count that: say which.
+        let end = total.unwrap_or(f64::INFINITY);
+        let mut dry: Vec<String> = Vec::new();
+        for w in &f.weapons {
+            if let Some(t) = w.time_to_empty.filter(|t| *t < end) {
+                let line = format!("{} after {}", outfitting::display_name(&w.item), span(t));
+                if !dry.contains(&line) {
+                    dry.push(line);
+                }
+            }
+        }
+        let ammo = if dry.is_empty() { String::new() } else { format!(" Out of ammunition first, and stopped from then: {}.", dry.join(", ")) };
+        footnote(ui, &format!("Every weapon firing and hitting at full damage, reloads included, until its ammunition runs out, against its resistances and two systems pips; its shields don't regenerate meanwhile, and shield cells aren't counted.{ammo}{capacitor}"));
     });
+    picked
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -511,23 +607,30 @@ pub fn power(ui: &mut Ui, plan: &Plan, f: &Figures) -> Option<PowerEdit> {
     let mut edit = None;
     card_tinted(ui, icon::LIGHTNING, "Power by priority", pal::WARN, |ui| {
         let plant = f.power_generated.max(0.01);
-        ui.add(Label::new(RichText::new(format!("The power plant makes {:.1} MW. When the ship draws more, the highest-numbered groups switch off first, so give what you can't lose a low number.", f.power_generated)).color(pal::DIM)).wrap());
+        ui.add(Label::new(RichText::new(format!("The power plant makes {:.1} MW. When the ship draws more, the highest-numbered groups switch off first, so give what you can't lose a low number. Each group counts what it and the groups before it draw.", f.power_generated)).color(pal::DIM)).wrap());
         ui.add_space(6.0);
-        // One row a group: its number, what it and the groups before draw deployed as a bar, and the figures.
-        for (i, g) in f.power_groups.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                ui.add_sized(egui::vec2(52.0, 18.0), Label::new(RichText::new(format!("Group {}", i + 1)).color(pal::DIM)));
+        // One row a group: its number, what it and the groups before draw deployed as a bar of the plant's output, and
+        // the figures retracted and deployed.
+        let bar_w = (ui.available_width() - 56.0 - 2.0 * 80.0 - 3.0 * 12.0).max(60.0);
+        egui::Grid::new("plan-power-groups").num_columns(4).spacing([12.0, 6.0]).show(ui, |ui| {
+            widgets::th(ui, "Group");
+            widgets::th(ui, "Of the plant, deployed");
+            widgets::th(ui, "Retracted");
+            widgets::th(ui, "Deployed");
+            ui.end_row();
+            for (i, g) in f.power_groups.iter().enumerate() {
                 let over = g.deployed > f.power_generated + 1e-9;
                 let col = if over { pal::BAD } else if g.deployed / plant > 0.9 { pal::WARN } else { pal::GOOD };
-                let bar_w = (ui.available_width() - 150.0).max(80.0);
+                ui.label(RichText::new(format!("{}", i + 1)).color(pal::DIM));
                 ui.allocate_ui(egui::vec2(bar_w, 18.0), |ui| {
                     ui.set_width(bar_w);
                     widgets::bar(ui, (g.deployed / plant).min(1.0) as f32, col, 8.0, None);
                 });
-                ui.label(RichText::new(format!("{:.1}\u{a0}/ {:.1}\u{a0}MW", g.retracted, g.deployed)).color(if over { pal::BAD } else { pal::TEXT })).on_hover_text("Retracted / deployed, with the groups before it");
-            });
-        }
+                ui.label(format!("{:.1}\u{a0}MW", g.retracted));
+                ui.label(RichText::new(format!("{:.1}\u{a0}MW", g.deployed)).color(if over { pal::BAD } else { pal::TEXT }));
+                ui.end_row();
+            }
+        });
         if f.power_deployed > f.power_generated + 1e-9 {
             let first_off = f.power_groups.iter().position(|g| g.deployed > f.power_generated + 1e-9).map_or(5, |i| i + 1);
             ui.add(Label::new(RichText::new(format!("Deployed, the ship draws more than the plant makes: groups {first_off} to 5 switch off.")).color(pal::BAD)).wrap());
@@ -543,10 +646,11 @@ pub fn power(ui: &mut Ui, plan: &Plan, f: &Figures) -> Option<PowerEdit> {
             }))
             .collect();
         widgets::table(ui, "plan-power", |t| {
-            t.column(widgets::flex_column(160.0))
-                .column(Column::initial(64.0).at_least(56.0))
-                .column(Column::exact(100.0).resizable(false))
-                .column(Column::exact(58.0).resizable(false))
+            t.vscroll(false)
+                .column(widgets::flex_column(120.0))
+                .column(Column::exact(52.0))
+                .column(Column::exact(100.0))
+                .column(Column::exact(58.0))
                 .header(28.0, |mut h| {
                     for t in ["Module", "MW", "Group", "On"] {
                         h.col(|ui| widgets::th(ui, t));
@@ -632,6 +736,34 @@ pub fn travel(ui: &mut Ui, f: &Figures) {
                     ("On one tank", format!("{:.0} ly", f.total_range)),
                     ("Fuel a jump, at most", format!("{:.2} t", f.max_fuel_per_jump)),
                 ]);
+                // One jump boosted: a neutron star's or white dwarf's cone supercharges the drive, FSD injection
+                // (synthesis) boosts it; each multiplies the drive's own range with what's carried. A Guardian FSD
+                // booster's light years are added after, the lower of the two ways the game may count them.
+                if f.range_carrying > 0.0 {
+                    let own = (f.range_carrying - f.booster).max(0.0);
+                    let boosted = |k: f64| format!("{:.2} ly", own * k + f.booster);
+                    let times = |k: f64| if k.fract() == 0.0 { format!("{k:.0}") } else { format!("{k}") };
+                    let neutron = format!("Neutron star, ×{}", times(f.neutron_boost));
+                    let white = f.white_dwarf_boost.map(|k| format!("White dwarf, ×{}", times(k)));
+                    let mut rows: Vec<(&str, String)> = vec![(neutron.as_str(), boosted(f.neutron_boost))];
+                    if let Some(w) = &white {
+                        rows.push((w.as_str(), boosted(f.white_dwarf_boost.unwrap_or(1.0))));
+                    }
+                    rows.extend([("Basic FSD injection, +25\u{a0}%", boosted(1.25)), ("Standard, +50\u{a0}%", boosted(1.5)), ("Premium, +100\u{a0}%", boosted(2.0))]);
+                    ui.add_space(6.0);
+                    widgets::th(ui, "One jump boosted");
+                    facts(ui, "plan-jump-boost", &rows);
+                    let mut notes = Vec::new();
+                    if f.booster > 0.0 {
+                        notes.push(format!("The Guardian FSD booster's {:.2} ly are added after the boost, not multiplied with the drive's range: the lower reading, as it isn't settled here whether the game boosts them too.", f.booster));
+                    }
+                    if white.is_none() {
+                        notes.push("How far a white dwarf supercharges this drive isn't known here.".to_string());
+                    }
+                    if !notes.is_empty() {
+                        footnote(ui, &notes.join(" "));
+                    }
+                }
             });
         });
         c.add(|ui| {
@@ -645,7 +777,8 @@ pub fn travel(ui: &mut Ui, f: &Figures) {
                 ui.label(RichText::new(if f.speed > 0.0 { format!("{:.0} m/s", at(eng)) } else { "Too heavy".into() }).font(display(24.0)));
                 ui.add(Label::new(RichText::new(format!("At {} engine pips, with what's carried", pips_text(eng))).size(size::FOOTNOTE).color(pal::DIM)).wrap());
                 ui.add_space(6.0);
-                egui::Grid::new("plan-speed-pips").num_columns(6).spacing([12.0, 4.0]).show(ui, |ui| {
+                // Narrow columns: a grid's default least width would push six of them past the card.
+                egui::Grid::new("plan-speed-pips").num_columns(6).spacing([10.0, 4.0]).min_col_width(26.0).show(ui, |ui| {
                     widgets::th(ui, "Pips");
                     for p in 0..5 {
                         widgets::th(ui, &p.to_string());

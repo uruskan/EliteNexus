@@ -15,8 +15,8 @@ The sums and where they come from are under [Formulas](#formulas).
 | Every hull with its slots, bulkheads and stock modules | done |
 | Each slot lists only what the game lets you fit there (size, exact-size core modules, military and named slots, hull-only modules, fighter hangars and luxury cabins, mass limits, one per ship) | done |
 | Search and filter the module list | done |
-| Pre-engineered modules (V1 drives, Guardian and Merc gear) to pick | missing |
-| A table of every hull to compare (speed, shields, armour, mass, slots, price) | missing |
+| Pre-engineered modules (V1 drives, Guardian and Merc gear) to pick | not possible from this data: coriolis-data lists most of them with the plain module's figures and only the names of their blueprints (a V1 drive has a 5A drive's optimal mass), and the rest inconsistently. One on your ship comes in with the game's own values; to plan one, take the plain module and type the real module's values in Its figures |
+| A table of every hull to compare (speed, shields, armour, mass, slots, price) | done (the start screen's Every hull) |
 
 ### Engineering
 
@@ -28,8 +28,8 @@ The sums and where they come from are under [Formulas](#formulas).
 | How far a grade is rolled (any percentage, 100 % for a full roll) | done |
 | Experimental effects change the figures (damage types too) | done |
 | Materials the plan needs, against what you hold | done |
-| Engineers who offer each grade | missing |
-| Typing an exact value for one engineered figure | missing |
+| Engineers who offer each grade | done (the ones you've unlocked first, with how far you are with them) |
+| Typing an exact value for one engineered figure | done (Its figures: each changed figure, as rolled, to type over; kept in saved builds and in what's shared) |
 
 ### Power
 
@@ -61,7 +61,7 @@ The sums and where they come from are under [Formulas](#formulas).
 | Ammo: clip, reserve, reload, time to empty | done |
 | Range and falloff | done |
 | Armour piercing against a target's hardness | done |
-| Damage against a target build's shields and resistances (Coriolis' opponent) | missing |
+| Damage against a target build's shields and resistances (Coriolis' opponent) | done (a hull as sold, a saved build or one of yours: seconds to break its shields at two systems pips, then its hull through hardness and resistances) |
 
 ### Shields and armour
 
@@ -97,7 +97,8 @@ The sums and where they come from are under [Formulas](#formulas).
 | Fuel per jump | done |
 | Range with the cargo and fuel you choose | done |
 | Guardian FSD booster | done |
-| Neutron and white dwarf supercharge | missing |
+| Neutron and white dwarf supercharge | done (×4, ×6 for the FSD Mk II, and ×1.5 of the drive's range with what's carried; a Guardian booster's light years added after. Whether the game boosts the booster's share too isn't settled: the lower reading is shown, and said) |
+| FSD injection (synthesis) | done (+25 %, +50 %, +100 %) |
 
 ### Mass, cargo, fuel, cost
 
@@ -105,7 +106,7 @@ The sums and where they come from are under [Formulas](#formulas).
 |---|---|
 | Hull, unladen and laden mass, cargo, passengers, fuel | done |
 | Hull and module prices, rebuy | done |
-| Discounts | missing |
+| Discounts | done (one discount on the hull and modules, which the rebuy follows) |
 | Ammunition restock cost | done |
 | What to buy against your ship or a new hull | done (beyond both tools: Where to buy finds the stations) |
 
@@ -113,12 +114,41 @@ The sums and where they come from are under [Formulas](#formulas).
 
 | Feature | Status |
 |---|---|
-| Start from a new hull, one of your ships or a pasted build | done |
-| Save builds, open, rename and delete them | missing |
-| Compare two builds | missing |
+| Start from a new hull, one of your ships, a saved build or a pasted build | done |
+| Save builds, open, rename and delete them | done (`builds.json` in the data folder, planned engineering kept) |
+| Compare two builds | done (the plan beside your ship, the stock hull, a saved build or another ship of yours) |
 | Import SLEF, EDSY and Coriolis import links, the game's Loadout | done |
-| Export SLEF, EDSY and Coriolis links, the game's Loadout | partial: SLEF export missing |
+| Export SLEF, EDSY and Coriolis links, the game's Loadout | done (with the engineering on the modules) |
+| Planned engineering in what's exported | done (Share writes it as the game writes engineering: each changed figure with its label, value and original value; EDSY was checked to read the labels and units. It's marked, so a build pasted back into Elite Nexus comes in planned again) |
 | Undo and start over | done |
+
+## Checked against the game
+
+What a journal records for a ship (its `Loadout`), against the planner's sums for the same build: a commander's
+unengineered Kestrel Mk II, 2026-11-04.
+
+| Figure | The game | The planner |
+|---|---|---|
+| Unladen mass | 323.1 t | 323.1 t (a test) |
+| Max jump range | 19.642 ly | 19.642 ly (a test) |
+| Fuel, cargo | 16 t, 4 t | 16 t, 4 t (a test) |
+| Modules' value | 18,369,465 Cr | 18,310,005 Cr at list prices (0.3 % less) |
+| Hull's value | 17,128,581 Cr | 13,776,380 Cr, coriolis-data's list price: the journals have no purchase of this ship, and the game values a hull by what was paid for it. The Overview shows the game's value beside the sum while the plan is the ship as it is |
+| Rebuy | 1,774,903 Cr: 5 % of hull and modules, rounded up | the same formula |
+
+Speed, shields, armour, power and weapons have no figure in the journal to check against; engineering can't be
+checked yet, as the commander's journals have no engineered module. Planned engineering was checked by hand against
+the blueprints' ranges (tests in `fitting/blueprints.rs`) and, for how it's written out, against what EDSY reads
+(the labels, units and the planned mark import with no error; a figure the export doesn't carry, EDSY works out
+itself).
+
+The same Kestrel opened in Coriolis (2026-11-05) comes to the same top speed, speed at two pips and boost, masses,
+shields and armour against each damage type, shield recovery (113 s) and recharge (238 s), power retracted and
+deployed, each weapon's damage and draw, cost and insurance. Its jump range is 0.03 ly lower than the game's (19.61
+against 19.64 ly; it counts the reserve tank). It drains the weapons capacitor at the weapons' draw while firing
+(6 s), where this planner first used the draw over time with reloads (7 s): a capacitor empties before a clip does,
+so the planner now drains it at the draw while firing too. Its boost interval (6 s) is at four engine pips; the
+planner's is at the pips set (13.7 s at two).
 
 ## Formulas
 
@@ -152,3 +182,15 @@ ranges per grade, how each figure changes (multiplied, added or replaced), and e
   groups switch off first when the ship draws more than its power plant makes.
 * **Heat**: the power plant makes power drawn × its heat efficiency a second; weapons their heat a shot × shots a
   second.
+* **Against a target** (`combat::against`): on shields, each weapon's damage over time × Σ (its share of each type ×
+  (1 − the shields' resistance to it)) × (1 − the target's systems pips' share, a third at two pips); on the hull,
+  × its hardness share × Σ (share × (1 − the hull's resistance)). Absolute damage passes every resistance. The
+  damage adds up in stages, each weapon stopping when its clip and reserve are spent: the seconds to deal the
+  shields, then from there the armour; no regeneration, no shield cells.
+* **One jump boosted**: a neutron star's cone multiplies the drive's jump range by 4 (6 for the Caspian's FSD Mk II, as
+  `nexus_spansh::ship` has it; its white dwarf factor isn't known), a white dwarf's by 1.5; FSD injection
+  adds 25, 50 or 100 %. Each is shown for the range with what's carried, with a Guardian FSD booster's light years
+  added after the multiplier: whether the game multiplies them too couldn't be settled from a source, so the lower
+  reading is shown and the page says so.
+* **Prices**: a discount takes its share off the hull with its bulkheads and every module; the rebuy is 5 % of what
+  that comes to. Ammunition restock stays at list price.

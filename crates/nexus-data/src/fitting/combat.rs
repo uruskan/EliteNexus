@@ -57,7 +57,8 @@ impl Pips {
     }
 }
 
-/// What the commander sets while flying: pips, and what's in the hold and the tank.
+/// What the commander sets: pips and what's in the hold and the tank while flying, and what a station takes off its
+/// prices.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Setup {
     pub pips: Pips,
@@ -65,11 +66,14 @@ pub struct Setup {
     pub cargo: f64,
     /// Fuel carried, t; None: a full tank.
     pub fuel: Option<f64>,
+    /// A station's discount on its list prices, 0 to 1 (0.15: 15 % off): the hull's and modules' prices come down by
+    /// it, and with them the rebuy.
+    pub discount: f64,
 }
 
 impl Default for Setup {
     fn default() -> Self {
-        Setup { pips: Pips::default(), cargo: 0.0, fuel: None }
+        Setup { pips: Pips::default(), cargo: 0.0, fuel: None, discount: 0.0 }
     }
 }
 
@@ -217,6 +221,59 @@ pub struct PowerGroup {
     pub deployed: f64,
 }
 
+/// What a ship's weapons do to another ship: damage a second on its shields (through their resistances and its
+/// systems pips' share) and on its hull (through its hardness and resistances), and the seconds each takes. Every weapon
+/// firing and hitting at full damage, over time with reloads, until its ammunition runs out; the shields don't
+/// regenerate meanwhile.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Against {
+    /// With every weapon firing.
+    pub shield_dps: f64,
+    pub hull_dps: f64,
+    /// Seconds to break the shields (None: it has none, or the weapons run dry or get nothing through first), then
+    /// from there to destroy the hull.
+    pub shield_secs: Option<f64>,
+    pub hull_secs: Option<f64>,
+}
+
+/// Seconds from `start` for weapons doing `rates` a second, each until its ammunition runs out (`dry`, seconds from the
+/// first shot; None: never), to add up to `amount`. None: they run dry or do nothing first.
+fn time_to_deal(amount: f64, start: f64, rates: &[(f64, Option<f64>)]) -> Option<f64> {
+    if amount <= 0.0 {
+        return Some(0.0);
+    }
+    // The moments a weapon stops, after `start`, in order: between two of them the rate holds.
+    let mut stops: Vec<f64> = rates.iter().filter_map(|(_, dry)| *dry).filter(|t| *t > start).collect();
+    stops.sort_by(f64::total_cmp);
+    let (mut t, mut left) = (start, amount);
+    for end in stops.into_iter().map(Some).chain(std::iter::once(None)) {
+        let rate: f64 = rates.iter().filter(|(_, dry)| dry.is_none_or(|d| d > t)).map(|(r, _)| *r).sum();
+        match end {
+            Some(end) if rate * (end - t) < left => {
+                left -= rate * (end - t);
+                t = end;
+            }
+            _ if rate > 1e-9 => return Some(t + left / rate - start),
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// `weapons` against a ship of `shield` (None: no shields), `armour` hull points, `hull_res` and `hardness`.
+pub fn against(weapons: &[Weapon], shield: Option<&super::Shield>, armour: f64, hull_res: &super::Resistances, hardness: f64) -> Against {
+    let through = |d: &DamageDist, r: &super::Resistances, caustic: bool| d.kinetic * (1.0 - r.kinetic) + d.thermal * (1.0 - r.thermal) + d.explosive * (1.0 - r.explosive) + d.absolute + d.caustic * if caustic { 1.0 - r.caustic } else { 1.0 };
+    let on_shields: Vec<(f64, Option<f64>)> = shield.map_or_else(Vec::new, |s| weapons.iter().map(|w| (w.sustained_dps * through(&w.dist, &s.res, false) * (1.0 - s.sys_res), w.time_to_empty)).collect());
+    let on_hull: Vec<(f64, Option<f64>)> = weapons.iter().map(|w| (w.sustained_dps * w.against_hardness(hardness) * through(&w.dist, hull_res, true), w.time_to_empty)).collect();
+    let shield_secs = shield.and_then(|s| time_to_deal(s.strength, 0.0, &on_shields));
+    // The hull from when the shields fall (at once without them).
+    let hull_secs = match (shield, shield_secs) {
+        (Some(_), None) => None,
+        (_, start) => time_to_deal(armour, start.unwrap_or(0.0), &on_hull),
+    };
+    Against { shield_dps: on_shields.iter().map(|(r, _)| r).sum(), hull_dps: on_hull.iter().map(|(r, _)| r).sum(), shield_secs, hull_secs }
+}
+
 /// Seconds to put back `amount` MJ of shield at `rate` MJ/s while each MJ/s takes `draw` MW from a systems capacitor of
 /// `capacity` MJ refilling at `recharge`: from the capacitor while it lasts, then as fast as the pips refill it. None:
 /// never (no regeneration, or no pips to refill a drained capacitor).
@@ -292,5 +349,31 @@ mod tests {
         assert_eq!(w.at_distance(3500.0), 0.0);
         assert_eq!(w.against_hardness(40.0), 1.0);
         assert!((w.against_hardness(100.0) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn weapons_against_a_target() {
+        use super::super::{Resistances, Shield};
+        // 10 DPS, half thermal half kinetic, piercing 50, against 100 MJ of shields that stop 50 % of thermal and none
+        // of kinetic with a third more for two systems pips, and 200 hull points of hardness 100 that stop 20 % kinetic.
+        let w = Weapon { sustained_dps: 10.0, dist: DamageDist { kinetic: 0.5, thermal: 0.5, ..DamageDist::default() }, piercing: 50.0, ..Weapon::default() };
+        let shield = Shield { strength: 100.0, res: Resistances { thermal: 0.5, ..Resistances::default() }, sys_res: 1.0 / 3.0, ..Shield::default() };
+        let hull = Resistances { kinetic: 0.2, ..Resistances::default() };
+        let a = against(std::slice::from_ref(&w), Some(&shield), 200.0, &hull, 100.0);
+        // Shields: 10 × (0.5 + 0.25) × 2/3 = 5 a second, 20 s. Hull: 10 × 0.5 (hardness) × (0.4 + 0.5) = 4.5, 44.4 s.
+        assert!((a.shield_dps - 5.0).abs() < 1e-9 && (a.shield_secs.unwrap_or_default() - 20.0).abs() < 1e-9, "{a:?}");
+        assert!((a.hull_dps - 4.5).abs() < 1e-9 && (a.hull_secs.unwrap_or_default() - 200.0 / 4.5).abs() < 1e-9, "{a:?}");
+        // No shields: none to break. No weapons: never.
+        assert_eq!(against(std::slice::from_ref(&w), None, 200.0, &hull, 100.0).shield_secs, None);
+        assert_eq!(against(&[], Some(&shield), 200.0, &hull, 100.0).hull_secs, None);
+        // A weapon stops when its ammunition runs out: a second one doing 5 a second on the shields for 4 s leaves the
+        // first to do the rest. 5 + 5 for 4 s is 40, then 5 a second for the 60 left: 16 s in all.
+        let rack = Weapon { time_to_empty: Some(4.0), ..w.clone() };
+        let a = against(&[w.clone(), rack.clone()], Some(&shield), 200.0, &hull, 100.0);
+        assert!((a.shield_secs.unwrap_or_default() - 16.0).abs() < 1e-9, "{a:?}");
+        // The hull starts at 16 s, when the rack is dry: the first weapon alone, 4.5 a second.
+        assert!((a.hull_secs.unwrap_or_default() - 200.0 / 4.5).abs() < 1e-9, "{a:?}");
+        // Only weapons that run dry: never, past what their ammunition does.
+        assert_eq!(against(&[rack], Some(&shield), 200.0, &hull, 100.0).shield_secs, None);
     }
 }
