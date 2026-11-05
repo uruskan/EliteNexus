@@ -108,10 +108,13 @@ focus, so the game keeps your keyboard and joystick. Unlock it to drag it elsewh
 in the main window. **Where** puts it at the top left, centre or right of the game's screen; **Size** scales it
 (100 to 250 %), whatever size the main window uses.
 
-**See-through** draws just the island over the game, changing shape as it opens and closes. It applies after a
-restart. Off, the overlay is an opaque black panel the size of the open island, and its content crossfades instead;
-where the island would be an empty capsule, the panel hides. On Windows, see-through uses DirectX 12 through
-DirectComposition; a PC without DirectX 12 still starts, with an opaque panel.
+**See-through** draws just the island over the game, with a soft shadow, changing shape as it opens and closes. It
+applies after a restart. Off, the island is an opaque window of its own that fits what it shows: a small capsule for a
+word or two, larger only while it's open, in the same place as the see-through island. It switches size instead of
+changing shape, and its content crossfades. On Windows that window has the island's rounded shape; on Linux and
+macOS its corners are square. Changing size costs nothing you'd notice: the window is resized only when the island
+changes shape, and nothing is drawn while it's still. On Windows, see-through uses DirectX 12 through
+DirectComposition; on a PC without DirectX 12 the island stays its own opaque window, and Settings › Overlay says so.
 
 What each system can do:
 

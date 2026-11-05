@@ -199,6 +199,13 @@ release time that section becomes the new version and the release workflow publi
 - **Exploration** › Find valuable bodies shows its settings in a bar under the search, each once: Within, Stops, Jump
   range, Bodies worth at least, Furthest from the star, and Values (if you map them, or from the scan alone). Type a
   value or step it with − and +.
+- **Overlay with See-through off: the island fits what it shows.** It was a fixed black panel of 408 × 168 points
+  whatever it said, mostly empty for a word or two. It's now a window the island's own size: a small capsule for a
+  word or two, larger only while it's open, and it floats a little below the top of the screen as the see-through
+  island does. On Windows it has the island's rounded shape; elsewhere its corners are square. It switches size
+  only when the island changes shape and draws nothing while it's still, so it costs no more than before. A place
+  you dragged it to keeps the island where it was. On a PC without DirectX 12, where see-through can't work, the
+  island is now its own window too (it was a black rectangle), and Settings › Overlay says why.
 - **Inara**: Developer mode is gone from Accounts & sync (Inara options). Elite Nexus no longer marks what it sends
   as "in development", so Inara now takes the community goals you're part of, and your progress in them, as it does
   from any approved app. A settings file that still has the switch reads as before.
@@ -206,6 +213,9 @@ release time that section becomes the new version and the release workflow publi
 ### Fixed
 - **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at
   the window's edge, and the bodies table scrolled in a box of its own.
+- **Overlay: Keep it when idle works with See-through off.** It kept nothing there: with nothing to say, the opaque
+  panel hid anyway, and switching the setting on didn't bring it back. The small empty island now stays, as it does
+  see-through, and so does the small island while a cockpit panel is open.
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.

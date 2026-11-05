@@ -59,9 +59,11 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   colonisation depots (yours kept apart from ones you only docked at), BGS and Powerplay (tick hour remembered),
   bindings (read only: the app never changes them), logbook, statistics, galaxy map, voice alerts, the game's BMP
   screenshots saved again as PNG named after the system and body (opt-in, new screenshots only), an overlay (a
-  small black island at the top of the game's screen: the next jump, arrivals worth it, approach, sampling distance,
-  the nearest Rhino deposit, trade stops, what a station buys, carrier countdowns; click-through, shown only while the
-  game is in front, with a VR mode for mirroring tools), and an AI assistant (Google Gemini, Claude or a local model).
+  small black island at the top of the game's screen: the next jump and how far the route's end is, arrivals worth
+  it, approach, sampling distance, the nearest Rhino deposit, trade stops, the landing pad you were granted, what a
+  station buys, carrier countdowns; click-through, shown only while the game is in front, see-through or an opaque
+  window of the island's own size, with a VR mode for mirroring tools), and an AI assistant (Google Gemini, Claude
+  or a local model).
 - AI agents (opt-in, off by default): Claude Code, Claude Desktop and other MCP clients on the same PC can use the
   assistant's tools, read-only, through `EliteNexus --mcp`, which reaches the running app over a local pipe (no
   network port). Settings › AI agents has copy buttons for the setup.

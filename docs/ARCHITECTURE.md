@@ -90,7 +90,10 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   `widgets::island`) never lock the model and only repaint while it moves. `overlay/window.rs` creates the window
   hidden and inactive, shows it once it has painted, switches click-through on only after that, and hides it while the
   game isn't in front (`overlay/platform.rs`: the foreground window's class on Windows, `_NET_ACTIVE_WINDOW` on X11).
-  See-through needs the renderer set up for it at start (`main.rs`; DirectComposition on Windows).
+  See-through needs the renderer set up for it at start (`main.rs`; DirectComposition on Windows). With see-through
+  off the window is the island's own (`draw::cutout`): sized to what it shows, where the island would be in the
+  see-through canvas, resized from `logic` (which also runs while the main window is minimised or behind the game)
+  only when the island changes shape, and on Windows cut to its shape with a window region (`platform.rs`).
 * Follow my flight (`follow.rs`, Settings › Exploration): `Follower::step` reduces `nexus_model::context` to the
   page that fits (Navigation, Exploration, Exobiology) and names it when that changes, pure and tested; `App::logic`
   switches to it only while one of those pages is shown and the journal is followed live.
