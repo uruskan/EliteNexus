@@ -127,6 +127,9 @@ pub struct MarketPrefs {
     pub recent_markets: Vec<RecentMarket>,
     /// The market the game wrote last (its id and time): a market opened in the game opens here once.
     pub seen_docked: (u64, i64),
+    /// Services: fleet carriers and planetary ports among the stations listed.
+    pub services_carriers: bool,
+    pub services_planetary: bool,
 }
 
 impl Default for MarketPrefs {
@@ -169,6 +172,8 @@ impl Default for MarketPrefs {
             tiles_show: TileShow::All,
             recent_markets: Vec::new(),
             seen_docked: (0, 0),
+            services_carriers: false,
+            services_planetary: true,
         }
     }
 }
@@ -410,8 +415,11 @@ pub struct MarketUi {
     pub autorun: bool,
     service: usize,
     stations: Slot<Res<StationHit>>,
-    /// What the Services list was searched for: (service, system, pad). It searches again when that changes.
-    services_key: Option<(usize, u64, Option<char>)>,
+    /// What the Services list was searched for: (service, system, pad, carriers, planetary, how many). It searches again
+    /// when that changes.
+    services_key: Option<(usize, u64, Option<char>, bool, bool, usize)>,
+    /// How many of the nearest stations Services lists (Show more adds [`SERVICES_STEP`]).
+    services_limit: usize,
     hotspots: Slot<Res<HotspotHit>>,
     hotspot_prices: Slot<Res<CommodityHit>>,
     /// Path typed into "import a downloaded dump".
@@ -481,6 +489,7 @@ impl MarketUi {
             service: 0,
             stations: Slot::default(),
             services_key: None,
+            services_limit: SERVICES_STEP,
             hotspots: Slot::default(),
             hotspot_prices: Slot::default(),
             import_path: String::new(),
@@ -632,6 +641,7 @@ impl MarketUi {
                 };
                 self.service = SERVICES.iter().position(|(_, k)| *k == name).unwrap_or(0);
                 self.services_key = None;
+                self.services_limit = SERVICES_STEP;
                 self.set_tab(Tab::Services);
             }
             Goto::Commodity(name) => match db {
@@ -1088,6 +1098,8 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
     let origin = gs.location.star_pos;
     let ctx = ui.ctx().clone();
     let mut changed = false;
+    // How many stations the database knows, for what Services says about its reach.
+    let known_stations = svc.db_stats().map(|s| s.stations);
     refresh_pins(&ctx, gs, &db, st);
     let mut nav = None;
     if !st.prefs.pins.is_empty() && !matches!(st.tab, Tab::Database | Tab::Alerts) {
@@ -1162,36 +1174,62 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
                 for (i, (label, _)) in SERVICES.iter().enumerate() {
-                    if crate::widgets::pill(ui, st.service == i, label).clicked() {
+                    if crate::widgets::pill(ui, st.service == i, label).clicked() && st.service != i {
                         st.service = i;
+                        st.services_limit = SERVICES_STEP;
                     }
-                }
-                let pad = st.prefs.min_pad;
-                pad_combo(ui, "spad", &mut st.prefs.min_pad);
-                // A pad picked here stays: Find commodity no longer sets it from the ship.
-                if st.prefs.min_pad != pad {
-                    st.prefs.pad_auto = false;
                 }
             });
             ui.add_space(8.0);
-            // Searches by itself: when the tab opens, when a service or pad is picked, and after every jump.
+            let p = &mut st.prefs;
+            crate::widgets::filter_bar(ui, "services-filters", |bar| {
+                bar.field_tip("Landing pad", PAD_TIP, |ui| {
+                    // A pad picked here stays: Find commodity no longer sets it from the ship.
+                    if pad_picker(ui, &mut p.min_pad) {
+                        p.pad_auto = false;
+                    }
+                });
+                bar.field("Include", |ui| {
+                    crate::widgets::chip_toggle(ui, &mut p.services_carriers, "Fleet carriers")
+                        .on_hover_text("Fleet carriers move, and their owners switch services on and off, so they're left out unless you include them.");
+                    crate::widgets::chip_toggle(ui, &mut p.services_planetary, "Planetary").on_hover_text("Ports and settlements on planets' surfaces.");
+                });
+            });
+            ui.add_space(6.0);
+            // Searches by itself: when the tab opens, when a service or filter is picked, and after every jump.
             match origin {
                 None => empty(ui, icon::MAP_PIN, "Position unknown", "Jump or relog once so Elite Nexus knows where you are."),
                 Some(o) => {
-                    let key = (st.service, gs.location.system_address, st.prefs.min_pad);
+                    let p = &st.prefs;
+                    let key = (st.service, gs.location.system_address, p.min_pad, p.services_carriers, p.services_planetary, st.services_limit);
                     if st.services_key != Some(key) && !st.stations.busy() {
                         st.services_key = Some(key);
-                        let q = service_query(SERVICES[st.service].1, o, st.prefs.min_pad);
+                        let q = StationQuery { include_carriers: p.services_carriers, include_planetary: p.services_planetary, limit: st.services_limit, ..service_query(SERVICES[st.service].1, o, p.min_pad) };
                         let db = db.clone();
                         st.stations.run(&ctx, move || db.stations_near(&q).map_err(|e| e.to_string()));
                     }
+                    let name = SERVICES[st.service].0;
+                    services_reach(ui, name, known_stations, st.services_limit);
                     if !st.stations.busy() && matches!(&st.stations.last, Some(Ok(v)) if v.is_empty()) {
-                        let pad = st.prefs.min_pad.map(|p| format!(" with an {p} pad")).unwrap_or_default();
-                        let hint = format!("No station Elite Nexus knows has a {}{pad}. It learns stations from the live feed, your journal and the Spansh import (Database & feed).", SERVICES[st.service].0);
+                        let p = &st.prefs;
+                        let pad = p.min_pad.filter(|c| *c != 'S').map(|c| format!(" with an {c} pad")).unwrap_or_default();
+                        let mut out = Vec::new();
+                        if !p.services_carriers {
+                            out.push("fleet carriers");
+                        }
+                        if !p.services_planetary {
+                            out.push("planetary ports");
+                        }
+                        let left_out = if out.is_empty() { String::new() } else { format!(" ({} left out)", out.join(" and ")) };
+                        let hint = format!(
+                            "No station Elite Nexus knows has {}{pad}, at any distance{left_out}. It learns stations from the live feed, your journal and the Spansh import (Database & feed).",
+                            with_article(name)
+                        );
                         empty(ui, icon::MAGNIFYING_GLASS, "None found", &hint);
-                    } else {
-                        results_stations(ui, &st.stations);
+                    } else if services_summary(ui, &st.stations, st.services_limit) {
+                        st.services_limit += SERVICES_STEP;
                     }
+                    results_stations(ui, &st.stations);
                 }
             }
         }
@@ -2930,11 +2968,67 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>)
     nav
 }
 
+/// A service's name after "a" or "an": "an Interstellar Factors", "a Shipyard".
+fn with_article(name: &str) -> String {
+    let an = name.chars().next().is_some_and(|c| "AEIOUaeiou".contains(c));
+    format!("{} {name}", if an { "an" } else { "a" })
+}
+
+/// How many stations Services lists at first, and how many more each Show more adds.
+const SERVICES_STEP: usize = 25;
+
+/// What Services' search covers, said plainly: the nearest stations with the service among every station the database
+/// knows, with no distance limit (a station far away shows once the nearer ones are listed), and where the database's
+/// stations come from.
+fn services_reach(ui: &mut Ui, service: &str, known: Option<u64>, limit: usize) {
+    let count = known.map(|n| format!(" ({} now)", nexus_data::names::group_digits(n as i64))).unwrap_or_default();
+    let mut text = format!(
+        "The {limit} nearest stations with {}, out of every station Elite Nexus knows{count}: those commanders report over the live feed, the ones you visit, and the Spansh import if you ran it. There's no distance limit: one 3,000 ly away is listed once the nearer ones are, so press Show more to reach further.",
+        with_article(service)
+    );
+    // The galaxy has some 90,000 stations and carriers: far fewer means the import hasn't been run.
+    if known.is_none_or(|n| n < 30_000) {
+        text.push_str(" To search the whole galaxy, import every station from Spansh in Database & feed.");
+    }
+    crate::widgets::footnote(ui, &text);
+    ui.add_space(4.0);
+}
+
+/// The line over Services' list: how many, how far they reach, how long it took, and Show more when there may be more.
+/// Returns true when Show more is pressed.
+fn services_summary(ui: &mut Ui, slot: &Slot<Res<StationHit>>, limit: usize) -> bool {
+    let mut more = false;
+    ui.horizontal(|ui| {
+        match &slot.last {
+            Some(Ok(list)) if !list.is_empty() => {
+                let (near, far) = (list.first().map_or(0.0, |h| h.distance_ly), list.last().map_or(0.0, |h| h.distance_ly));
+                let what = if list.len() < limit { format!("All {} known", list.len()) } else { format!("The {} nearest", list.len()) };
+                ui.label(RichText::new(format!("{what} · {near:.1} to {far:.1} ly")).font(display(size::FOOTNOTE)).color(pal::TEXT));
+                if let Some(t) = slot.took {
+                    ui.label(RichText::new(format!("· {:.1} ms", t.as_secs_f64() * 1e3)).size(size::FOOTNOTE).color(pal::FAINT));
+                }
+                // A full page may have more behind it.
+                if list.len() >= limit {
+                    more = crate::widgets::button(ui, &format!("Show {SERVICES_STEP} more")).on_hover_text("The next nearest stations with this service, however far").clicked();
+                }
+            }
+            Some(Err(e)) => {
+                ui.label(RichText::new(e).color(pal::BAD));
+            }
+            _ => {}
+        }
+        if slot.busy() {
+            ui.spinner();
+        }
+    });
+    more
+}
+
 fn results_stations(ui: &mut Ui, slot: &Slot<Res<StationHit>>) {
-    if !status(ui, slot) {
+    let Some(Ok(list)) = &slot.last else { return };
+    if list.is_empty() {
         return;
     }
-    let Some(Ok(list)) = &slot.last else { return };
     const TABLE: &str = "services";
     let mut sort = TableSort::load(ui, TABLE);
     crate::widgets::table(ui, TABLE, |table| {

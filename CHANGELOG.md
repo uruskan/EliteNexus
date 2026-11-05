@@ -174,6 +174,11 @@ release time that section becomes the new version and the release workflow publi
   system's markets side by side. **Filter goods** narrows every market at once, **Buy here** and **Sell here** show one
   side, and where several open markets trade a good, the cheapest to buy and the best to sell stand out. A market you
   open in the game opens there by itself, and the open markets update as new reports arrive.
+- **Market › Services** says how far it reaches: the nearest stations with the service among every station Elite
+  Nexus knows, with no distance limit, so one 3,000 ly away is listed once the nearer ones are, and **Show 25 more**
+  goes further (it used to stop at 25). It says how many stations the database knows and, while that's few, that the
+  Spansh import searches the whole galaxy. Its settings sit in a bar: the landing pad, and whether fleet carriers (left
+  out by default: they move) and planetary ports count.
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
