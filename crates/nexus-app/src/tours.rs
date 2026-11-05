@@ -25,6 +25,16 @@ pub fn jump_range(gs: &GameState) -> f64 {
     r.clamp(*limits::RANGE_LY.start(), *limits::RANGE_LY.end())
 }
 
+/// Keeps a planner's jump range on the ship you fly: while `range` holds the ship's range it was last given (`auto`),
+/// it follows the ship; once changed by hand, it stays.
+pub fn follow_range(range: &mut f64, auto: &mut f64, gs: &GameState) {
+    let ship = jump_range(gs);
+    if *range <= 0.0 || (*range - *auto).abs() < 1e-9 {
+        *range = ship;
+    }
+    *auto = ship;
+}
+
 /// A scan route from Spansh and how it was found.
 #[derive(Debug, Clone)]
 pub struct Tour {

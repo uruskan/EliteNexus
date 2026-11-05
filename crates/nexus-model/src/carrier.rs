@@ -145,6 +145,9 @@ pub struct Carrier {
     pub system: Option<String>,
     pub system_address: Option<u64>,
     pub body_id: Option<u32>,
+    /// When the journal last placed the carrier in `system` (zero when it never has); after a jump nobody saw
+    /// arrive, the departure time.
+    pub located: Timestamp,
     pub pending_jump: Option<PendingJump>,
     pub last_jump: Option<LastJump>,
     pub jumps: Vec<CarrierJumpRecord>,
@@ -204,6 +207,7 @@ impl Carrier {
             callsign: b.callsign.clone(),
             system: Some(b.location.clone()),
             system_address: Some(b.system_address),
+            located: ts,
             stats_updated: ts,
             ..Carrier::default()
         };
@@ -257,6 +261,7 @@ impl Carrier {
             }
         if l.star_system.is_some() {
             self.system = l.star_system.clone();
+            self.located = ts;
         }
         self.system_address = l.system_address.or(self.system_address);
         self.body_id = l.body_id;
@@ -273,6 +278,7 @@ impl Carrier {
             self.system = Some(a.star_system.clone());
             self.system_address = Some(a.system_address);
             self.body_id = a.body_id;
+            self.located = ts;
             self.jumps.push(CarrierJumpRecord { ts, system: a.star_system.clone(), body: a.body.clone() });
             let departed = self.pending_jump.take().and_then(|p| p.departure);
             self.last_jump = Some(LastJump { system: a.star_system.clone(), body: a.body.clone(), arrived: Some(ts), departed });
@@ -286,6 +292,7 @@ impl Carrier {
             && let Some(p) = self.pending_jump.take() {
                 self.system = Some(p.system.clone());
                 self.system_address = Some(p.system_address);
+                self.located = p.departure.unwrap_or(now);
                 self.jumps.push(CarrierJumpRecord { ts: p.departure.unwrap_or(now), system: p.system.clone(), body: p.body.clone() });
                 self.last_jump = Some(LastJump { system: p.system, body: p.body, arrived: None, departed: p.departure });
             }
@@ -499,6 +506,15 @@ mod tests {
         c.on_location(&ev::CarrierLocation { carrier_type: Some("FleetCarrier".into()), carrier_id: ID, star_system: Some("Beta".into()), system_address: Some(200), body_id: Some(3) }, at(arrival));
         let t = c.jump_timer(at(arrival)).expect("cooldown");
         assert!(matches!(t, JumpTimer::Cooldown { ready, estimated: false, .. } if ready == at(arrival + COOLDOWN_SECS)));
+        assert_eq!((c.system.as_deref(), c.located), (Some("Beta"), at(arrival)), "placed, and when");
+    }
+
+    #[test]
+    fn a_jump_nobody_saw_arrive_is_placed_at_its_departure() {
+        let mut c = own();
+        request(&mut c, 0);
+        c.settle_pending(at(PREPARE_SECS + COOLDOWN_SECS + 60));
+        assert_eq!((c.system.as_deref(), c.located), (Some("Beta"), at(PREPARE_SECS)));
     }
 
     #[test]

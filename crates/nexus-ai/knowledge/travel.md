@@ -2,7 +2,7 @@
 
 ## Route planning: Spansh exact plotter vs in-game plotter
 The in-game galaxy map plots routes with simple rules. Spansh's exact plotter (in Elite Nexus: Navigation > Exact plotter) plans every jump for the commander's real ship: actual frame shift drive, engineering, mass, fuel tank and cargo, refuelling stops at scoopable stars, and neutron or white-dwarf boosts. For long trips it is usually much faster and safer. Elite Nexus copies the next system of the planned route to the clipboard after every jump: open the galaxy map and paste it.
-The neutron plotter (Navigation > Neutron plotter) is quicker to compute and only needs the jump range; it follows neutron stars between two systems.
+The neutron plotter (Navigation > Neutron) is quicker to compute and only needs the jump range; it follows neutron stars between two systems. It doesn't plan fuel, and its waypoints are a few jumps apart (the galaxy map plots the jumps between them), so for most trips the exact plotter is the better choice.
 
 ## Jump range
 Jump range depends on the frame shift drive (class, rating, engineering), total mass (hull, modules, fuel, cargo) and the Guardian FSD Booster. To increase it: engineer the FSD with Increased FSD Range (grade 5) and the Mass Manager experimental, fit a Guardian FSD Booster, reduce mass (lightweight armour, smaller or D-rated modules, less fuel and cargo). The game reports the current maximum in the ship's Loadout; the app shows it in Fleet.

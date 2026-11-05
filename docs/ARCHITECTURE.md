@@ -21,7 +21,9 @@ the window is placed off-screen and never takes focus). `--size 1000x700` tests 
 a Market section (`abnormal`, `database`, …; `routes` finds trade routes on the first frame), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
 screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build, every row ticked as for a second
-ship like it, and searches on the first frame; `buy-one`: it searches for one module, a 6A frame shift drive), a Statistics tab (`career`, `activity`, `all`), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
+ship like it, and searches on the first frame; `buy-one`: it searches for one module, a 6A frame shift drive), a Statistics tab (`career`, `activity`, `all`), Navigation's
+planners (`carrier`, `exact`, `neutron`; `route-carrier` plots a route for the ship to the carrier on the first frame),
+HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
 `royalpurple`, …), `--demo` adds a sample Ask conversation and an alert banner, `--overlay <moment>` shows an overlay
 moment compact and expanded with sample content (`overlay::DEMOS`), `--shot-delay 8` waits longer (the
 galaxy image paints in the background, Spansh searches take 5–20 s). `ELITE_NEXUS_GAME_DIR` points HUD & cockpit at
@@ -101,13 +103,16 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   (`tours::limits`). `untouched.rs` is the bonus hunt: a Spansh body search classified by the evidence of someone
   having been there (genera = mapped, biology landmarks = sampled, footfall), with every exclusion counted in `Stats`
   so the page can say why planets were left out.
-* UI rule: simple surface, hidden depth. Defaults come from the commander's state; advanced options sit behind a
-  collapsed "› Options" disclosure, never removed. Say where data comes from and what it can't show.
+* UI rule: simple surface, depth in view. Defaults come from the commander's state. A search shows every setting in a
+  `settings_bar` under it (a caption over each control, the limits in its tooltip), once, instead of behind a
+  "› Options" click; older pages still use the `disclosure`. Say where data comes from and what it can't show.
 * Design system (macOS 26 dark, Liquid-Glass sidebar and toolbar): `theme.rs` holds the palette (`pal`), the type scale
   (`size`, nothing below 12 pt) and the egui style; `widgets.rs` the components: `card`/`card_tinted` (Health-style
   headers), `cards` (responsive grid with equal-height rows), `split`, `group` rows with switches (System Settings
-  style), `tabs`/`segmented` (falls back to pills when too narrow), `switch`/`toggle`, `stepper` (a − n + glass
-  capsule), `pill`, capsule `button`s, `search_field`, `badge`, `th` table headings. Pages use these instead of raw egui widgets so the look stays uniform
+  style), `tabs`/`segmented` (falls back to pills when too narrow), `choices` (option cards that say what each is
+  for), `switch`/`toggle`, `stepper` (a − n + glass capsule), `number`/`whole` (a value to type or step through
+  round values), `settings_bar` (a search's settings in view), `pill`, capsule `button`s, `search_field`, `badge`,
+  `th` table headings. Pages use these instead of raw egui widgets so the look stays uniform
   and every layout adapts to the window width (the sidebar becomes an icon rail below 1180 px).
 * History is folded with alerts **disabled**; only live events raise alerts or get uploaded. Never upload history.
   Test runs (`--journal-dir`, `--screenshot`) never upload at all.
