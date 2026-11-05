@@ -414,15 +414,24 @@ const OTHER_SLOTS: &[(&str, &str, SlotKind)] = &[
     ("shipkitbumper", "Ship Kit (Bumper)", SlotKind::Cosmetic),
 ];
 
-/// Numbered slot families: (lower-case prefix, label, kind, zero-based?).
+/// Numbered slot families: (lower-case prefix, label, kind, zero-based?). Newer hulls have slots
+/// that take only one kind of module (the Type-11 Prospector's mining hardpoints, limpet and hangar
+/// slots), named for it as EDSY and Coriolis name them.
 const NUMBERED_SLOTS: &[(&str, &str, SlotKind, bool)] = &[
     ("tinyhardpoint", "Utility", SlotKind::Utility, false),
     ("smallhardpoint", "Small hardpoint", SlotKind::Hardpoint, false),
     ("mediumhardpoint", "Medium hardpoint", SlotKind::Hardpoint, false),
     ("largehardpoint", "Large hardpoint", SlotKind::Hardpoint, false),
     ("hugehardpoint", "Huge hardpoint", SlotKind::Hardpoint, false),
+    ("smallmininghardpoint", "Small mining hardpoint", SlotKind::Hardpoint, false),
+    ("mediummininghardpoint", "Medium mining hardpoint", SlotKind::Hardpoint, false),
+    ("largemininghardpoint", "Large mining hardpoint", SlotKind::Hardpoint, false),
+    ("hugemininghardpoint", "Huge mining hardpoint", SlotKind::Hardpoint, false),
     ("military", "Military", SlotKind::Military, false),
     ("passenger", "Passenger", SlotKind::Optional, false),
+    ("cargo", "Cargo slot", SlotKind::Optional, false),
+    ("limpetcontroller", "Limpet slot", SlotKind::Optional, false),
+    ("fighterbay", "Hangar slot", SlotKind::Optional, false),
     ("decal", "Decal", SlotKind::Cosmetic, false),
     ("bobble", "Bobblehead", SlotKind::Cosmetic, false),
     ("shipname", "Nameplate", SlotKind::Cosmetic, true),
@@ -594,5 +603,12 @@ mod tests {
         assert_eq!(slot_kind("LargeHardpoint3"), SlotKind::Hardpoint);
         assert_eq!(slot_kind("PaintJob"), SlotKind::Cosmetic);
         assert_eq!(slot_kind("Bobble07"), SlotKind::Cosmetic);
+        // Slots for one kind of module (Type-11 Prospector), not cosmetics or built-ins to skip.
+        assert_eq!(slot_kind("LargeMiningHardpoint1"), SlotKind::Hardpoint);
+        assert_eq!(slot_display("MediumMiningHardpoint2"), "Medium mining hardpoint 2");
+        assert_eq!((slot_kind("LimpetController01"), slot_display("LimpetController01").as_str()), (SlotKind::Optional, "Limpet slot 1"));
+        assert_eq!((slot_kind("FighterBay01"), slot_display("FighterBay01").as_str()), (SlotKind::Optional, "Hangar slot 1"));
+        assert_eq!((slot_kind("Cargo02"), slot_display("Cargo02").as_str()), (SlotKind::Optional, "Cargo slot 2"));
+        assert_eq!(slot_kind("CargoHatch"), SlotKind::Other);
     }
 }

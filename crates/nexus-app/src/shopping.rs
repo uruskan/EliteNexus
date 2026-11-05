@@ -589,7 +589,8 @@ mod tests {
         let mc = b.modules.iter().find(|m| m.slot == "HugeHardpoint1").expect("multi-cannon");
         // Blueprint names as the Engineering page has them.
         assert_eq!(mc.engineering.as_deref(), Some("G5 Overcharged Weapon, Auto Loader"));
-        assert!(crate::export::edsy_url(&b.loadout).is_some(), "the loadout opens in EDSY again");
+        // The EDSY and Coriolis buttons open it again.
+        crate::export::tests::both_sites_import(&b.loadout);
     }
 
     #[test]
@@ -598,10 +599,42 @@ mod tests {
         let coriolis = r#"[{"header":{"appName":"Coriolis"},"data":{"Ship":"Krait_MkII","Modules":[{"Slot":"FrameShiftDrive","Item":"Int_Hyperdrive_Size5_Class5"}]}}]"#;
         let b = parse_build(coriolis).expect("coriolis");
         assert_eq!((b.ship.as_str(), b.modules[0].item.as_str()), ("krait_mkii", "int_hyperdrive_size5_class5"));
+        // Without an event, EDSY couldn't import it from the build's EDSY button (finding 15, 2026-11-04).
+        assert_eq!(crate::export::tests::both_sites_import(&b.loadout)["Ship"], "Krait_MkII");
         let journal = r#"{ "timestamp":"2026-10-01T12:00:00Z", "event":"Loadout", "Ship":"python", "ShipID":3, "Modules":[ { "Slot":"MainEngines", "Item":"int_engine_size6_class5", "On":true, "Priority":0 } ] }"#;
         assert_eq!(parse_build(journal).expect("journal").modules[0].item, "int_engine_size6_class5");
         let link = crate::export::coriolis_url(journal).expect("link");
-        assert_eq!(parse_build(&link).expect("link").ship, "python");
+        let from_link = parse_build(&link).expect("link");
+        assert_eq!(from_link.ship, "python");
+        crate::export::tests::both_sites_import(&from_link.loadout);
+    }
+
+    /// Coriolis's SLEF export as its `Serializer` writes it: the game's slot names, the cargo hatch,
+    /// and the slots a Type-11 Prospector keeps for mining tools, limpet controllers and hangars.
+    #[test]
+    fn named_slots_are_bought_too() {
+        let t11 = r#"[{"header":{"appName":"Coriolis","appVersion":"4.0","appURL":"https://coriolis.io/outfit/type_11_prospector"},"data":{"Ship":"LakonMiner","Modules":[
+            {"Slot":"Armour","Item":"lakonminer_armour_grade1","On":true,"Priority":1},
+            {"Slot":"CargoHatch","Item":"modularcargobaydoor","On":true,"Priority":2},
+            {"Slot":"PowerPlant","Item":"int_powerplant_size6_class5","On":true,"Priority":1},
+            {"Slot":"LargeMiningHardpoint1","Item":"hpt_miningtoolv2_fixed_large","On":true,"Priority":1},
+            {"Slot":"MediumMiningHardpoint1","Item":"hpt_mininglaser_turret_medium","On":true,"Priority":1},
+            {"Slot":"MediumHardpoint1","Item":"hpt_pulselaser_gimbal_medium","On":true,"Priority":1},
+            {"Slot":"TinyHardpoint1","Item":"hpt_shieldbooster_size0_class5","On":true,"Priority":1},
+            {"Slot":"Slot01_Size6","Item":"int_shieldgenerator_size6_class5","On":true,"Priority":1},
+            {"Slot":"LimpetController01","Item":"int_dronecontrol_prospector_size5_class5","On":true,"Priority":1},
+            {"Slot":"FighterBay01","Item":"int_buggybay_size4_class2","On":true,"Priority":1}]}}]"#;
+        let b = parse_build(t11).expect("build");
+        let slots: Vec<&str> = b.modules.iter().map(|m| m.slot.as_str()).collect();
+        // The bulkheads every hull comes with stay on the list (unticked later); only the hatch is left out.
+        assert_eq!(slots, ["Armour", "PowerPlant", "LargeMiningHardpoint1", "MediumMiningHardpoint1", "MediumHardpoint1", "TinyHardpoint1", "Slot01_Size6", "LimpetController01", "FighterBay01"]);
+        let list = needs(&b, &Fleet::default());
+        let group = |sym: &str| list.iter().find(|n| n.symbol == sym).map(|n| n.group);
+        assert_eq!(group("hpt_miningtoolv2_fixed_large"), Some(Group::Hardpoints));
+        assert_eq!(group("hpt_mininglaser_turret_medium"), Some(Group::Hardpoints));
+        assert_eq!(group("int_dronecontrol_prospector_size5_class5"), Some(Group::Optional));
+        assert_eq!(group("int_buggybay_size4_class2"), Some(Group::Optional));
+        crate::export::tests::both_sites_import(&b.loadout);
     }
 
     #[test]
