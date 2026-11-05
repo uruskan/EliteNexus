@@ -273,7 +273,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut FleetUi, spansh: &Spansh, rt: 
 /// The ships and the selected one's loadout. Returns a ship whose "Plan changes" was clicked.
 fn ships_tab(ui: &mut Ui, gs: &GameState, st: &mut FleetUi) -> Option<u64> {
     if gs.fleet.ships.is_empty() {
-        empty(ui, icon::ROCKET, "No ships yet", "Ships appear after the game writes a Loadout or StoredShips event.");
+        empty(ui, icon::ROCKET, "No ships yet", "Your ships appear once the game records them: the one you fly when you start the game, the others when you open a shipyard.");
         return None;
     }
     let selected = st.selected.or(gs.fleet.current_ship_id);
