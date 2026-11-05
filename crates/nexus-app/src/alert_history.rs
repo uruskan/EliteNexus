@@ -3,7 +3,7 @@
 
 use crate::theme::{display, pal, size};
 use crate::widgets;
-use egui::{Align, Color32, CornerRadius, Layout, Margin, RichText, Stroke, Ui};
+use egui::{Align, Color32, Layout, RichText, Stroke, Ui};
 use nexus_journal::Timestamp;
 use nexus_model::{Alert, Priority};
 use std::collections::VecDeque;
@@ -85,12 +85,7 @@ impl AlertHistory {
     pub fn show(&mut self, bell: &egui::Response) {
         let ctx = bell.ctx.clone();
         let max_h = (ctx.content_rect().height() * 0.62).clamp(160.0, 620.0);
-        let frame = egui::Frame::new()
-            .fill(pal::CARD)
-            .corner_radius(CornerRadius::same(14))
-            .stroke(Stroke::new(1.0, Color32::from_white_alpha(18)))
-            .shadow(ctx.style_of(egui::Theme::Dark).visuals.popup_shadow)
-            .inner_margin(Margin::same(16));
+        let frame = widgets::popover_frame(&ctx.style_of(egui::Theme::Dark));
         let (items, since) = (&self.items, self.since);
         let mut clear = false;
         egui::Popup::from_response(bell)

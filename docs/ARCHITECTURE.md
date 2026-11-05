@@ -22,7 +22,8 @@ a Market section (`abnormal`, `database`, …; `routes` finds trade routes on th
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
 screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build and searches on the
 first frame), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
-`royalpurple`, …), `--demo` adds a sample Ask conversation and an alert banner, `--overlay <moment>` shows an overlay
+`royalpurple`, …), `--demo` adds a sample Ask conversation, an alert banner and sample alerts in the alert history
+(`--tab bell` opens it), `--overlay <moment>` shows an overlay
 moment compact and expanded with sample content (`overlay::DEMOS`), `--shot-delay 8` waits longer (the
 galaxy image paints in the background, Spansh searches take 5–20 s). `ELITE_NEXUS_GAME_DIR` points HUD & cockpit at
 another game folder (one holding `EliteDangerous64.exe`): test the Cockpit lights installer against a copy, never

@@ -189,7 +189,8 @@ impl NexusApp {
         let mut mcp = crate::mcp::McpService::default();
         // Screenshot runs never answer agents.
         mcp.apply(settings.ai.agents && shot.is_none(), || agent_tools(&core, market.db.clone(), rt.handle(), &agents_spansh), rt.handle());
-        // `--demo` screenshots fill the alert history, and `--tab alerts` opens it, so its design can be checked.
+        // `--demo` screenshots fill the alert history, and `--tab bell` opens it, so its design can be checked (not
+        // "alerts": Market has a tab of that name).
         let demo = ov.demo && shot.is_some();
         let mut alert_history = crate::alert_history::AlertHistory::default();
         if demo {
@@ -198,7 +199,7 @@ impl NexusApp {
             for a in demo_alerts() {
                 alert_history.push(&a);
             }
-            if ov.tab.as_deref() == Some("alerts") {
+            if ov.tab.as_deref() == Some("bell") {
                 alert_history.toggle();
             }
         }
