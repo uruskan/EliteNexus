@@ -85,15 +85,19 @@ approved them, and it is untested under Proton and on macOS so far.
 
 ## Screenshots
 
+![The overlay's next jump, compact and open over the game, as its own window and in VR mode: the next star is scoopable, a neutron star is three jumps ahead, the tank is 78 % full and Colonia, where the route ends, is 1,284 ly away](docs/screenshots/overlay.png)
+**Overlay** — one small island at the top of the game's screen, here for the next jump: see-through, as its own window and in VR
+
 | | |
 |---|---|
-| ![Exobiology: live sampling radar with two samples, colony-range circles and "OK to sample"](docs/screenshots/exobiology.png) **Exobiology** — live sampling radar, colony range, species value | ![Exploration: every body in the system with value, mapped value and highlights](docs/screenshots/exploration.png) **Exploration** — every body, value now vs. mapped, highlights |
-| ![Ask: the AI co-pilot answering an exobiology question](docs/screenshots/ask.png) **Ask** — the AI co-pilot | ![Market: stations paying far above the galactic average](docs/screenshots/market.png) **Market** — abnormal prices across the galaxy |
-| ![Navigation: the plotted route with star classes, scoopable stars and jump distances](docs/screenshots/navigation.png) **Navigation** — route, fuel stars, next system to the clipboard | ![Engineering: blueprint wishlist and the materials shopping list](docs/screenshots/engineering.png) **Engineering** — wishlist and shopping list |
-| ![Fleet: every ship with its full engineered loadout](docs/screenshots/fleet.png) **Fleet** — loadouts, engineering, one-click EDSY/Coriolis | ![Fleet carrier: tritium, finances, capacity and crew](docs/screenshots/carrier.png) **Fleet carrier** — tritium, finances, crew |
-| ![Galaxy map: everywhere you've been, with your ship and carrier](docs/screenshots/galaxy-map.png) **Galaxy map** — your travels, ship and carrier | ![Statistics: credits over time, income by category, jumps per day](docs/screenshots/statistics.png) **Statistics** — credits, income, jumps |
-| ![Logbook: every journal event, searchable](docs/screenshots/logbook.png) **Logbook** — every journal event, searchable | ![Bindings: active presets, conflicts and every bound action](docs/screenshots/bindings.png) **Bindings** — presets, conflicts, reference card |
-| ![Accounts & sync: EDDN, EDSM, Inara and EDAstro, all opt-in](docs/screenshots/accounts.png) **Accounts & sync** — EDDN, EDSM, Inara, EDAstro | |
+| ![Market › Station: four markets side by side, with the cheapest place to buy and the best place to sell a good standing out](docs/screenshots/market.png) **Market** — up to eight markets side by side | ![Market › Shopping trip: four goods bought in three stops, with each stop's price and stock](docs/screenshots/shopping-trip.png) **Shopping trip** — several goods on the shortest trip it finds |
+| ![Combat: the nearest wars and civil wars, with the two factions, the days each has won, what each stands to lose and a route there](docs/screenshots/combat.png) **Combat** — the nearest wars, and how to fight legally | ![Mining › Where to mine: landable bodies with planetary mining locations near you and their odds of Monazite](docs/screenshots/mining.png) **Mining** — where to mine with the Rhino, and the odds |
+| ![Fleet › Plan a loadout: G5 Increased FSD Range planned on a Kestrel Mk II, its jump range up 11.73 ly](docs/screenshots/fleet.png) **Fleet** — plan a loadout and its engineering | ![Engineering: a wishlist of four blueprints and the shopping list of the materials still short](docs/screenshots/engineering.png) **Engineering** — wishlist, shopping list, where to get it |
+| ![Exobiology › Find planets: a bonus hunt for Stratum Tectonicas and the planets nobody has a record of sampling](docs/screenshots/exobiology.png) **Exobiology** — a bonus hunt for planets nobody has sampled | ![Exploration › Find valuable bodies: a Road to Riches tour of terraformable water worlds, widened out of the bubble](docs/screenshots/exploration.png) **Exploration** — tours of the worlds worth scanning |
+| ![Navigation › Fleet carrier: where the carrier is, its tritium and the nearest Fleet Carrier Administration](docs/screenshots/navigation.png) **Navigation** — planners, and the way back to your carrier | ![Fleet carrier: tritium, finances, capacity, crew and services](docs/screenshots/carrier.png) **Fleet carrier** — tritium, finances, crew |
+| ![Statistics › Career: time in the game, wealth, distance jumped, and where your credits came from and went](docs/screenshots/statistics.png) **Statistics** — your career in plain words | ![Galaxy map: the whole Milky Way with its landmarks, your ship and your carrier](docs/screenshots/galaxy-map.png) **Galaxy map** — landmarks, your ship and carrier |
+| ![Ask: the AI co-pilot answering an exobiology question](docs/screenshots/ask.png) **Ask** — the AI co-pilot | ![Logbook: recent activity from the journal, with dockings, jumps and logins](docs/screenshots/logbook.png) **Logbook** — every journal event, searchable |
+| ![Bindings: active presets, conflicts and every bound action](docs/screenshots/bindings.png) **Bindings** — presets, conflicts, reference card | ![Accounts & sync: EDDN, EDSM, Inara and EDAstro, all opt-in](docs/screenshots/accounts.png) **Accounts & sync** — EDDN, EDSM, Inara, EDAstro |
 
 ## Thanks
 

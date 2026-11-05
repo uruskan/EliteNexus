@@ -6,8 +6,8 @@
   "heading": "Make every tonne count.",
   "lead": "Find a buyer for the hold you already have. Plan the next profitable run. Catch unusual prices as commanders report them. Your cargo, your ship and the community’s market data in one place.",
   "hero_image": "market.png",
-  "hero_alt": "Elite Nexus Market page showing abnormal commodity prices, galactic-average comparisons, station distances and update ages.",
-  "hero_caption": "Abnormal prices puts the offer, the galactic average, the distance and the age of the report in one view.",
+  "hero_alt": "Elite Nexus Market Station tab with four markets side by side, their prices against the galactic average and the best prices standing out.",
+  "hero_caption": "The Station tab puts up to eight markets side by side, and the cheapest place to buy a good and the best to sell it stand out.",
   "toc": [
     {
       "id": "sell-cargo",

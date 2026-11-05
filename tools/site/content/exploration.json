@@ -6,8 +6,8 @@
   "heading": "Know what’s worth the detour.",
   "lead": "See the value in the system around you, choose the next worlds to scan and follow the journey without losing track of your discoveries. Exploration, travel planning and your galaxy map work together.",
   "hero_image": "exploration.png",
-  "hero_alt": "Elite Nexus Exploration page listing a system’s scanned bodies, current values, mapped values and notable discoveries.",
-  "hero_caption": "Current system keeps your scanned worlds, mapping opportunities and discoveries in one view.",
+  "hero_alt": "Elite Nexus Find valuable bodies with a Road to Riches tour of terraformable water worlds and each body’s value if mapped.",
+  "hero_caption": "Find valuable bodies plans a tour of the worlds worth scanning, and widens the search when Spansh skips the populated systems nearby.",
   "toc": [
     {
       "id": "scan-values",
