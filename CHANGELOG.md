@@ -15,6 +15,14 @@ release time that section becomes the new version and the release workflow publi
   through EDDN and your journal, so it fills while Elite Nexus runs, and the page says how many systems it has fresh
   reports for. **How to fight legally** explains where killing isn't a crime and how to pick a side, what makes you
   wanted, and when you end up in the detention centre. Ask can answer "where's the nearest war?" from the same list.
+- **Alert history** (GitHub issue #4): the bell at the far right of the toolbar lists every alert since Elite Nexus
+  started, newest first, with its time and what it said, so one you missed while its banner was up can still be
+  read. A number on the bell counts the alerts that came in since you last looked. It holds the last 200, while
+  Elite Nexus runs.
+- **Pause EDSM, Inara and EDAstro**, as you could pause EDDN: Accounts & sync has a pause switch for each service you
+  share with, and the toolbar's button (now **Pause uploads**, or **Pause EDDN** and so on when you share with only
+  one) pauses or resumes them all. As with EDDN, what happens while a service is paused is dropped, not sent later,
+  and the page says so; when Inara resumes, your profile is brought up to date as it is then.
 - **AI agents** (Settings › AI agents, off by default): Claude Code, Claude Desktop and other AI programs that speak
   MCP can use the tools Ask uses, to read only: your commander, fleet, materials, ranks and engineers, journal, the
   market database, engineering, where to mine or buy, and Spansh. Copy buttons set them up. The program the agent
@@ -125,9 +133,11 @@ release time that section becomes the new version and the release workflow publi
   the game's Status.json and switches when that changes. Flying a system opens Exploration; getting below
   **Planet view below** (150 km by default) over a
   planet, landing, or stepping outside on foot opens Exobiology when the planet has biological signals you haven't
-  finished analysing (Exploration otherwise); climbing back above it returns to Exploration; the galaxy map, a
-  charging hyperspace jump or a finished system (every body found, every planet worth the high-value threshold
-  mapped, every genus analysed) opens Navigation. Exploration opens on the current system and Exobiology on This
+  finished analysing (Exploration otherwise); climbing back to a tenth above it returns to Exploration, so hovering
+  around that height doesn't switch back and forth; the galaxy map, a charging hyperspace jump or a finished system
+  (every body found, every planet worth the high-value threshold mapped, a species analysed in every genus the
+  biological signals stand for) opens Navigation, and so does arriving in a system you finished before or leaving a
+  planet in one. Exploration opens on the current system and Exobiology on This
   system, whichever tab you left open there. It only ever moves between those three pages: on any other page it
   leaves you alone; docked, in an SRV or on foot inside, only opening the galaxy map changes the page, and it reacts
   only to what happens while the game runs: never to the journals read at start, nor to loading another commander.
@@ -172,6 +182,9 @@ release time that section becomes the new version and the release workflow publi
   such as a construction's, at cost), a chart by day of jumps, light years, credits or time, a card for each thing you
   did, and arrows against the period before. An empty period says why. **All statistics** replaces the old list of the game's raw names, mostly zeros:
   every figure in plain words, grouped, searchable, with the zeros put away.
+- **Inara**: developer mode is off. Elite Nexus told Inara its uploads came from an app still being built, so Inara
+  ignored what they share with everyone, such as community goals; now that Inara has approved the app, it doesn't.
+  It's switched off once for everyone; Accounts & sync › Inara options still has the switch, for testing.
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
@@ -212,6 +225,23 @@ release time that section becomes the new version and the release workflow publi
 ### Fixed
 - **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at
   the window's edge, and the bodies table scrolled in a box of its own.
+- **Inara**: switching sync on, or starting Elite Nexus during a game session, no longer sends missions you handed
+  in, failed or abandoned, or ship transfers you made, earlier in that session. The profile sent then is your state
+  as it is (credits, ranks, reputation, ship, cargo, materials, location), and it brought those along with it.
+- **After the game crashes, Elite Nexus no longer says it's running.** A crash leaves no Shutdown in the journal, so
+  the toolbar kept saying Live, the overlay and Follow my flight went on as if you were in the game, HUD & cockpit
+  said the game was running and Ask told you it was, even when you started Elite Nexus the next day. Elite Nexus now
+  looks for the game's program on this computer (Windows and Linux): once it has seen the game running and it's gone,
+  the game has stopped, and on Windows, with the journal folder Elite Nexus finds by itself, a game that isn't running
+  when you start Elite Nexus has stopped too. Otherwise a game that has written nothing since Elite Nexus started
+  counts as stopped once its journal and Status.json have been quiet for 15 minutes.
+- **Copy the next system** no longer copies one by itself when you pick another journal folder or log in with
+  another commander: when the journals read then held more jumps than a moment before, that counted as a jump just
+  made, and the next system went on your clipboard.
+- **Voice (SAPI)**: a voice installed while Elite Nexus runs shows up in Settings › Voice when you open Settings or
+  the list; it used to appear only after switching the speech engine. A new voice, speed or volume no longer waits
+  until the line being spoken, and every alert queued before it, has been said: a new speed or volume applies at
+  once, even to the line being spoken, and a new voice from the next line.
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
@@ -232,6 +262,13 @@ release time that section becomes the new version and the release workflow publi
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.
+- **Journals from older versions of the game are read in full.** They name a system's or a station's faction on its
+  own, where newer journals give it with its state, and Elite Nexus couldn't read such lines at all: the jumps,
+  arrivals and dockings in them were missing from Statistics, the Logbook and the galaxy map.
+- **BGS & Powerplay counts every sale of cartographic data.** A sale in the older form those journals hold
+  (`SellExplorationData`) reached Statistics but not the page's Exploration data column, nor the activity feed; it
+  now counts for the faction of the station you sold it at, like any other. The page is read from your journal, so
+  older sales show too.
 - **BGS & Powerplay counts your bounties.** Bounty vouchers you handed in never reached the page, so its Bounties
   column stayed empty: the journal names each faction's share of a voucher differently from the bounty itself, and
   every share was read as 0. Each faction now gets its share, in the system where you hand the vouchers in. The page

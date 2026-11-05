@@ -549,7 +549,7 @@ impl NexusTools {
         let mut engineers: Vec<_> = c.engineers.values().collect();
         engineers.sort_by(|a, b| (engineer_order(&a.progress), &a.name).cmp(&(engineer_order(&b.progress), &b.name)));
         let mut game = json!({
-            "running": !gs.game_closed, "at_main_menu": gs.at_main_menu,
+            "running": gs.game_running(), "at_main_menu": gs.at_main_menu,
             "mode": text(&c.game_mode), "version": text(&c.game_version),
             "last_login": (!c.last_login.is_zero()).then(|| c.last_login.to_iso()),
         });

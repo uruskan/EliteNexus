@@ -112,7 +112,8 @@ a layout changes.
   the installed state. For README shots, also point `LOCALAPPDATA` at a demo folder holding
   `Frontier Developments\Elite Dangerous\Options\Graphics\GraphicsConfigurationOverride.xml` (a theme, glare values):
   the tabs then show an applied state, and no real paths or capture leftovers. Delete the demo folders afterwards.
-* `-Demo` adds a sample Ask conversation and an alert banner.
+* `-Demo` adds a sample Ask conversation, an alert banner and sample alerts in the alert history; `-Tab bell` with it
+  opens the history (the list under the toolbar's bell).
 * `-Overlay <moment>` shows an overlay moment compact and expanded, over the game and as the opaque panel (`jump`, `hyperspace`, `arrival`, `approach`, `sampling`, `close`, `mining`, `trade`, `docked`, `carrier`, `two`, `alert`, `quiet`).
   The overlay's own window never opens in a screenshot run.
 
@@ -187,9 +188,6 @@ never touches `nexus-data`.
 
 ## Open decisions
 
-* Inara whitelisted the app name "Elite Nexus" on 2026-10-13 (Artie, Inara's author), so Inara sync works with a
-  user's personal key. Developer mode (`Accounts::inara_dev_mode`, sent as `isBeingDeveloped`) is still on by
-  default; switch it off after a few weeks of clean syncs.
 * `GalaxyOptions::all_eddn_bodies` (keep every landable EDDN body, not just biology and valuable worlds) is off.
 
 ## Ideas queue

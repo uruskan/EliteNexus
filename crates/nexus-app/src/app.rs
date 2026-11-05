@@ -70,6 +70,8 @@ pub struct NexusApp {
     data_dir: PathBuf,
     page: Page,
     toasts: Vec<Toast>,
+    /// Every alert of this run, behind the bell in the toolbar.
+    alert_history: crate::alert_history::AlertHistory,
     speaker: Speaker,
     applied_scale: f32,
     settings_dirty: Option<Instant>,
@@ -110,9 +112,18 @@ pub struct NexusApp {
     // Command-line overrides: applied at runtime, never written to settings.json.
     overrides: Overrides,
     shot: Option<ScreenshotJob>,
-    last_jump_count: Option<usize>,
+    /// The commander (FID) and their number of jumps at the last look: one more is a jump, which puts the next system
+    /// on the clipboard (`jumped`). None until the first look after the journals are read.
+    last_jump_count: Option<(String, usize)>,
     /// What the commander was doing at the last Status.json update or journal event (Settings › Follow my flight).
     flight: crate::follow::Follower,
+    /// Whether the game's process runs on this computer, for a game that ends without a `Shutdown` (a crash).
+    game_process: crate::game_process::GameProcess,
+    /// The game's process has been seen on this computer since the journals were read: when it goes, so has the game.
+    game_seen_here: bool,
+    /// The journal folder in use is the one Elite Nexus found by itself, this computer's own (not one set in Settings or
+    /// on the command line): on Windows, the game's process missing then means the game isn't running.
+    own_journals: bool,
     clipboard: Option<arboard::Clipboard>,
     /// The overlay: the island at the top of the game's screen, in a window of its own.
     overlay: crate::overlay::window::Overlay,
@@ -148,6 +159,7 @@ impl NexusApp {
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("nexus-net").enable_all().build().expect("tokio runtime");
         let mut market = crate::market::MarketService::open(&data_dir, &cc.egui_ctx);
         market.set_watches(&settings.price_watches);
+        let own_journals = ov.journal_dir.is_none() && settings.journal_dir.is_none();
         let core = start_core(&cc.egui_ctx, ov.journal_dir.as_ref().or(settings.journal_dir.as_ref()), market.history_sink(), &settings.mining);
         market.attach(&core);
         market.set_listen(settings.accounts.eddn_listen, rt.handle());
@@ -179,6 +191,20 @@ impl NexusApp {
         let mut mcp = crate::mcp::McpService::default();
         // Screenshot runs never answer agents.
         mcp.apply(settings.ai.agents && shot.is_none(), || agent_tools(&core, market.db.clone(), rt.handle(), &agents_spansh), rt.handle());
+        // `--demo` screenshots fill the alert history, and `--tab bell` opens it, so its design can be checked (not
+        // "alerts": Market has a tab of that name).
+        let demo = ov.demo && shot.is_some();
+        let mut alert_history = crate::alert_history::AlertHistory::default();
+        if demo {
+            // As if Elite Nexus had been running for an hour.
+            alert_history = crate::alert_history::AlertHistory::since(nexus_journal::Timestamp(nexus_journal::Timestamp::now().0 - 3600));
+            for a in demo_alerts() {
+                alert_history.push(&a);
+            }
+            if ov.tab.as_deref() == Some("bell") {
+                alert_history.toggle();
+            }
+        }
         NexusApp {
             core,
             settings,
@@ -187,7 +213,7 @@ impl NexusApp {
             data_dir,
             page,
             // `--demo` screenshots show one banner so its design can be checked.
-            toasts: if ov.demo && shot.is_some() {
+            toasts: if demo {
                 vec![Toast {
                     alert: Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Exploration, Priority::High, "Earth-like world")
                         .detail("Brestla A 1 · 3.2 M Cr if mapped, first discovery"),
@@ -196,6 +222,7 @@ impl NexusApp {
             } else {
                 Vec::new()
             },
+            alert_history,
             speaker,
             applied_scale: 0.0,
             settings_dirty: None,
@@ -229,6 +256,10 @@ impl NexusApp {
             shot,
             last_jump_count: None,
             flight: Default::default(),
+            // Test runs read journals nobody is writing: whether the game runs here says nothing about them.
+            game_process: crate::game_process::GameProcess::start(live_run),
+            game_seen_here: false,
+            own_journals,
             clipboard: None,
             overlay,
             xsoverlay: Default::default(),
@@ -265,9 +296,9 @@ impl NexusApp {
                 let carrier = p.carrier().and_then(|k| gs.carrier_of(k).system.as_deref());
                 p.advance(carrier.unwrap_or(&gs.location.system));
             }
-            let jumps = gs.history.jumps.len();
-            let prev = self.last_jump_count.replace(jumps);
-            if !(self.settings.auto_copy_next_system && prev.is_some_and(|p| jumps > p)) {
+            // Counted with the setting off too, so switching it on never acts on an old jump.
+            let jumped = jumped(&mut self.last_jump_count, &gs.cmdr.fid, gs.history.jumps.len());
+            if !(jumped && self.settings.auto_copy_next_system) {
                 return;
             }
             match pages::navigation::active_route(gs, self.nav.planned.as_ref()).first() {
@@ -280,12 +311,54 @@ impl NexusApp {
         }
         if let Some(cb) = self.clipboard.as_mut() {
             match cb.set_text(next.clone()) {
-                Ok(()) => self.toasts.push(Toast {
-                    alert: Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Navigation, Priority::Low, format!("Next: {next}")).detail("Copied to clipboard"),
-                    born: Instant::now(),
-                }),
+                Ok(()) => self.notify(Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Navigation, Priority::Low, format!("Next: {next}")).detail("Copied to clipboard")),
                 Err(e) => tracing::warn!("clipboard: {e}"),
             }
+        }
+    }
+
+    /// Shows an alert as a banner and keeps it in the alert history; a repeat within 20 seconds is left out of both.
+    fn notify(&mut self, a: Alert) {
+        if !self.alert_history.push(&a) {
+            return;
+        }
+        self.toasts.push(Toast { alert: a, born: Instant::now() });
+        if self.toasts.len() > 5 {
+            self.toasts.remove(0);
+        }
+    }
+
+    /// A run that follows the game: not a test run, which reads journals nobody is writing (`--journal-dir`, a replay,
+    /// screenshots).
+    fn live_run(&self) -> bool {
+        self.overrides.journal_dir.is_none() && self.shot.is_none()
+    }
+
+    /// A crash writes no `Shutdown`, so the journal alone would have the game running forever: whether it still runs
+    /// comes from its process on this computer, or from a journal quiet since Elite Nexus started (`game_process::gone`).
+    /// The verdict goes into the model, where pages, the overlay and Ask's tools read it. Never in a test run.
+    fn watch_game(&mut self) {
+        let watch = if self.live_run() {
+            let process = self.game_process.running();
+            self.game_seen_here |= process == Some(true);
+            // Read and let go before the model is locked: the core thread takes the two the other way round.
+            let live_lines = self.core.status.read().live_events > 0;
+            Some(crate::game_process::Watch { process, seen_here: self.game_seen_here, absence_final: cfg!(windows) && self.own_journals, live_lines })
+        } else {
+            None
+        };
+        let now = nexus_journal::Timestamp::now();
+        let gone = {
+            let model = self.core.model.read();
+            let Some(gs) = model.active() else { return };
+            let gone = watch.and_then(|w| crate::game_process::gone(gs, w, now));
+            if gone == gs.game_gone {
+                return;
+            }
+            gone
+        };
+        if let Some(gs) = self.core.model.write().active_mut() {
+            gs.game_gone = gone;
         }
     }
 
@@ -355,13 +428,7 @@ impl NexusApp {
             if self.settings.overlay.xsoverlay && self.shot.is_none() {
                 self.xsoverlay.send(&a);
             }
-            let dup = self.toasts.iter().rev().take(4).any(|t| t.alert.title == a.title && t.alert.detail == a.detail && t.born.elapsed() < Duration::from_secs(20));
-            if !dup {
-                self.toasts.push(Toast { alert: a, born: Instant::now() });
-            }
-            if self.toasts.len() > 5 {
-                self.toasts.remove(0);
-            }
+            self.notify(a);
         }
     }
 
@@ -428,7 +495,7 @@ impl NexusApp {
     fn page_header(&mut self, ui: &mut Ui, title: &str, subtitle: &str) {
         let status = self.core.status.read().clone();
         let narrow = ui.available_width() < 860.0;
-        // Toolbar items, left to right: credits, live feed, uploads, EDDN pause, status.
+        // Toolbar items, left to right: credits, live feed, uploads, their pause, status.
         let mut items: Vec<CapItem> = Vec::new();
         {
             let model = self.core.model.read();
@@ -454,20 +521,27 @@ impl NexusApp {
                 let text = if queued > 0 { format!("{} {sent} · {queued} queued", icon::CLOUD_ARROW_UP) } else { format!("{} {sent}", icon::CLOUD_ARROW_UP) };
                 items.push(CapItem::new(text, if trouble { pal::WARN } else { pal::DIM }, false).action(CapAction::Accounts).tip("Uploads sent this session (EDDN / EDSM / Inara / EDAstro). Click for details."));
             }
-            if self.settings.accounts.eddn_upload {
-                let paused = self.settings.accounts.eddn_paused;
-                let (text, col, tip) = if paused {
-                    (format!("{} Resume EDDN", icon::PLAY), pal::WARN, "Sharing with EDDN is paused. Click to share again.")
+            // One button pauses or resumes every upload that's on; Accounts & sync has a switch for each.
+            let uploads = self.settings.accounts.uploads();
+            if !uploads.is_empty() {
+                let names: Vec<&str> = uploads.iter().map(|u| u.0).collect();
+                let paused: Vec<&str> = uploads.iter().filter(|u| u.1).map(|u| u.0).collect();
+                let what = if let [(one, _)] = uploads.as_slice() { *one } else { "uploads" };
+                let item = if paused.is_empty() {
+                    let mut tip = format!("Stop sharing with {}, e.g. to keep where you are to yourself. What happens while paused is dropped, not sent later.", crate::settings::and_list(&names));
+                    if names.contains(&"EDDN") {
+                        tip += " Prices go to EDDN only when you undock, so pausing while docked keeps a market you just found to yourself.";
+                    }
+                    CapItem::new(format!("{} Pause {what}", icon::PAUSE), pal::TEXT, false).tip(tip)
                 } else {
-                    (format!("{} Pause EDDN", icon::PAUSE), pal::TEXT, "Stop sharing with EDDN, e.g. to keep a market you just found to yourself (prices are only sent when you undock).")
+                    let tip = format!("Paused: {}. What happens meanwhile is dropped, not sent later. Click to share again.", crate::settings::and_list(&paused));
+                    CapItem::new(format!("{} Resume {what}", icon::PLAY), pal::WARN, false).tip(tip)
                 };
-                items.push(CapItem::new(text, col, false).action(CapAction::TogglePause).tip(tip));
+                items.push(item.action(CapAction::TogglePause));
             }
             let (label, col) = match &status.phase {
                 Phase::Live => {
-                    let fresh = status.last_live.is_some_and(|t| t.elapsed() < Duration::from_secs(120));
-                    let playing = gs.is_some_and(|g| !g.game_closed);
-                    if fresh || playing { ("Live", pal::GOOD) } else { ("Offline", pal::GRAY) }
+                    if game_live(true, status.last_live, gs) { ("Live", pal::GOOD) } else { ("Offline", pal::GRAY) }
                 }
                 Phase::Loading { .. } | Phase::Starting => ("Loading", pal::WARN),
                 Phase::Error(_) => ("Error", pal::BAD),
@@ -486,6 +560,22 @@ impl NexusApp {
             });
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                 ui.add_space(2.0);
+                // The alert history, at the far right as macOS keeps its notifications.
+                let unseen = self.alert_history.unseen();
+                let tip = match unseen {
+                    0 => "Alerts: every banner shown since Elite Nexus started, newest first, with its time".to_string(),
+                    1 => "1 new alert since you last looked. Click for the alert history.".to_string(),
+                    n => format!("{n} new alerts since you last looked. Click for the alert history."),
+                };
+                let bell = toolbar_button(ui, icon::BELL, &tip, self.alert_history.is_open());
+                if unseen > 0 {
+                    bell_badge(ui.painter(), bell.rect, unseen);
+                }
+                if bell.clicked() {
+                    self.alert_history.toggle();
+                }
+                self.alert_history.show(&bell);
+                ui.add_space(6.0);
                 let ov = &mut self.settings.overlay;
                 // Wayland doesn't let a window keep itself above the others; XWayland does.
                 let wayland = cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
@@ -524,7 +614,10 @@ impl NexusApp {
             }
             Some(CapAction::Accounts) => self.page = Page::Accounts,
             Some(CapAction::TogglePause) => {
-                self.settings.accounts.eddn_paused = !self.settings.accounts.eddn_paused;
+                // Nothing paused: pause them all. Anything paused: resume them all.
+                let acc = &mut self.settings.accounts;
+                let pause = !acc.uploads().iter().any(|u| u.1);
+                acc.pause_uploads(pause);
                 self.sync.apply(&self.settings.accounts);
                 self.settings_dirty = Some(Instant::now());
             }
@@ -596,6 +689,7 @@ impl NexusApp {
         let mut settings_changed = false;
         let mut test_voice = false;
         let mut restart = false;
+        let mut refresh_voices = false;
         let mut map_action = None;
         let mut follow = None;
         // A "where to get it" panel (Engineering, Missions) opens the Market page on its answer.
@@ -686,6 +780,7 @@ impl NexusApp {
                     restart_core: false,
                     voice: self.speaker.status(),
                     voices: self.speaker.voices(),
+                    refresh_voices: false,
                     overlay_see_through: self.overlay.see_through(),
                     last_screenshot: self.shots.last(),
                     agents: self.mcp.status(),
@@ -694,6 +789,7 @@ impl NexusApp {
                 settings_changed = cx.changed;
                 test_voice = cx.test_voice;
                 restart = cx.restart_core;
+                refresh_voices = cx.refresh_voices;
             }
             Page::Navigation => {
                 settings_changed |=
@@ -702,7 +798,9 @@ impl NexusApp {
             Page::Bindings => settings_changed |= pages::bindings::show(ui, &mut self.binds, &self.data_dir, &mut self.settings.game_dir),
             Page::Hud => {
                 let s = &mut self.settings;
-                settings_changed |= pages::hud::show(ui, &mut self.hud, &mut s.hud_themes, &mut s.game_dir, !gs.game_closed, (&gs.cmdr.game_version, &gs.cmdr.game_build), self.rt.handle());
+                // Running unless surely stopped: a calibration of the cockpit lights finishes only once the game has closed,
+                // never on a journal that's merely quiet (`GameState::game_stopped`).
+                settings_changed |= pages::hud::show(ui, &mut self.hud, &mut s.hud_themes, &mut s.game_dir, !gs.game_stopped(), (&gs.cmdr.game_version, &gs.cmdr.game_build), self.rt.handle());
             }
             Page::Accounts => {
                 let name = gs.cmdr.name.clone();
@@ -736,6 +834,9 @@ impl NexusApp {
             body(ui);
         }
         drop(model);
+        if refresh_voices {
+            self.speaker.refresh_voices();
+        }
         if let Some(to) = market_goto {
             self.market_ui.open_source(self.market.db.as_ref(), to);
             self.page = Page::Market;
@@ -794,6 +895,7 @@ impl NexusApp {
             restart_core: false,
             voice: self.speaker.status(),
             voices: self.speaker.voices(),
+            refresh_voices: false,
             overlay_see_through: self.overlay.see_through(),
             last_screenshot: self.shots.last(),
             agents: self.mcp.status(),
@@ -811,6 +913,9 @@ impl NexusApp {
             }
         });
         let (changed, test_voice, restart) = (cx.changed, cx.test_voice, cx.restart_core);
+        if cx.refresh_voices {
+            self.speaker.refresh_voices();
+        }
         self.after_settings(ui.ctx(), changed, test_voice, restart);
     }
 
@@ -840,14 +945,20 @@ impl NexusApp {
             self.mcp.attach(agent_tools(&self.core, self.market.db.clone(), self.rt.handle(), &self.agents_spansh));
             // A new model: Follow my flight starts afresh instead of comparing it with the old one.
             self.flight = Default::default();
+            // Another journal folder may be another computer's: the game seen here says nothing about it.
+            self.game_seen_here = false;
+            self.own_journals = self.overrides.journal_dir.is_none() && self.settings.journal_dir.is_none();
+            // Nor does the old count of jumps: one more in the journals read now isn't a jump just made.
+            self.last_jump_count = None;
         }
     }
 
-    /// Alerts as macOS-style notification banners, top right, newest first.
+    /// Alerts as macOS-style notification banners, top right, newest first. None over the open alert history, which
+    /// lists them at its top anyway.
     fn toasts(&mut self, ctx: &egui::Context) {
         let life = Duration::from_secs_f32(self.settings.toast_seconds.max(1.0));
         self.toasts.retain(|t| t.born.elapsed() < life);
-        if self.toasts.is_empty() {
+        if self.toasts.is_empty() || self.alert_history.is_open() {
             return;
         }
         ctx.request_repaint_after(Duration::from_millis(100));
@@ -863,12 +974,7 @@ impl NexusApp {
                     let fade = ((life.as_secs_f32() - age) / 0.5).clamp(0.0, 1.0);
                     let enter = (age / 0.25).clamp(0.0, 1.0);
                     let slide = (1.0 - enter).powi(3) * 40.0;
-                    let tint = match t.alert.priority {
-                        Priority::Critical => pal::BAD,
-                        Priority::High => pal::ACCENT,
-                        Priority::Normal => pal::BLUE,
-                        Priority::Low => pal::GRAY,
-                    };
+                    let tint = crate::alert_history::tint(t.alert.priority);
                     let top = ui.cursor().min;
                     let width = 360.0;
                     // Measure first so the glass is drawn under the text.
@@ -933,20 +1039,20 @@ struct CapItem {
     color: Color32,
     strong: bool,
     dot: Option<Color32>,
-    tip: &'static str,
+    tip: String,
     action: Option<CapAction>,
 }
 
 impl CapItem {
     fn new(text: String, color: Color32, strong: bool) -> Self {
-        CapItem { text, color, strong, dot: None, tip: "", action: None }
+        CapItem { text, color, strong, dot: None, tip: String::new(), action: None }
     }
     fn dot(mut self, c: Color32) -> Self {
         self.dot = Some(c);
         self
     }
-    fn tip(mut self, t: &'static str) -> Self {
-        self.tip = t;
+    fn tip(mut self, t: impl Into<String>) -> Self {
+        self.tip = t.into();
         self
     }
     fn action(mut self, a: CapAction) -> Self {
@@ -995,7 +1101,7 @@ fn toolbar_capsule(ui: &mut Ui, items: &[CapItem]) -> Option<CapAction> {
             tx += 14.0;
         }
         p.galley(egui::pos2(tx, rect.center().y - g.size().y / 2.0), g, it.color);
-        let r = if it.tip.is_empty() { r } else { r.on_hover_text(it.tip) };
+        let r = if it.tip.is_empty() { r } else { r.on_hover_text(it.tip.as_str()) };
         if r.clicked() {
             clicked = it.action;
         }
@@ -1014,6 +1120,48 @@ fn toolbar_button(ui: &mut Ui, glyph: &str, tip: &str, on: bool) -> egui::Respon
     p.rect_stroke(rect, CornerRadius::same(17), Stroke::new(1.0, Color32::from_white_alpha(16)), egui::StrokeKind::Inside);
     p.text(rect.center(), Align2::CENTER_CENTER, glyph, egui::FontId::proportional(17.0), if on { pal::ACCENT } else { pal::TEXT });
     resp.on_hover_text(tip)
+}
+
+/// A jump since the last look (`last`): one more than then, by the same commander. The first look (after the journals
+/// are read, or read again) and another commander only take the count, so loading one with more jumps copies nothing.
+fn jumped(last: &mut Option<(String, usize)>, fid: &str, jumps: usize) -> bool {
+    let more = last.as_ref().is_some_and(|(f, n)| f == fid && jumps > *n);
+    if last.as_ref().is_none_or(|(f, n)| *n != jumps || f != fid) {
+        *last = Some((fid.to_string(), jumps));
+    }
+    more
+}
+
+/// The game is running and its journal followed live (`phase_live`): it has neither closed nor ended without a
+/// `Shutdown` (`GameState::game_running`), or, between a `Shutdown` and its next `LoadGame`, it wrote something in the
+/// last two minutes (`last_live`). A game found gone after a crash isn't live, however recent its last line.
+fn game_live(phase_live: bool, last_live: Option<Instant>, gs: Option<&nexus_model::GameState>) -> bool {
+    let fresh = last_live.is_some_and(|t| t.elapsed() < Duration::from_secs(120));
+    phase_live && !gs.is_some_and(|g| g.game_gone.is_some()) && (fresh || gs.is_some_and(|g| g.game_running()))
+}
+
+/// The number of alerts that came in since the alert history was last open, as a pill on the bell's top-right corner.
+fn bell_badge(p: &egui::Painter, bell: Rect, n: usize) {
+    let text = if n > 99 { "99+".to_string() } else { n.to_string() };
+    let g = p.layout_no_wrap(text, display(size::CAPTION), pal::ON_ACCENT);
+    let w = (g.size().x + 10.0).max(18.0);
+    let pill = Rect::from_min_size(egui::pos2(bell.right() - w, bell.top()), Vec2::new(w, 18.0));
+    p.rect_filled(pill, CornerRadius::same(9), pal::ACCENT);
+    p.galley(pill.center() - g.size() / 2.0, g, pal::ON_ACCENT);
+}
+
+/// Sample alerts for `--demo` screenshots of the alert history, oldest first.
+fn demo_alerts() -> Vec<Alert> {
+    use nexus_model::AlertKind;
+    let ago = |min: i64| nexus_journal::Timestamp(nexus_journal::Timestamp::now().0 - min * 60);
+    vec![
+        Alert::new(ago(52), AlertKind::Exploration, Priority::Low, "System scan complete").detail("23 bodies, ~4.1 M Cr"),
+        Alert::new(ago(47), AlertKind::Exploration, Priority::High, "Earth-like world").detail("Brestla A 1 · 3.2 M Cr if mapped, first discovery"),
+        Alert::new(ago(31), AlertKind::Exobiology, Priority::Normal, "Stratum Tectonicas: sample 1 of 3").detail("Move at least 500 m before the next sample"),
+        Alert::new(ago(12), AlertKind::Combat, Priority::High, "Interdiction").detail("By Lucan Ward"),
+        Alert::new(ago(9), AlertKind::Navigation, Priority::High, "Next star is not scoopable").detail("Brestla AB-C d14 — White dwarf; fuel 38%"),
+        Alert::new(ago(2), AlertKind::Navigation, Priority::Low, "Next: Brestla AB-C d14").detail("Copied to clipboard"),
+    ]
 }
 
 /// The app icon: Elite orange tile with the diamond, as in the Dock.
@@ -1113,15 +1261,16 @@ impl eframe::App for NexusApp {
         self.assistant.poll();
         self.sync.tick(&self.core);
         // A route the assistant planned goes to the Navigation page (and the clipboard flow).
-        if let Some(route) = self.ai_routes.lock().take() {
+        let planned = self.ai_routes.lock().take();
+        if let Some(route) = planned {
             let first = route.waypoints.first().map(|w| w.system.clone());
-            self.toasts.push(Toast {
-                alert: Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Navigation, Priority::Low, format!("{} route ready", route.kind))
+            self.notify(
+                Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Navigation, Priority::Low, format!("{} route ready", route.kind))
                     .detail(first.map(|s| format!("{} · first stop {s} (see Navigation)", route.summary)).unwrap_or_else(|| route.summary.clone())),
-                born: Instant::now(),
-            });
+            );
             self.nav.planned = Some(route);
         }
+        self.watch_game();
         self.auto_copy_next();
         self.remember_deposits();
         self.follow_flight();
@@ -1185,15 +1334,16 @@ impl NexusApp {
     /// The overlay: its view from the model (read-locked for this call only; the overlay's window never locks it),
     /// and what it asks of the main window.
     fn overlay_logic(&mut self, ctx: &egui::Context) {
-        let (phase_live, fresh) = {
+        // Read and let go before the model is locked: the core thread takes the two the other way round.
+        let (phase_live, last_live) = {
             let status = self.core.status.read();
-            (matches!(status.phase, Phase::Live), status.last_live.is_some_and(|t| t.elapsed() < Duration::from_secs(120)))
+            (matches!(status.phase, Phase::Live), status.last_live)
         };
         let requests = {
             let model = self.core.model.read();
             let gs = model.active();
             // The journal is followed live and the game is running (as the page header's "Live" says).
-            let live = phase_live && (fresh || gs.is_some_and(|g| !g.game_closed));
+            let live = game_live(phase_live, last_live, gs);
             let src = crate::overlay::Sources {
                 // A finished tour hands over to the in-game route, as on Navigation and for the clipboard.
                 route: self.nav.planned.as_ref().filter(|p| !p.complete()),
@@ -1262,6 +1412,27 @@ impl NexusApp {
             }
         }
         self.toasts(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::jumped;
+
+    /// The next system goes on the clipboard after a jump: not after the journals are read again, nor when another
+    /// commander with more jumps is loaded.
+    #[test]
+    fn a_jump_is_one_more_by_the_same_commander() {
+        let mut last = None;
+        assert!(!jumped(&mut last, "F1", 120), "the first look only counts");
+        assert!(!jumped(&mut last, "F1", 120));
+        assert!(jumped(&mut last, "F1", 121), "a jump");
+        assert!(!jumped(&mut last, "F2", 900), "another commander with more jumps");
+        assert!(!jumped(&mut last, "F1", 121), "back to the first: its count starts again");
+        assert!(jumped(&mut last, "F1", 122));
+        // Reload journals or another journal folder: the app forgets the count.
+        last = None;
+        assert!(!jumped(&mut last, "F1", 5000), "another folder's journals, with more jumps");
     }
 }
 

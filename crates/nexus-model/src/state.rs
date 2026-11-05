@@ -23,6 +23,16 @@ use nexus_journal::{EventCtx, Timestamp};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
+/// How the app knows the game has ended without a `Shutdown` (`GameState::game_gone`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameGone {
+    /// Its process isn't running on this computer, where the app can tell for sure: as certain as a `Shutdown`.
+    Process,
+    /// Nothing has been written since before Elite Nexus started, for a long while: most likely a crash, though a game
+    /// left idle looks the same.
+    Quiet,
+}
+
 /// One line in the activity feed.
 #[derive(Debug, Clone)]
 pub struct FeedItem {
@@ -66,6 +76,9 @@ pub struct GameState {
     pub events_applied: u64,
     /// The game wrote `Shutdown` after the last session start.
     pub game_closed: bool,
+    /// The game has ended without a `Shutdown` (a crash, or ended from the Task Manager), as the app found it, and how.
+    /// Set by the app, which alone can look.
+    pub game_gone: Option<GameGone>,
     /// The main menu's music is playing (the `Music` event), until the next `LoadGame`.
     pub at_main_menu: bool,
     pub legal_state: Option<String>,
@@ -104,6 +117,18 @@ impl GameState {
         if cat != LedgerCategory::Transfer {
             self.session.record_money(amount);
         }
+    }
+
+    /// The game is running: it hasn't closed (`Shutdown`), nor ended without one (`game_gone`).
+    pub fn game_running(&self) -> bool {
+        !self.game_closed && self.game_gone.is_none()
+    }
+
+    /// The game has surely stopped: it wrote `Shutdown`, or its process is gone from this computer. A game only quiet for
+    /// a long while (`GameGone::Quiet`) may still be running, so whatever must wait for the game to close (the cockpit
+    /// lights' calibration) waits for this.
+    pub fn game_stopped(&self) -> bool {
+        self.game_closed || self.game_gone == Some(GameGone::Process)
     }
 
     pub fn carrier_of(&self, kind: CarrierKind) -> &Carrier {
@@ -673,9 +698,15 @@ impl GameState {
                 self.money(ts, LedgerCategory::Exploration, s.total_earnings, format!("{} systems", names.len()));
                 self.feed(ts, "MultiSellExplorationData", format!("Sold cartographic data: {} Cr", group_digits(s.total_earnings)));
             }
+            // A sale in the older form (journals from older versions of the game): counted as MultiSellExplorationData is.
             Event::SellExplorationData(s) => {
                 self.exploration.on_sell(&s.systems, s.total_earnings, ts);
+                {
+                    let here = Here { system: &self.location.system, system_address: self.location.system_address, station_faction: self.location.station.as_ref().and_then(|s| s.faction.as_deref()) };
+                    self.bgs.on_data_sale(BgsKind::Exploration, s.total_earnings, ts, &here);
+                }
                 self.money(ts, LedgerCategory::Exploration, s.total_earnings, format!("{} systems", s.systems.len()));
+                self.feed(ts, "SellExplorationData", format!("Sold cartographic data: {} Cr", group_digits(s.total_earnings)));
             }
 
             // ---------------------------------------------------------------- trade & cargo
@@ -1179,6 +1210,7 @@ impl GameState {
                 None => {
                     body.organics.push(crate::exploration::OrganicSpecies {
                         genus,
+                        genus_symbol: o.genus.clone(),
                         species: species.clone(),
                         variant: o.variant_localised.clone(),
                         species_symbol: o.species.clone(),

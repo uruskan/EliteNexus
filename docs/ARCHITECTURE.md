@@ -24,7 +24,8 @@ screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the
 ship like it, and searches on the first frame; `buy-one`: it searches for one module, a 6A frame shift drive), a Statistics tab (`career`, `activity`, `all`), Navigation's
 planners (`carrier`, `exact`, `neutron`; `route-carrier` plots a route for the ship to the carrier on the first frame),
 HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
-`royalpurple`, …), `--demo` adds a sample Ask conversation and an alert banner, `--overlay <moment>` shows an overlay
+`royalpurple`, …), `--demo` adds a sample Ask conversation, an alert banner and sample alerts in the alert history
+(`--tab bell` opens it), `--overlay <moment>` shows an overlay
 moment compact and expanded with sample content (`overlay::DEMOS`), `--shot-delay 8` waits longer (the
 galaxy image paints in the background, Spansh searches take 5–20 s). `ELITE_NEXUS_GAME_DIR` points HUD & cockpit at
 another game folder (one holding `EliteDangerous64.exe`): test the Cockpit lights installer against a copy, never
@@ -91,6 +92,15 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   hidden and inactive, shows it once it has painted, switches click-through on only after that, and hides it while the
   game isn't in front (`overlay/platform.rs`: the foreground window's class on Windows, `_NET_ACTIVE_WINDOW` on X11).
   See-through needs the renderer set up for it at start (`main.rs`; DirectComposition on Windows).
+* Alerts: `App::notify` shows each one as a banner and keeps it in `alert_history.rs`, the list behind the bell in the
+  toolbar (this run's last 200, in memory; a repeat within 20 seconds is left out of both).
+* Whether the game runs: a crash writes no `Shutdown`, so `game_process.rs` looks for the game's process every 5 s
+  (Windows: the process list; Linux: /proc) and `App::watch_game` sets `GameState::game_gone` (`game_process::gone`):
+  `Process` when it was seen here and has gone, or, on Windows with the journal folder found automatically, isn't
+  running while the journal has been quiet since start; `Quiet` when nothing has been written since start and for
+  15 minutes; never once the game has written while Elite Nexus runs (other cases), nor in test runs.
+  `GameState::game_running` and `nexus_model::context` read it; `GameState::game_stopped` (a `Shutdown` or `Process`)
+  is what the cockpit lights' calibration waits for.
 * Follow my flight (`follow.rs`, Settings › Exploration): `Follower::step` reduces `nexus_model::context` to the
   page that fits (Navigation, Exploration, Exobiology) and names it when that changes, pure and tested; `App::logic`
   switches to it only while one of those pages is shown and the journal is followed live.

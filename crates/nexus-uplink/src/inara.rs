@@ -54,6 +54,37 @@ impl InaraEvent {
     }
 }
 
+/// The "set" events that describe the commander as they are now: ship and loadout, stored modules, cargo, materials,
+/// the ship locker, credits, statistics, location, suit loadouts, ranks, reputation and community goals. A profile
+/// sync (`Uplink::sync_inara_profile`: at start, when sync is switched on, when it resumes after a pause) sends only
+/// these. The other "set" events record something done, such as a mission handed in, failed or abandoned, or a ship
+/// transfer: they go out live, never in a sync, which would send what happened before sync was on or while it was
+/// paused.
+pub const STATE_EVENTS: [&str; 17] = [
+    "setCommanderShip",
+    "setCommanderShipLoadout",
+    "setCommanderStorageModules",
+    "setCommanderInventoryCargo",
+    "setCommanderInventoryMaterials",
+    "setCommanderInventory",
+    "setCommanderCredits",
+    "setCommanderGameStatistics",
+    "setCommanderTravelLocation",
+    "setCommanderSuitLoadout",
+    "setCommanderRankPilot",
+    "setCommanderRankEngineer",
+    "setCommanderRankPower",
+    "setCommanderReputationMajorFaction",
+    "setCommanderReputationMinorFaction",
+    "setCommunityGoal",
+    "setCommanderCommunityGoalProgress",
+];
+
+/// An event that describes the commander's present state (`STATE_EVENTS`), which a profile sync may send.
+pub fn is_state(name: &str) -> bool {
+    STATE_EVENTS.contains(&name)
+}
+
 /// One queued Inara event. The API key is never written to disk, only its fingerprint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InaraItem {
@@ -1253,6 +1284,18 @@ mod tests {
 
     fn names(evs: &[InaraEvent]) -> Vec<&str> {
         evs.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    /// A profile sync sends the commander's state, never something done: of the "set" events, the mission and
+    /// ship-transfer ones aren't state.
+    #[test]
+    fn state_events_leave_out_what_was_done() {
+        for name in ["setCommanderCredits", "setCommanderShip", "setCommanderShipLoadout", "setCommanderTravelLocation", "setCommanderRankPilot", "setCommanderReputationMinorFaction", "setCommanderInventoryMaterials", "setCommunityGoal"] {
+            assert!(is_state(name), "{name}");
+        }
+        for name in ["setCommanderMissionCompleted", "setCommanderMissionFailed", "setCommanderMissionAbandoned", "setCommanderShipTransfer", "addCommanderMission", "addCommanderTravelFSDJump", "delCommanderShip", "resetCommanderInventory"] {
+            assert!(!is_state(name), "{name}");
+        }
     }
 
     #[test]

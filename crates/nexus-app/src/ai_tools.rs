@@ -2962,9 +2962,9 @@ mod tests {
     fn progress_has_ranks_engineers_and_game_state() {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let m = commander();
-        let (closed, expected_rank) = {
+        let (running, expected_rank) = {
             let gs = m.active().unwrap();
-            (gs.game_closed, gs.cmdr.rank_name(nexus_data::ranks::RankKind::Explore))
+            (gs.game_running(), gs.cmdr.rank_name(nexus_data::ranks::RankKind::Explore))
         };
         let tools = model_tools(m, &rt);
         let p = tools.call("progress", &json!({})).unwrap();
@@ -2980,10 +2980,15 @@ mod tests {
         assert_eq!(engineers[1]["name"], "Eleanor Bresa");
         assert_eq!(engineers[1]["status"], "Known");
         assert!(engineers[1].get("rank").is_none());
-        assert_eq!(p["game"]["running"], !closed);
+        assert_eq!(p["game"]["running"], running);
         assert!(p["game"]["at_main_menu"].is_boolean());
         assert_eq!(p["game"]["mode"], "Solo");
         assert!(p["powerplay"].is_null() && p["squadron"].is_null(), "not pledged, no squadron: {p}");
+        // A crash writes no Shutdown: once the app has found the game gone, it isn't running either.
+        let mut m = commander();
+        m.active_mut().unwrap().game_gone = Some(nexus_model::GameGone::Process);
+        let p = model_tools(m, &rt).call("progress", &json!({})).unwrap();
+        assert_eq!(p["game"]["running"], false);
     }
 
     /// `m` with journal lines replayed on top.

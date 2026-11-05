@@ -59,7 +59,13 @@ pub struct Settings {
     pub overlay: crate::overlay::window::OverlayPrefs,
     /// The game's screenshots saved again as PNG (off by default: it writes to the player's Pictures folder).
     pub screenshots: crate::screenshots::ScreenshotPrefs,
+    /// The one-off changes made to this file so far (`Settings::migrate`); 0 in a file from before them.
+    pub migrated: u32,
 }
+
+/// The one-off changes `Settings::migrate` makes to an older file, in order; `migrated` counts those done.
+/// 1: Inara's developer mode, on by default until Inara had approved the app, is switched off.
+const MIGRATIONS: u32 = 1;
 
 /// A named HUD colour matrix.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -145,11 +151,48 @@ pub struct Accounts {
     pub edsm_api_key: String,
     pub inara_enabled: bool,
     pub inara_api_key: String,
-    /// Sent as `isBeingDeveloped`. Inara approved "Elite Nexus" on 2026-10-13; on by default for the first weeks after.
+    /// Sent as `isBeingDeveloped`: Inara then ignores global data such as community goals. Off by default since Inara
+    /// approved "Elite Nexus" (2026-10-13); kept for anyone testing with a test account.
     pub inara_dev_mode: bool,
     pub edastro_enabled: bool,
     /// EDDN sharing paused by the commander (the header's Pause button).
     pub eddn_paused: bool,
+    /// The same pause for EDSM, Inara and EDAstro (Accounts & sync, or the header's button for all of them).
+    pub edsm_paused: bool,
+    pub inara_paused: bool,
+    pub edastro_paused: bool,
+}
+
+impl Accounts {
+    /// The upload services switched on (EDSM and Inara with their keys saved), each with whether it's paused.
+    pub fn uploads(&self) -> Vec<(&'static str, bool)> {
+        let mut on = Vec::new();
+        if self.eddn_upload {
+            on.push(("EDDN", self.eddn_paused));
+        }
+        if self.edsm_enabled && !self.edsm_api_key.is_empty() && !self.edsm_commander.trim().is_empty() {
+            on.push(("EDSM", self.edsm_paused));
+        }
+        if self.inara_enabled && !self.inara_api_key.is_empty() {
+            on.push(("Inara", self.inara_paused));
+        }
+        if self.edastro_enabled {
+            on.push(("EDAstro", self.edastro_paused));
+        }
+        on
+    }
+
+    /// Pauses or resumes every upload service that's on (the header's button).
+    pub fn pause_uploads(&mut self, pause: bool) {
+        for (name, _) in self.uploads() {
+            match name {
+                "EDDN" => self.eddn_paused = pause,
+                "EDSM" => self.edsm_paused = pause,
+                "Inara" => self.inara_paused = pause,
+                _ => self.edastro_paused = pause,
+            }
+        }
+    }
 }
 
 impl Default for Settings {
@@ -169,7 +212,7 @@ impl Default for Settings {
             auto_copy_next_system: true,
             auto_page: false,
             auto_page_altitude_km: 150.0,
-            accounts: Accounts { eddn_listen: true, inara_dev_mode: true, ..Default::default() },
+            accounts: Accounts { eddn_listen: true, ..Default::default() },
             welcomed: false,
             wishlist: Vec::new(),
             price_watches: Vec::new(),
@@ -182,6 +225,8 @@ impl Default for Settings {
             mining: Default::default(),
             overlay: Default::default(),
             screenshots: Default::default(),
+            // A file without it is from before the first change; `load` brings every file up to date.
+            migrated: 0,
         }
     }
 }
@@ -197,11 +242,30 @@ pub struct LoadProblem {
 }
 
 impl Settings {
+    /// Reads settings.json (`read`) and makes the one-off changes an older file needs (`migrate`).
+    pub fn load(dir: &Path) -> (Self, Option<LoadProblem>) {
+        let (mut settings, problem) = Self::read(dir);
+        settings.migrate();
+        (settings, problem)
+    }
+
+    /// The one-off changes an older file needs, each made once: `migrated` says which are done, so a setting changed
+    /// back afterwards stays as the commander left it.
+    fn migrate(&mut self) {
+        if self.migrated < 1 {
+            // Inara's developer mode was on by default until Inara had approved the app, so a file from then holds
+            // that default rather than a choice: it goes off once. The switch stays, for anyone testing with a test
+            // account.
+            self.accounts.inara_dev_mode = false;
+        }
+        self.migrated = self.migrated.max(MIGRATIONS);
+    }
+
     /// Reads settings.json; a missing file gives the defaults. A file that can't be used as it is never means a
     /// silent start from scratch (settings are saved every half minute, which would overwrite it): it's copied
     /// aside first, every setting that still reads is kept (from a file that isn't valid JSON at all, the API keys),
     /// and the problem says what happened. A file that can't even be read isn't saved over this run.
-    pub fn load(dir: &Path) -> (Self, Option<LoadProblem>) {
+    fn read(dir: &Path) -> (Self, Option<LoadProblem>) {
         let path = dir.join("settings.json");
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
@@ -376,7 +440,7 @@ fn recover_keys(text: &str) -> (Settings, Vec<&'static str>) {
 }
 
 /// "A", "A and B", "A, B and C".
-fn and_list(items: &[&str]) -> String {
+pub(crate) fn and_list(items: &[&str]) -> String {
     match items {
         [] => String::new(),
         [one] => (*one).to_string(),
@@ -677,6 +741,24 @@ mod tests {
         let (back, problem) = Settings::load(&d.0);
         assert_eq!((back.tts_engine, back.tts_rate), (EngineKind::WinRt, 1.2));
         assert!(problem.expect("a problem to show").what.contains("tts_engine is back at the default"));
+    }
+
+    /// Inara's developer mode was on by default: a file from then goes off, once. Switched on again afterwards, it stays
+    /// on; a first start has it off.
+    #[test]
+    fn inara_developer_mode_goes_off_once() {
+        let d = Dir::new("inara-dev");
+        std::fs::write(d.0.join("settings.json"), r#"{ "welcomed": true, "accounts": { "inara_enabled": true, "inara_dev_mode": true } }"#).expect("write");
+        let (mut s, problem) = Settings::load(&d.0);
+        assert!(problem.is_none());
+        assert!(!s.accounts.inara_dev_mode, "the old default goes");
+        assert!(s.accounts.inara_enabled && s.welcomed, "nothing else changes");
+        s.accounts.inara_dev_mode = true;
+        s.save(&d.0);
+        assert!(Settings::load(&d.0).0.accounts.inara_dev_mode, "switched on again, it stays on");
+        let first = Dir::new("inara-dev-first");
+        assert!(!Settings::load(&first.0).0.accounts.inara_dev_mode);
+        assert!(!Settings::default().accounts.inara_dev_mode);
     }
 
     #[test]

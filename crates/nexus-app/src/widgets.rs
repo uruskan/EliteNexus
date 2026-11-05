@@ -12,6 +12,11 @@ pub fn card_frame() -> Frame {
     Frame::new().fill(pal::CARD).corner_radius(CornerRadius::same(16)).inner_margin(Margin::same(18))
 }
 
+/// A popover's surface (the alert history): a card that floats, with the theme's window rim and popup shadow.
+pub fn popover_frame(style: &egui::Style) -> Frame {
+    Frame::popup(style).fill(pal::CARD).corner_radius(CornerRadius::same(14)).inner_margin(Margin::same(16))
+}
+
 /// A titled panel ("card").
 pub fn card<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
     card_with(ui, title, |_| {}, add)

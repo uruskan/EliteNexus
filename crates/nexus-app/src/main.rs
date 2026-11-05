@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai_tools;
+mod alert_history;
 mod app;
 mod assistant;
 mod core;
@@ -12,6 +13,7 @@ mod export;
 mod finder;
 mod folders;
 mod follow;
+mod game_process;
 mod icon;
 mod jobs;
 mod market;

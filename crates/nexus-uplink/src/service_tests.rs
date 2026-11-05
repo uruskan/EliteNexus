@@ -552,6 +552,122 @@ fn eddn_pause_while_docked_keeps_the_market_private() {
     assert!(h.wait_for(|r| eddn_bodies(r).len() > before), "sending resumes");
 }
 
+// ---- EDSM, Inara and EDAstro pause ----------------------------------------------------------
+
+/// The journal events EDSM was sent.
+fn edsm_events(reqs: &[HttpRequest]) -> Vec<String> {
+    reqs.iter()
+        .filter(|r| r.url == edsm::JOURNAL_URL)
+        .flat_map(|p| {
+            let f = form_urldecode(&p.body_text());
+            let m = f.into_iter().find(|(k, _)| k == "message").map(|(_, v)| v).unwrap_or_default();
+            serde_json::from_str::<Vec<Value>>(&m).unwrap_or_default()
+        })
+        .filter_map(|e| e["event"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// The event names Inara was sent.
+fn inara_events(reqs: &[HttpRequest]) -> Vec<String> {
+    reqs.iter()
+        .filter(|r| r.url == inara::API_URL)
+        .flat_map(|p| serde_json::from_str::<Value>(&p.body_text()).ok().and_then(|b| b["events"].as_array().cloned()).unwrap_or_default())
+        .filter_map(|e| e["eventName"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Paused as EDDN is: nothing goes out while paused (not even a key check or a list download), what was waiting is
+/// dropped, and what happened meanwhile isn't sent after resuming either.
+#[test]
+fn edsm_inara_and_edastro_pause_like_eddn() {
+    let on = UplinkConfig { edsm: edsm_cfg().edsm, inara: inara_cfg().inara, edastro: true, ..UplinkConfig::default() };
+    let pause = |p: bool| UplinkConfig { edsm_paused: p, inara_paused: p, edastro_paused: p, ..on.clone() };
+    let mut h = Harness::new(pause(true), RecordingTransport::simulated());
+    h.session();
+    h.send(DISCOVERY);
+    h.send(ORGANIC);
+    h.uplink().flush();
+    h.settle();
+    assert!(h.transport.requests().is_empty(), "nothing at all goes out while paused");
+    let st = h.uplink().status();
+    assert_eq!((st.edsm.queued, st.inara.queued, st.edastro.queued), (0, 0, 0), "nothing is kept to send later");
+    assert!(!st.edsm.enabled && !st.inara.enabled && !st.edastro.enabled, "status shows them as not sending");
+
+    h.uplink().set_config(pause(false));
+    h.send(FSDJUMP);
+    h.send(ORGANIC);
+    h.uplink().flush();
+    assert!(h.wait_for(|r| edsm_events(r).iter().any(|e| e == "FSDJump") && !inara_events(r).is_empty() && r.iter().any(|q| q.url == edastro::JOURNAL_URL)));
+    h.settle();
+    let reqs = h.transport.requests();
+    let edsm = edsm_events(&reqs);
+    assert!(!edsm.iter().any(|e| e == "LoadGame" || e == "FSSDiscoveryScan"), "only what happened after resuming: {edsm:?}");
+    let inara = inara_events(&reqs);
+    assert!(inara.iter().any(|e| e == "addCommanderTravelFSDJump"), "{inara:?}");
+    assert!(!inara.iter().any(|e| e == "setCommanderCredits"), "the login during the pause isn't sent: {inara:?}");
+    let edastro: Vec<Value> = reqs.iter().filter(|r| r.url == edastro::JOURNAL_URL).flat_map(|p| serde_json::from_str::<Vec<Value>>(&p.body_text()).unwrap_or_default()).collect();
+    assert_eq!(edastro.iter().filter(|e| e["event"] == "ScanOrganic").count(), 1, "one scan after resuming, none from the pause");
+}
+
+const MISSION_ACCEPTED: &str = r#""event":"MissionAccepted", "Faction":"Sacra Oculus", "Name":"Mission_Courier", "LocalisedName":"Courier", "DestinationSystem":"Sol", "DestinationStation":"Abraham Lincoln", "Expiry":"2030-01-01T00:00:00Z", "Wing":false, "Influence":"++", "Reputation":"++", "Reward":50000, "MissionID":999"#;
+const MISSION_COMPLETED: &str = r#""event":"MissionCompleted", "Faction":"Sacra Oculus", "Name":"Mission_Courier_name", "MissionID":999, "DestinationSystem":"Sol", "DestinationStation":"Abraham Lincoln", "Reward":50000, "FactionEffects":[ { "Faction":"Sacra Oculus", "Effects":[ ], "Influence":[ { "SystemAddress":6406446944978, "Trend":"UpGood", "Influence":"++" } ], "ReputationTrend":"UpGood", "Reputation":"++" } ]"#;
+const RANKS: [&str; 2] = [
+    r#""event":"Rank", "Combat":1, "Trade":4, "Explore":6, "Soldier":0, "Exobiologist":2, "Empire":7, "Federation":1, "CQC":0"#,
+    r#""event":"Progress", "Combat":30, "Trade":46, "Explore":78, "Soldier":0, "Exobiologist":35, "Empire":37, "Federation":100, "CQC":0"#,
+];
+
+/// A mission handed in while Inara was paused isn't sent when it resumes, nor one handed in before Inara was switched
+/// on: the profile sync the app runs then (`sync_inara_profile`) sends the commander's state, never what was done.
+#[test]
+fn a_profile_sync_never_sends_a_past_mission() {
+    let at = Timestamp(Timestamp::now().0 - 120);
+    let session = [FILEHEADER, LOADGAME, RANKS[0], RANKS[1], FSDJUMP, MISSION_ACCEPTED, MISSION_COMPLETED];
+    let lines = || -> Vec<RawEvent> { session.iter().map(|b| live_event(b, at).raw).collect() };
+    let synced = |h: &Harness| h.wait_for(|r| inara_events(r).iter().any(|e| e == "setCommanderRankPilot"));
+
+    // Accepted, paused, handed in, resumed (the app resumes, then syncs the profile).
+    let mut h = Harness::new(inara_cfg(), RecordingTransport::simulated());
+    for b in &session[..6] {
+        h.send_at(b, at);
+    }
+    h.uplink().set_config(UplinkConfig { inara_paused: true, ..inara_cfg() });
+    h.send_at(MISSION_COMPLETED, at);
+    h.uplink().set_config(inara_cfg());
+    h.uplink().sync_inara_profile(lines(), h.tracker.context());
+    h.uplink().flush();
+    assert!(synced(&h), "the profile is synced");
+    h.settle();
+    let sent = inara_events(&h.transport.requests());
+    assert!(!sent.iter().any(|e| e.starts_with("setCommanderMission")), "the hand-in during the pause stays out: {sent:?}");
+
+    // Handed in, then Inara switched on.
+    let mut h = Harness::new(UplinkConfig::default(), RecordingTransport::simulated());
+    for b in &session {
+        h.send_at(b, at);
+    }
+    h.uplink().set_config(inara_cfg());
+    h.uplink().sync_inara_profile(lines(), h.tracker.context());
+    h.uplink().flush();
+    assert!(synced(&h), "the profile is synced");
+    h.settle();
+    let sent = inara_events(&h.transport.requests());
+    assert!(!sent.iter().any(|e| e.contains("Mission")), "nothing from before sync was on: {sent:?}");
+}
+
+/// Pausing drops what was queued but not sent yet, as switching a service off does.
+#[test]
+fn pausing_drops_the_queue() {
+    let mut h = Harness::new(inara_cfg(), RecordingTransport::simulated());
+    h.session();
+    // The test timings gather Inara's events until a flush: they wait in the queue.
+    assert!(h.wait_for(|_| h.uplink().status().inara.queued > 0));
+    h.uplink().set_config(UplinkConfig { inara_paused: true, ..inara_cfg() });
+    h.uplink().flush();
+    h.settle();
+    assert_eq!(h.uplink().status().inara.queued, 0);
+    assert!(inara_events(&h.transport.requests()).is_empty(), "nothing of it was sent");
+}
+
 // ---- Inara: who is this key, and syncing the current profile -------------------------------
 
 fn wait_status(h: &Harness, pred: impl Fn(&ServiceStatus) -> bool) -> ServiceStatus {
@@ -661,6 +777,6 @@ fn inara_profile_snapshot_sends_current_state_only() {
         .filter(|n| n != "getCommanderProfile")
         .collect();
     assert!(names.contains(&"setCommanderRankPilot".to_string()), "{names:?}");
-    assert!(names.iter().all(|n| n.starts_with("set")), "only current state, no past activity: {names:?}");
+    assert!(names.iter().all(|n| inara::is_state(n)), "only current state, no past activity: {names:?}");
     assert!(h.transport.requests().iter().all(|r| r.url == inara::API_URL), "nothing goes to EDDN or EDSM");
 }

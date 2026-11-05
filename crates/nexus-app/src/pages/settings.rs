@@ -28,6 +28,9 @@ pub struct SettingsCtx<'a> {
     pub voice: crate::tts::VoiceStatus,
     /// Windows: the voices of the speech engine in use.
     pub voices: Vec<crate::tts::VoiceInfo>,
+    /// Out: list the engine's voices again (the page has just opened, or its voice list), for a voice installed
+    /// while Elite Nexus runs.
+    pub refresh_voices: bool,
     /// The overlay is see-through this run (its switch applies after a restart).
     pub overlay_see_through: bool,
     /// What happened to the last screenshot saved as PNG this run.
@@ -52,6 +55,8 @@ pub struct SettingsUi {
     /// The game's screenshot folder, and the journal folder it was found for.
     shots_dir: Option<(Option<PathBuf>, Option<PathBuf>)>,
     shots_msg: Option<String>,
+    /// The pass the page was last drawn in: a gap means it has just been opened.
+    shown_pass: Option<u64>,
 }
 
 /// A slider with its value shown on the right, sized for a settings row.
@@ -63,6 +68,12 @@ fn slider(ui: &mut Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>, de
 const UI_SCALES: [(f32, &str); 6] = [(0.9, "90 %"), (1.0, "100 %"), (1.1, "110 %"), (1.25, "125 %"), (1.5, "150 %"), (1.75, "175 %")];
 
 pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
+    // Opened just now: the voices are listed again, so one installed meanwhile is offered.
+    let pass = ui.ctx().cumulative_pass_nr();
+    if cx.ui.shown_pass.is_none_or(|p| p + 1 < pass) {
+        cx.refresh_voices = true;
+    }
+    cx.ui.shown_pass = Some(pass);
     cards(ui, 2, 420.0, |c| {
         c.add(|ui| {
             let s = &mut *cx.settings;
@@ -99,6 +110,10 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                                 cx.changed |= ui.selectable_value(&mut s.tts_voice, v.id.clone(), &v.name).changed();
                             }
                         });
+                        // Opening the list reads the voices again: one installed a moment ago appears in it.
+                        if combo.response.clicked() {
+                            cx.refresh_voices = true;
+                        }
                         combo.response.on_hover_text(name);
                     });
                 }
@@ -134,7 +149,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                     }
                 });
                 cx.changed |= g.switch(&mut s.auto_page, "Follow my flight", "Exploration while you fly a system, Exobiology near a planet with life, Navigation in the galaxy map or when a jump charges or the system is done. Only while you're on one of those pages.");
-                g.row("Planet view below", "Closer than this to a planet with biology left to analyse, Exobiology opens instead of Exploration.", |ui| {
+                g.row("Planet view below", "Closer than this to a planet with biology left to analyse, Exobiology opens instead of Exploration, until you climb a tenth higher.", |ui| {
                     cx.changed |= slider(ui, &mut s.auto_page_altitude_km, 10.0..=500.0, 0, " km");
                 });
             });

@@ -504,6 +504,44 @@ fn redeemed_vouchers_count_for_the_bgs_and_the_ledger() {
     assert_eq!(earned(LedgerCategory::Exploration), Some(25_000));
 }
 
+/// A sale of cartographic data counts for the station's faction in either form the journal writes it. Journals from
+/// older versions of the game name the station's faction as a plain string when you dock, and the sale is a
+/// `SellExplorationData`; newer ones give the faction with its state, and the sale is a `MultiSellExplorationData`.
+#[test]
+fn both_forms_of_a_data_sale_count_for_the_bgs() {
+    use nexus_journal::Timestamp;
+    use nexus_model::bgs::BgsKind;
+    use nexus_model::history::LedgerCategory;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            // An older journal: docked, then the sale.
+            r#"{ "timestamp":"2018-05-12T18:30:01Z", "event":"Docked", "StationName":"Alpha Hub", "StationType":"Coriolis", "StarSystem":"Alpha", "MarketID":128000002, "StationFaction":"Alpha Jet Group", "FactionState":"Boom", "StationGovernment":"$government_Corporate;", "StationGovernment_Localised":"Corporate", "StationEconomy":"$economy_Industrial;", "StationEconomy_Localised":"Industrial", "DistFromStarLS":12.0 }"#,
+            r#"{ "timestamp":"2018-05-12T18:31:00Z", "event":"SellExplorationData", "Systems":[ "Beta", "Gamma" ], "Discovered":[ "Beta 1" ], "BaseValue":40000, "Bonus":5000, "TotalEarnings":45000 }"#,
+            r#"{ "timestamp":"2018-05-12T18:35:00Z", "event":"Undocked", "StationName":"Alpha Hub", "StationType":"Coriolis" }"#,
+            // A newer one: another station of the system, another faction.
+            r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"Docked", "StationName":"Alpha Port", "StationType":"Orbis", "StarSystem":"Alpha", "SystemAddress":100, "MarketID":128000003, "StationFaction":{ "Name":"Alpha Patron's Party", "FactionState":"None" }, "StationServices":[ "dock", "exploration" ], "DistFromStarLS":40.0 }"#,
+            r#"{ "timestamp":"2026-10-01T10:22:00Z", "event":"MultiSellExplorationData", "Discovered":[ { "SystemName":"Delta", "NumBodies":3 } ], "BaseValue":100000, "Bonus":20000, "TotalEarnings":120000 }"#,
+        ],
+    );
+    let gs = m.active().expect("commander");
+    let summary = gs.bgs.summary(Timestamp::ZERO);
+    let found: Vec<_> = summary.iter().flat_map(|s| s.factions.iter().map(|f| (s.system.as_str(), f.faction.as_str(), f.kinds.clone()))).collect();
+    assert_eq!(
+        found,
+        [
+            ("Alpha", "Alpha Jet Group", vec![(BgsKind::Exploration, 45_000, 1)]),
+            ("Alpha", "Alpha Patron's Party", vec![(BgsKind::Exploration, 120_000, 1)]),
+        ]
+    );
+    let earned = gs.history.totals_since(Timestamp::ZERO).into_iter().find(|(c, _, _)| *c == LedgerCategory::Exploration).map(|(_, i, _)| i);
+    assert_eq!(earned, Some(165_000), "the ledger counted both already");
+    assert!(gs.feed.iter().any(|f| f.event == "SellExplorationData" && f.text == "Sold cartographic data: 45,000 Cr"), "and the activity feed lists it");
+    assert_eq!(gs.history.docks.iter().map(|d| d.station.as_str()).collect::<Vec<_>>(), ["Alpha Hub", "Alpha Port"], "both dockings are in the history");
+}
+
 /// `PowerplayMerits` names no system: each award goes to the system the commander was in when the game wrote it,
 /// and the period's total stays the sum of the awards.
 #[test]
@@ -1010,4 +1048,55 @@ fn fully_explored_needs_scan_map_and_bio() {
     assert!(!beta(&m));
     feed(&mut m, &[r#"{ "timestamp":"2026-10-01T11:03:00Z", "event":"FSSAllBodiesFound", "SystemName":"Beta", "SystemAddress":200, "Count":2 }"#]);
     assert!(beta(&m), "the icy body isn't worth mapping");
+}
+
+/// Each biological signal is a genus. Brain Trees can grow several species on one body, so two of them analysed still
+/// leave the second genus, Stratum, to do.
+#[test]
+fn bio_done_counts_genera_not_species() {
+    let analyse = |ts: &str, genus: &str, genus_name: &str, species: &str, species_name: &str| {
+        format!(
+            r#"{{ "timestamp":"{ts}", "event":"ScanOrganic", "ScanType":"Analyse", "Genus":"{genus}", "Genus_Localised":"{genus_name}", "Species":"{species}", "Species_Localised":"{species_name}", "WasLogged":false, "SystemAddress":100, "Body":3 }}"#
+        )
+    };
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 3", "BodyID":3, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":20.0, "PlanetClass":"Rocky body", "MassEM":0.05, "Landable":true, "Volcanism":"minor silicate vapour geysers volcanism", "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:05:00Z", "event":"SAASignalsFound", "BodyName":"Alpha 3", "SystemAddress":100, "BodyID":3, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":2 } ], "Genuses":[ { "Genus":"$Codex_Ent_Brancae_Name;", "Genus_Localised":"Brain Trees" }, { "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum" } ] }"#,
+        ],
+    );
+    let done = |m: &Model| m.active().unwrap().exploration.systems[&100].bodies[&3].bio_done();
+    let brain_trees = [
+        analyse("2026-10-01T10:20:00Z", "$Codex_Ent_Brancae_Name;", "Brain Trees", "$Codex_Ent_SeedABCD_01_Name;", "Gypseeum Brain Tree"),
+        analyse("2026-10-01T10:40:00Z", "$Codex_Ent_Brancae_Name;", "Brain Trees", "$Codex_Ent_SeedABCD_02_Name;", "Ostrinum Brain Tree"),
+    ];
+    feed(&mut m, &[brain_trees[0].as_str(), brain_trees[1].as_str()]);
+    let body = &m.active().unwrap().exploration.systems[&100].bodies[&3];
+    assert_eq!(body.organics.iter().filter(|o| o.analysed).count(), 2, "two species analysed");
+    assert!(!done(&m), "one genus of two");
+    feed(&mut m, &[analyse("2026-10-01T11:00:00Z", "$Codex_Ent_Stratum_Genus_Name;", "Stratum", "$Codex_Ent_Stratum_07_Name;", "Stratum Tectonicas").as_str()]);
+    assert!(done(&m), "both genera");
+
+    // A game in another language names the genus in it. A species the exobiology data knows and one it doesn't (one
+    // added since) of the same genus are still one genus.
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 3", "BodyID":3, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":20.0, "PlanetClass":"Rocky body", "MassEM":0.05, "Landable":true, "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:05:00Z", "event":"FSSBodySignals", "BodyName":"Alpha 3", "BodyID":3, "SystemAddress":100, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biologisch", "Count":2 } ] }"#,
+        ],
+    );
+    feed(
+        &mut m,
+        &[
+            analyse("2026-10-01T10:20:00Z", "$Codex_Ent_Brancae_Name;", "Hirnbäume", "$Codex_Ent_SeedABCD_01_Name;", "Gypseeum-Hirnbaum").as_str(),
+            analyse("2026-10-01T10:40:00Z", "$Codex_Ent_Brancae_Name;", "Hirnbäume", "$Codex_Ent_SeedZZZZ_09_Name;", "Neuer Hirnbaum").as_str(),
+        ],
+    );
+    assert!(!done(&m), "one genus of two, in any language");
 }

@@ -30,7 +30,10 @@ pub struct RingInfo {
 
 #[derive(Debug, Clone, Default)]
 pub struct OrganicSpecies {
+    /// As the game's language names it (`Genus_Localised`).
     pub genus: String,
+    /// The journal's codex symbol of the genus (`$Codex_Ent_Stratum_Genus_Name;`): the same in every language.
+    pub genus_symbol: String,
     pub species: String,
     pub variant: Option<String>,
     /// Codex symbol of the species (`$Codex_Ent_Stratum_07_Name;`).
@@ -38,6 +41,21 @@ pub struct OrganicSpecies {
     /// 0 = only seen/predicted, 1..3 = samples taken.
     pub samples: u8,
     pub analysed: bool,
+}
+
+impl OrganicSpecies {
+    /// The genus it belongs to, for counting genera, the same in every language: the exobiology data's genus for a
+    /// known species (right where the journal names the genus oddly, as for Stratum Araneamus), else for the journal's
+    /// genus symbol, else that symbol itself, else the species' own.
+    pub fn genus_key(&self) -> &str {
+        if let Some(s) = nexus_data::exobio::species(&self.species_symbol) {
+            return s.genus;
+        }
+        if let Some(g) = nexus_data::exobio::genus(&self.genus_symbol) {
+            return g.name;
+        }
+        if self.genus_symbol.is_empty() { &self.species_symbol } else { &self.genus_symbol }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -200,10 +218,21 @@ impl Body {
         self.kind == BodyKind::Planet
     }
 
-    /// Nothing biological left to do here: no biological signals, or one species analysed per signal
-    /// (each signal is a genus, and only one species per genus grows on a body).
+    /// Nothing biological left to do here: no biological signals, or a species analysed in as many genera as there are
+    /// signals (each signal is a genus). Genera are counted, not species: Brain Trees and Sinuous Tubers can grow
+    /// several species on one body, so two of them analysed don't make up for a genus not yet found.
     pub fn bio_done(&self) -> bool {
-        self.bio_signals == 0 || self.organics.iter().filter(|o| o.analysed).count() >= self.bio_signals as usize
+        if self.bio_signals == 0 {
+            return true;
+        }
+        let mut genera: Vec<&str> = Vec::new();
+        for o in self.organics.iter().filter(|o| o.analysed) {
+            let g = o.genus_key();
+            if !genera.contains(&g) {
+                genera.push(g);
+            }
+        }
+        genera.len() >= self.bio_signals as usize
     }
 
     pub fn recompute_value(&mut self, odyssey: bool) {

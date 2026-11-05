@@ -22,9 +22,14 @@ enum Flight {
     Planet,
 }
 
+/// Once under "Planet view below", the planet's page holds until the commander climbs a tenth above it, so hovering
+/// around that altitude doesn't flip between Exobiology and Exploration.
+const PLANET_MARGIN: f64 = 1.1;
+
 impl Flight {
-    /// `altitude_m` is Status.json's altitude, when it gives one; `planet_m` is Settings' "Planet view below".
-    fn of(cx: &Context, altitude_m: Option<f64>, planet_m: f64) -> Flight {
+    /// `altitude_m` is Status.json's altitude, when it gives one; `planet_m` is Settings' "Planet view below"; `was`
+    /// is the flight at the last look (a planet's view holds a tenth above `planet_m`).
+    fn of(cx: &Context, altitude_m: Option<f64>, planet_m: f64, was: Option<Flight>) -> Flight {
         // Plotting the next trip, wherever the map is opened: docked or in an SRV too.
         if cx.focus == GuiFocus::GalaxyMap {
             return Flight::Route;
@@ -33,7 +38,10 @@ impl Flight {
             Activity::NotInGame | Activity::Docked | Activity::Srv(_) => Flight::Idle,
             Activity::ChargingJump | Activity::Hyperspace => Flight::Route,
             Activity::Landed | Activity::OnFootPlanet => Flight::Planet,
-            Activity::NearBody | Activity::Glide => if altitude_m.is_some_and(|a| a < planet_m) { Flight::Planet } else { Flight::System },
+            Activity::NearBody | Activity::Glide => {
+                let below = if was == Some(Flight::Planet) { planet_m * PLANET_MARGIN } else { planet_m };
+                if altitude_m.is_some_and(|a| a < below) { Flight::Planet } else { Flight::System }
+            }
             Activity::Supercruise | Activity::Space => Flight::System,
         }
     }
@@ -63,11 +71,13 @@ pub struct Follower {
 impl Follower {
     /// Reads what the commander is doing (`Context::of`, from Status.json while the game runs) and, when it changed,
     /// names the page that fits: Navigation in the galaxy map, while a hyperspace jump charges and in hyperspace;
-    /// Exploration while flying the system; Exobiology under the "Planet view below" altitude (`planet_m`), landed or
-    /// on foot outside, when the body has life still to analyse (Exploration otherwise); Navigation too once the
-    /// system is done (`high_value`: Settings' "High-value body"). The first look at a commander only takes the
-    /// snapshot, after a switch to another commander too. Works only when a Status.json update or a journal event
-    /// arrived: on every other frame it compares a counter, a pointer and the commander's id, and allocates nothing.
+    /// Exploration while flying the system; Exobiology under the "Planet view below" altitude (`planet_m`, held until a
+    /// tenth above it on the way up), landed or on foot outside, when the body has life still to analyse (Exploration
+    /// otherwise); Navigation once the system is done (`high_value`: Settings' "High-value body"), and in place of
+    /// Exploration in a system that's done: arriving in one explored before, or leaving a planet there. The first look
+    /// at a commander only takes the snapshot, after a switch to another commander too. Works only when a Status.json
+    /// update or a journal event arrived: on every other frame it compares a counter, a pointer and the commander's id,
+    /// and allocates nothing.
     pub fn step(&mut self, gs: &GameState, planet_m: f64, high_value: i64) -> Option<Page> {
         let same_status = |p: &Snapshot| match (&p.status, &gs.status) {
             (Some(a), Some(b)) => Arc::ptr_eq(a, b),
@@ -78,7 +88,8 @@ impl Follower {
             return None;
         }
         let cx = Context::of(gs);
-        let flight = Flight::of(&cx, gs.status.as_ref().and_then(|s| s.altitude), planet_m);
+        let was = self.last.as_ref().filter(|p| p.fid == gs.cmdr.fid).map(|p| p.flight);
+        let flight = Flight::of(&cx, gs.status.as_ref().and_then(|s| s.altitude), planet_m, was);
         let system = gs.exploration.current_system();
         let done = system.is_some_and(|s| s.fully_explored(high_value));
         let prev = self.last.replace(Snapshot { fid: gs.cmdr.fid.clone(), status: gs.status.clone(), events: gs.events_applied, flight, done });
@@ -86,13 +97,15 @@ impl Follower {
         // alt loaded in a finished system didn't just finish it).
         let prev = prev.filter(|p| p.fid == gs.cmdr.fid)?;
         if flight != prev.flight {
+            // A system with nothing left to do is Navigation's: Exploration would only show it finished.
+            let explore = if done { Page::Navigation } else { Page::Exploration };
             match flight {
                 Flight::Route => Some(Page::Navigation),
-                Flight::System => Some(Page::Exploration),
+                Flight::System => Some(explore),
                 Flight::Planet => {
                     // The body by its id when the journal named it, else by Status.json's name.
                     let body = cx.body.as_ref().zip(system).and_then(|(b, s)| b.id.and_then(|id| s.bodies.get(&id)).or_else(|| s.bodies.values().find(|x| x.name == b.name)));
-                    Some(if body.is_some_and(|b| b.bio_signals > 0 && !b.bio_done()) { Page::Exobiology } else { Page::Exploration })
+                    Some(if body.is_some_and(|b| b.bio_signals > 0 && !b.bio_done()) { Page::Exobiology } else { explore })
                 }
                 Flight::Idle => None,
             }
@@ -184,11 +197,26 @@ mod tests {
             ],
         );
         assert_eq!(step(&m), None, "scanning changes nothing");
+        feed(&mut m, &[r#"{ "timestamp":"2026-10-25T10:14:30Z", "event":"ApproachBody", "StarSystem":"Beta", "SystemAddress":200, "Body":"Beta 2", "BodyID":2 }"#]);
+        status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 2", 100_000));
+        assert_eq!(step(&m), Some(Page::Exploration), "a planet without biology");
+        status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 2", 400_000));
+        assert_eq!(step(&m), Some(Page::Exploration), "back to the system");
         feed(&mut m, &[r#"{ "timestamp":"2026-10-25T10:15:00Z", "event":"ApproachBody", "StarSystem":"Beta", "SystemAddress":200, "Body":"Beta 1", "BodyID":1 }"#]);
         status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 1", 400_000));
         assert_eq!(step(&m), None, "orbital cruise is still the system");
         status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 1", 100_000));
         assert_eq!(step(&m), Some(Page::Exobiology), "under Planet view below, over biology left to analyse");
+        status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 1", 160_000));
+        assert_eq!(step(&m), None, "hovering just above Planet view below keeps the planet");
+        status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 1", 140_000));
+        assert_eq!(step(&m), None, "and just below it");
+        status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 1", 170_000));
+        assert_eq!(step(&m), Some(Page::Exploration), "a tenth above it: the system");
+        status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 1", 160_000));
+        assert_eq!(step(&m), None, "on the way down the planet starts at Planet view below");
+        status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 1", 100_000));
+        assert_eq!(step(&m), Some(Page::Exobiology));
         status(&mut m, SHIP | flags::HAS_LAT_LONG, flags2::GLIDE_MODE, &near("Beta 1", 20_000));
         assert_eq!(step(&m), None, "gliding");
         status(&mut m, SHIP | flags::HAS_LAT_LONG | flags::LANDED | flags::LANDING_GEAR_DOWN, 0, &near("Beta 1", 0));
@@ -200,16 +228,31 @@ mod tests {
         feed(&mut m, &[&organic("Analyse", "2026-10-25T10:24:00Z")]);
         assert_eq!(step(&m), Some(Page::Navigation), "the last genus analysed: the system is done");
         status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 1", 400_000));
-        assert_eq!(step(&m), Some(Page::Exploration), "back above Planet view below");
-        feed(&mut m, &[r#"{ "timestamp":"2026-10-25T10:30:00Z", "event":"ApproachBody", "StarSystem":"Beta", "SystemAddress":200, "Body":"Beta 2", "BodyID":2 }"#]);
-        status(&mut m, SHIP | flags::SUPERCRUISE | flags::HAS_LAT_LONG, 0, &near("Beta 2", 100_000));
-        assert_eq!(step(&m), Some(Page::Exploration), "a planet without biology");
+        assert_eq!(step(&m), Some(Page::Navigation), "back above Planet view below, in a system that's done");
         status(&mut m, DOCKED, 0, r#", "GuiFocus":0"#);
         assert_eq!(step(&m), None, "docked");
         status(&mut m, DOCKED, 0, r#", "GuiFocus":6"#);
         assert_eq!(step(&m), Some(Page::Navigation), "the galaxy map, docked too");
         status(&mut m, DOCKED, 0, r#", "GuiFocus":0"#);
         assert_eq!(step(&m), None, "closing it");
+        status(&mut m, SHIP | flags::SUPERCRUISE, 0, "");
+        assert_eq!(step(&m), Some(Page::Navigation), "leaving the station, in a system that's done");
+        // On to Gamma, then back to Beta, explored before.
+        let mut jump = |m: &mut Model, system: &str, address: u64, at: &str| {
+            status(m, SHIP | flags::SUPERCRUISE | flags::FSD_CHARGING, flags2::FSD_HYPERDRIVE_CHARGING, "");
+            assert_eq!(step(m), Some(Page::Navigation), "charging for {system}");
+            feed(
+                m,
+                &[
+                    &format!(r#"{{ "timestamp":"{at}", "event":"StartJump", "JumpType":"Hyperspace", "StarSystem":"{system}", "SystemAddress":{address}, "StarClass":"G" }}"#),
+                    &format!(r#"{{ "timestamp":"{at}", "event":"FSDJump", "StarSystem":"{system}", "SystemAddress":{address}, "StarPos":[30.0,0.0,0.0], "Population":0, "JumpDist":10.0, "FuelUsed":1.0, "FuelLevel":62.0 }}"#),
+                ],
+            );
+            status(m, SHIP | flags::SUPERCRUISE, 0, "");
+            step(m)
+        };
+        assert_eq!(jump(&mut m, "Gamma", 300, "2026-10-25T10:40:00Z"), Some(Page::Exploration), "arriving somewhere new");
+        assert_eq!(jump(&mut m, "Beta", 200, "2026-10-25T10:50:00Z"), Some(Page::Navigation), "arriving in a system explored before");
     }
 
     /// Loading an alt docked in a finished system isn't the system just finished: the switch only takes a snapshot.
@@ -240,13 +283,13 @@ mod tests {
         assert!(m.active().unwrap().exploration.current_system().is_some_and(|s| s.fully_explored(HIGH_VALUE)), "the alt is in a finished system");
         assert_eq!(step(&m), None, "another commander");
         status(&mut m, SHIP | flags::SUPERCRUISE, 0, "");
-        assert_eq!(step(&m), Some(Page::Exploration), "the alt is followed from there");
+        assert_eq!(step(&m), Some(Page::Navigation), "the alt is followed from there: flying its finished system");
     }
 
     /// The pages Follow my flight moves between, from the commander's context.
     #[test]
     fn flight_from_context() {
-        let of = |a: Activity, alt: Option<f64>| Flight::of(&cx(a, GuiFocus::None), alt, KM150);
+        let of = |a: Activity, alt: Option<f64>| Flight::of(&cx(a, GuiFocus::None), alt, KM150, None);
         assert_eq!(of(Activity::Supercruise, None), Flight::System);
         assert_eq!(of(Activity::Space, None), Flight::System);
         assert_eq!(of(Activity::ChargingJump, None), Flight::Route);
@@ -260,10 +303,16 @@ mod tests {
         assert_eq!(of(Activity::Srv(Vehicle::Scarab), Some(0.0)), Flight::Idle, "driving changes nothing");
         assert_eq!(of(Activity::Docked, None), Flight::Idle);
         assert_eq!(of(Activity::NotInGame, None), Flight::Idle);
-        assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::GalaxyMap), Some(1_000.0), KM150), Flight::Route, "the galaxy map wins");
-        assert_eq!(Flight::of(&cx(Activity::Docked, GuiFocus::GalaxyMap), None, KM150), Flight::Route, "docked too");
-        assert_eq!(Flight::of(&cx(Activity::Srv(Vehicle::Scarab), GuiFocus::GalaxyMap), Some(0.0), KM150), Flight::Route, "and in an SRV");
-        assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::SystemMap), Some(1_000.0), KM150), Flight::Planet, "the system map doesn't");
-        assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::None), Some(100_000.0), 50_000.0), Flight::System, "the altitude is the setting's");
+        assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::GalaxyMap), Some(1_000.0), KM150, None), Flight::Route, "the galaxy map wins");
+        assert_eq!(Flight::of(&cx(Activity::Docked, GuiFocus::GalaxyMap), None, KM150, None), Flight::Route, "docked too");
+        assert_eq!(Flight::of(&cx(Activity::Srv(Vehicle::Scarab), GuiFocus::GalaxyMap), Some(0.0), KM150, None), Flight::Route, "and in an SRV");
+        assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::SystemMap), Some(1_000.0), KM150, None), Flight::Planet, "the system map doesn't");
+        assert_eq!(Flight::of(&cx(Activity::NearBody, GuiFocus::None), Some(100_000.0), 50_000.0, None), Flight::System, "the altitude is the setting's");
+        // Over the planet already, it holds until a tenth above the altitude; on the way down it starts at it.
+        let near = |alt: f64, was: Flight| Flight::of(&cx(Activity::NearBody, GuiFocus::None), Some(alt), KM150, Some(was));
+        assert_eq!(near(160_000.0, Flight::Planet), Flight::Planet);
+        assert_eq!(near(165_001.0, Flight::Planet), Flight::System);
+        assert_eq!(near(160_000.0, Flight::System), Flight::System);
+        assert_eq!(near(149_999.0, Flight::System), Flight::Planet);
     }
 }
