@@ -1,7 +1,47 @@
-//! Long-term history: jumps, visited systems, docks, deaths, the credit ledger.
+//! Long-term history: jumps, visited systems, docks, deaths, the credit ledger, time in the game and what the
+//! commander did (the statistics count them over any period).
 
 use nexus_journal::Timestamp;
 use rustc_hash::FxHashMap;
+
+/// Time in the game: from a login (`LoadGame`) until the commander went back to the main menu or closed the game, as the
+/// game's own time played counts it. A crash writes nothing, so a session that ended in one runs to its journal's last
+/// line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaySpan {
+    pub start: Timestamp,
+    pub end: Timestamp,
+}
+
+impl PlaySpan {
+    pub fn secs(&self) -> i64 {
+        (self.end.0 - self.start.0).max(0)
+    }
+}
+
+/// Something the commander did that the statistics count over a period: the model's other records keep what is (a
+/// body's scan, a species, the cargo), not when it was done.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Deed {
+    /// A ship destroyed for a bounty (`Bounty`) or a combat bond (`FactionKillBond`, `CapShipBond`), and the reward.
+    Kill { reward: i64, bond: bool },
+    /// A star or planet scanned in detail for the first time; `first`: nobody had discovered it before.
+    Scan { first: bool },
+    /// A planet mapped with probes; `first`: nobody had mapped it before; `efficient`: within the probe target.
+    Map { first: bool, efficient: bool },
+    /// A species analysed (its third sample), what Vista Genomics should pay for it (with the first-logged bonus when
+    /// that's likely), and whether it is.
+    Organic { value: i64, first: bool },
+    /// Cargo sold at a market: tonnes, what it had cost and the profit over that, as the game works them out. `mined`:
+    /// it cost nothing (mined, salvaged, stolen or given for a mission), so all of the sale is profit.
+    Sale { tonnes: i64, cost: i64, profit: i64, mined: bool },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeedRecord {
+    pub ts: Timestamp,
+    pub deed: Deed,
+}
 
 #[derive(Debug, Clone)]
 pub struct JumpRecord {
@@ -110,9 +150,56 @@ pub struct History {
     pub ledger: Vec<LedgerEntry>,
     /// Absolute credit balance samples (LoadGame + live Status balance changes).
     pub credit_samples: Vec<(Timestamp, i64)>,
+    /// Time in the game, one span per session, oldest first.
+    pub play: Vec<PlaySpan>,
+    /// In the game now: journal lines extend the last span.
+    in_game: bool,
+    /// What the commander did, oldest first.
+    pub deeds: Vec<DeedRecord>,
 }
 
 impl History {
+    /// A login: a session starts.
+    pub fn login(&mut self, ts: Timestamp) {
+        self.play.push(PlaySpan { start: ts, end: ts });
+        self.in_game = true;
+    }
+
+    /// A journal line written at `ts`: the session, if one is on, lasts until then at least.
+    pub fn played(&mut self, ts: Timestamp) {
+        if self.in_game
+            && let Some(s) = self.play.last_mut()
+            && ts > s.end
+        {
+            s.end = ts;
+        }
+    }
+
+    /// Back at the main menu, the game closed, or a new game started (a journal's first part): the session is over.
+    pub fn logout(&mut self) {
+        self.in_game = false;
+    }
+
+    pub fn deed(&mut self, ts: Timestamp, deed: Deed) {
+        self.deeds.push(DeedRecord { ts, deed });
+    }
+
+    /// The oldest moment the history holds: where the journals Elite Nexus read begin.
+    pub fn first(&self) -> Option<Timestamp> {
+        [
+            self.play.first().map(|p| p.start),
+            self.credit_samples.first().map(|(t, _)| *t),
+            self.ledger.first().map(|e| e.ts),
+            self.jumps.first().map(|j| j.ts),
+            self.docks.first().map(|d| d.ts),
+            self.deeds.first().map(|d| d.ts),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|t| !t.is_zero())
+        .min()
+    }
+
     pub fn visit(&mut self, address: u64, name: &str, pos: Option<[f64; 3]>, ts: Timestamp) {
         let v = self.visited.entry(address).or_insert_with(|| VisitedSystem {
             name: name.to_string(),

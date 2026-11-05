@@ -6,9 +6,9 @@ use crate::carrier::{Carrier, CarrierKind};
 use crate::colonisation::Colonisation;
 use crate::commander::{Commander, PowerplayStatus, Squadron};
 use crate::exobio::{ExoBio, ScanOutcome};
-use crate::exploration::{interesting, Exploration, Interest};
+use crate::exploration::{interesting, BodyKind, Exploration, Interest};
 use crate::fleet::{Fleet, Ship, ShipLocation, ShipPlace};
-use crate::history::{DeathRecord, DockRecord, History, JumpRecord, LedgerCategory};
+use crate::history::{DeathRecord, Deed, DockRecord, History, JumpRecord, LedgerCategory};
 use crate::inventory::{Inventory, MaterialCategory};
 use crate::location::{ArrivalKind, Location};
 use crate::mining::{Mining, SiteKey};
@@ -151,8 +151,19 @@ impl GameState {
         let ts = ctx.ts;
         self.last_event = ts;
         self.events_applied += 1;
+        // A session's time runs to each of its lines (not to a new game's first lines: the last session may have ended in
+        // a crash, which writes nothing).
+        if !matches!(event, Event::LoadGame(_) | Event::Fileheader(_)) {
+            self.history.played(ts);
+        }
         match event {
-            Event::Fileheader(h) => self.apply_header(h),
+            Event::Fileheader(h) => {
+                // A journal's first part: the game has just started, so any session before it is over.
+                if h.part <= 1 {
+                    self.history.logout();
+                }
+                self.apply_header(h)
+            }
             Event::Commander(c) | Event::NewCommander(c) => {
                 self.cmdr.name = c.name.clone();
                 if !c.fid.is_empty() {
@@ -165,6 +176,7 @@ impl GameState {
                 self.fleet.on_load_game(l);
                 self.session = Session::start(ts, l.credits);
                 self.history.credit_sample(ts, l.credits);
+                self.history.login(ts);
                 self.game_closed = false;
                 self.at_main_menu = false;
                 let mode = l.game_mode.as_deref().map(|m| format!(" ({m})")).unwrap_or_default();
@@ -173,9 +185,15 @@ impl GameState {
             Event::Shutdown(_) => {
                 self.session.end = Some(ts);
                 self.game_closed = true;
+                self.history.logout();
                 self.feed(ts, "Shutdown", "Game closed".into());
             }
-            Event::Music(m) => self.at_main_menu = m.music_track == "MainMenu",
+            Event::Music(m) => {
+                self.at_main_menu = m.music_track == "MainMenu";
+                if self.at_main_menu {
+                    self.history.logout();
+                }
+            }
             Event::Rank(r) => self.cmdr.ranks.apply(r),
             Event::Progress(p) => self.cmdr.on_progress(p),
             Event::Promotion(p) => {
@@ -606,6 +624,13 @@ impl GameState {
             Event::SAAScanComplete(s) => {
                 self.exploration.on_saa_complete(s, ts);
                 self.session.bodies_mapped += 1;
+                // Not rings: probing one finds its hotspots, which isn't mapping a body.
+                if let Some(b) = self.exploration.systems.get(&s.system_address).and_then(|sys| sys.bodies.get(&s.body_id))
+                    && b.kind != BodyKind::Ring
+                    && b.kind != BodyKind::BeltCluster
+                {
+                    self.history.deed(ts, Deed::Map { first: b.was_mapped == Some(false), efficient: s.probes_used <= s.efficiency_target });
+                }
                 let efficient = s.probes_used <= s.efficiency_target;
                 self.feed(ts, "SAAScanComplete", format!("Mapped {} with {} probes{}", s.body_name, s.probes_used, if efficient { " (efficient)" } else { "" }));
             }
@@ -668,6 +693,7 @@ impl GameState {
                 let name = s.kind_localised.clone().unwrap_or_else(|| s.kind.clone());
                 let cat = if s.avg_price_paid == 0 { LedgerCategory::Mining } else { LedgerCategory::Trade };
                 let profit = s.total_sale - s.avg_price_paid * s.count;
+                self.history.deed(ts, Deed::Sale { tonnes: s.count, cost: s.avg_price_paid * s.count, profit, mined: s.avg_price_paid == 0 });
                 self.money(ts, cat, s.total_sale, format!("Sold {} {} (profit {})", s.count, name, group_digits(profit)));
                 self.feed(ts, "MarketSell", format!("Sold {} {} for {} Cr", s.count, name, group_digits(s.total_sale)));
             }
@@ -865,6 +891,7 @@ impl GameState {
             }
             Event::Bounty(b) => {
                 self.session.kills += 1;
+                self.history.deed(ts, Deed::Kill { reward: b.total_reward.or(b.reward).unwrap_or(0), bond: false });
                 let done = self.missions.on_bounty(b);
                 for id in done {
                     if let Some(m) = self.missions.active.get(&id) {
@@ -877,7 +904,10 @@ impl GameState {
                     }
                 }
             }
-            Event::FactionKillBond(_) | Event::CapShipBond(_) => self.session.kills += 1,
+            Event::FactionKillBond(k) | Event::CapShipBond(k) => {
+                self.session.kills += 1;
+                self.history.deed(ts, Deed::Kill { reward: k.reward, bond: true });
+            }
             Event::RedeemVoucher(r) => {
                 {
                     let here = Here { system: &self.location.system, system_address: self.location.system_address, station_faction: None };
@@ -1005,7 +1035,10 @@ impl GameState {
                 let here = Here { system: &self.location.system, system_address: self.location.system_address, station_faction: None };
                 self.bgs.on_crime(c, ts, &here);
             }
-            Event::Statistics(s) => self.cmdr.statistics = Some(Arc::new((**s).clone())),
+            Event::Statistics(s) => {
+                self.cmdr.statistics = Some(Arc::new((**s).clone()));
+                self.cmdr.statistics_at = ts;
+            }
             Event::ReceiveText(_) | Event::Friends(_) => {}
             _ => {}
         }
@@ -1038,10 +1071,16 @@ impl GameState {
     }
 
     fn on_scan(&mut self, s: &ev::Scan, ts: Timestamp, alerts: &mut Alerts) {
+        // A nav beacon's data is someone else's scan.
+        let new = s.scan_type != "NavBeaconDetail"
+            && !self.exploration.systems.get(&s.system_address).and_then(|sys| sys.bodies.get(&s.body_id)).is_some_and(|b| b.has_scan && b.scan_type != "NavBeaconDetail");
         let (addr, id) = self.exploration.on_scan(s, ts);
         self.session.bodies_scanned += 1;
         let Some(sys) = self.exploration.systems.get(&addr) else { return };
         let Some(body) = sys.bodies.get(&id) else { return };
+        if new && matches!(body.kind, BodyKind::Star | BodyKind::Planet) {
+            self.history.deed(ts, Deed::Scan { first: body.first_discovery() });
+        }
         if !alerts.enabled {
             return;
         }
@@ -1174,6 +1213,7 @@ impl GameState {
             }
             ScanOutcome::Completed(rec) => {
                 self.session.organics_analysed += 1;
+                self.history.deed(ts, Deed::Organic { value: rec.expected_payout(), first: rec.bonus_expected });
                 let payout = rec.expected_payout();
                 self.feed(ts, "ScanOrganic", format!("Analysed {species}: ~{} Cr", compact_credits(payout)));
                 alerts.push_with(|| {

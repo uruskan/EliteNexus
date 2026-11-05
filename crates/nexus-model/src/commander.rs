@@ -125,6 +125,8 @@ pub struct Commander {
     pub squadron_applications: Vec<String>,
     pub engineers: BTreeMap<u32, EngineerStatus>,
     pub statistics: Option<Arc<ev::Statistics>>,
+    /// When the game wrote `statistics` (at a login).
+    pub statistics_at: Timestamp,
     pub last_login: Timestamp,
 }
 
