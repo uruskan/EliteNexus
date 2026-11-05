@@ -166,6 +166,8 @@ release time that section becomes the new version and the release workflow publi
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
 - **Missions** › Recent mission history: a long mission title no longer widens the card past the window. The date,
   outcome and reward come first, and the title takes the room left, ending in "…" (whole on hover).
+- **Missions** › Recent mission history: a failed or abandoned mission no longer shows a reward of "0 Cr". It says
+  "no reward", or the fine it cost when the game fined you.
 - **Market**: the live feed's "updates stored" counts only what the database kept. It counted every item a message
   turned into, so every body scanned anywhere, though from the feed Elite Nexus keeps only bodies with biology,
   Earth-like, water and ammonia worlds and terraformables, and every market report, even one older than the market
@@ -231,6 +233,13 @@ release time that section becomes the new version and the release workflow publi
   slots, the cargo slots of the Panther Clipper Mk II and Anaconda Mk II) were left off the shopping list as if they
   came with the ship, and Ask didn't see them in a ship's loadout either. They're listed now, under Hardpoints and
   Optional internals, and the Ships tab names those slots ("Large mining hardpoint 1", "Limpet slot 1").
+- **Fleet: a ship's name and its buttons no longer overlap.** In a narrow window the Loadout card ran a long ship
+  name under its Where to buy, Copy JSON, EDSY and Coriolis buttons. Where the two don't fit side by side, the
+  buttons now sit under the name.
+- **Fleet: engineering badges use the game's names.** A blueprint showed as the journal writes it, "G5 FSD Long
+  Range" or "G5 Power Distributor High Frequency", where the game, the Engineering page and Ask say "G5 Increased FSD
+  Range" and "G5 Charge Enhanced". An experimental effect the journal gives only as a code (special_fsd_heavy) now
+  shows its name too (Mass Manager), on the Fleet page and in Ask.
 - **Missions and Statistics say why a wingmate's shared mission isn't counted** (GitHub issue #4). Your own missions,
   wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
   game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The

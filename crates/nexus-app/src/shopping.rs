@@ -115,7 +115,7 @@ fn from_loadout(l: &Value) -> Result<Build, String> {
 fn engineering(item: &str, e: Option<&Value>) -> Option<String> {
     let e = e?;
     let bp = e.get("BlueprintName").and_then(Value::as_str)?;
-    let name = nexus_data::engineering::blueprint_for(item, bp).map(|b| b.name.clone()).unwrap_or_else(|| nexus_data::names::split_camel(&bp.replace('_', " ")));
+    let name = nexus_data::engineering::blueprint_name(item, bp);
     let experimental = e
         .get("ExperimentalEffect_Localised")
         .and_then(Value::as_str)

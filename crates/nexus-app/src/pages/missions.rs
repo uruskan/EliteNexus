@@ -5,7 +5,7 @@ use egui::{Color32, Grid, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
 use nexus_journal::Timestamp;
-use nexus_model::missions::{Mission, MissionOutcome};
+use nexus_model::missions::{Mission, MissionOutcome, MissionRecord};
 use nexus_model::GameState;
 
 /// The Missions page's state: "where to get it" for the goods your missions ask for.
@@ -194,7 +194,8 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> 
                     MissionOutcome::Abandoned => ("abandoned", pal::WARN),
                 };
                 badge(ui, t, c);
-                ui.label(RichText::new(short_credits(r.reward)).font(display(14.0)).color(pal::GOLD));
+                let (paid, col) = paid(r);
+                ui.label(RichText::new(paid).font(display(14.0)).color(col));
                 ui.add(egui::Label::new(&r.title).truncate());
                 ui.end_row();
             }
@@ -202,6 +203,17 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> 
         crate::widgets::footnote(ui, shared);
     });
     goto
+}
+
+/// What a mission in the history paid, in its colour: a completed one's reward; a failed or abandoned one paid
+/// nothing, so it says that, or the fine it cost (`MissionRecord::reward` holds a fine as a negative amount), rather
+/// than a reward of "0 Cr".
+fn paid(r: &MissionRecord) -> (String, Color32) {
+    match r.outcome {
+        MissionOutcome::Completed => (short_credits(r.reward), pal::GOLD),
+        _ if r.reward < 0 => (format!("fined {}", short_credits(-r.reward)), pal::BAD),
+        _ => ("no reward".into(), pal::DIM),
+    }
 }
 
 /// A commodity your missions ask you to bring: how many tonnes are still to go, and for which missions.
@@ -308,6 +320,16 @@ mod tests {
         assert_eq!(share([400.0, 100.0, 300.0], floor, 500.0), [200.0, 100.0, 200.0]);
         // Never narrower than a heading.
         assert_eq!(share([400.0, 100.0, 300.0], floor, 120.0), [60.0, 60.0, 60.0]);
+    }
+
+    #[test]
+    fn failed_missions_show_no_reward() {
+        let record = |outcome, reward| MissionRecord { id: 1, title: "Deliver 40 units of Tritium".into(), faction: String::new(), outcome, reward, ts: Timestamp(0) };
+        assert_eq!(paid(&record(MissionOutcome::Completed, 18_500_000)).0, "18.5 M Cr");
+        assert_eq!(paid(&record(MissionOutcome::Failed, 0)).0, "no reward");
+        assert_eq!(paid(&record(MissionOutcome::Abandoned, 0)).0, "no reward");
+        // The model keeps MissionFailed's Fine as a negative reward.
+        assert_eq!(paid(&record(MissionOutcome::Failed, -50_000)), ("fined 50 k Cr".to_string(), pal::BAD));
     }
 
     /// A German client's missions: the goods go by the journal's symbol (two missions for one good are one entry),

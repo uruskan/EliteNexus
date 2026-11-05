@@ -1,10 +1,9 @@
 //! Exobiology knowledge base: genera (clonal colony ranges, codex ids), species (Vista Genomics base values,
 //! prediction rule sets, colour variants) and the galactic region names used by region-specific species.
 //!
-//! Backed by `data/exobiology/species.json` and `genera.json` (compiled from EDMC-BioScan rule sets, SrvSurvey
-//! criteria, EDDiscovery value tables and the live Canonn codex reference; per-entry sources and certainty are in
-//! the files, the method in `docs/research/exploration.md` §2). Both files are embedded at compile time and parsed
-//! once, on first use. The prediction engine that evaluates the rules lives in [`crate::bio_predict`].
+//! Backed by `data/exobiology/species.json` and `genera.json` (per-entry sources and certainty are in the files,
+//! the method in `docs/research/exploration.md` §2). Both files are embedded at compile time and parsed once, on
+//! first use. The prediction engine that evaluates the rules lives in [`crate::bio_predict`].
 //!
 //! Values were hand-verified against the commander's own `SellOrganicData` events where possible
 //! (Stratum Paleas 1,362,000; Tussock Cultro 1,766,600; Aleoida Laminiae 3,385,200; Fungoida Setisis 1,670,100;
@@ -17,10 +16,12 @@ use std::sync::LazyLock;
 /// First-logged bonus multiplier on top of the base value (bonus = 4 × value, 5 × in total).
 pub const FIRST_LOGGED_BONUS_FACTOR: i64 = 4;
 
-/// Journal `SurfaceGravity` (m/s²) per g. BioScan's convention; every gravity limit in the dataset uses it.
+/// Journal `SurfaceGravity` (m/s²) per g: every gravity limit in the dataset is in these g, slightly under the
+/// standard 9.80665.
 pub const JOURNAL_G_MS2: f64 = 9.797759;
 
-/// Journal `SurfacePressure` (Pa) per atmosphere. BioScan's convention; every pressure limit uses it.
+/// Journal `SurfacePressure` (Pa) per atmosphere: every pressure limit in the dataset is in these atmospheres,
+/// slightly under the standard 101,325 Pa.
 pub const JOURNAL_ATM_PA: f64 = 101_231.656_25;
 
 const SPECIES_JSON: &str = include_str!("../../../data/exobiology/species.json");
@@ -80,7 +81,7 @@ pub struct Variant {
     pub colour: &'static str,
     /// Variant codex symbol, e.g. `$Codex_Ent_Aleoids_01_A_Name;`.
     pub codex: &'static str,
-    /// Present in the live Canonn codex reference (false = only predicted by BioScan's colour map).
+    /// A codex entry known to exist in the game (false = a colour only the colour map predicts).
     pub in_codex: bool,
 }
 
@@ -100,18 +101,19 @@ pub struct Species {
     pub thargoid: bool,
     /// Base value before Update 14 (2022-11-29), for re-pricing old journals.
     pub value_pre_update14: Option<i64>,
-    /// BioScan rule sets (OR of rule sets, each an AND of constraints). Constraints a BioScan rule set leaves
-    /// open are filled from the merged envelope (the dataset's "constrained side taken" convention), so a rule
-    /// set never accepts what every source rejects.
+    /// Rule sets: the conditions the species has been found in (OR of rule sets, each an AND of constraints).
+    /// Constraints a rule set leaves open are filled from the merged envelope (the dataset's "constrained side
+    /// taken" convention), so a rule set never accepts what every source rejects.
     pub rulesets: Vec<RuleSet>,
-    /// Union envelope of BioScan and SrvSurvey (`conditions` in the dataset) plus the system-level
-    /// requirements every rule set shares (region, nebula, Guardian bubble, …). Wider than any one rule set;
-    /// meant for filtering and display.
+    /// Union envelope of the rule sets and the cross-check criteria (`conditions` in the dataset) plus the
+    /// system-level requirements every rule set shares (region, nebula, Guardian bubble, …). Wider than any one rule
+    /// set; meant for filtering and display.
     pub envelope: RuleSet,
-    /// SrvSurvey's criteria for the species (Canonn-derived), flattened over its criteria tree: atmospheres, body
-    /// classes, limits, volcanism and regions. Only the fields SrvSurvey actually constrains are set. The predictor
-    /// uses it to widen a BioScan rule set field by field ("SrvSurvey has seen it there too").
-    pub srvsurvey: Option<RuleSet>,
+    /// A second, wider set of criteria for the species (the dataset's `srvsurvey_crosscheck`), flattened over its
+    /// criteria tree: atmospheres, body classes, limits, volcanism and regions. Only the fields it actually constrains
+    /// are set. The predictor uses it to widen a rule set field by field: a value outside the rule set but inside
+    /// these criteria is a softer miss.
+    pub crosscheck: Option<RuleSet>,
     pub colour_basis: ColourBasis,
     pub variants: Vec<Variant>,
     pub aliases: Vec<&'static str>,
@@ -141,7 +143,7 @@ pub struct RuleSet {
     pub min_temp_k: Option<f64>,
     pub max_temp_k: Option<f64>,
     pub min_pressure_atm: Option<f64>,
-    /// Exclusive (BioScan eliminates when `pressure >= max`).
+    /// Exclusive: a body at `max` or above is out.
     pub max_pressure_atm: Option<f64>,
     pub volcanism: VolcanismRule,
     pub regions: Option<RegionRule>,
@@ -271,7 +273,7 @@ pub fn colony_range_m(genus_or_species: &str) -> Option<u32> {
         .or_else(|| genus_or_species.split_whitespace().next().and_then(genus).map(|g| g.colony_range_m))
 }
 
-/// Journal genus symbols that do not follow the dataset's codex ids (ExploData / Observatory Botanist).
+/// Journal genus symbols that do not follow the dataset's codex ids.
 const GENUS_SYMBOL_QUIRKS: &[(&str, &str)] = &[
     ("$Codex_Ent_Clepeus_Genus_Name;", "Clypeus"),
     ("$Codex_Ent_Stratum_04_Name;", "Stratum"),
@@ -415,7 +417,7 @@ struct RawVariant {
     in_game_codex_ref: bool,
 }
 
-/// Union of the fields used by `rulesets[]` (BioScan) and `conditions` (merged envelope).
+/// Union of the fields used by `rulesets[]` and `conditions` (merged envelope).
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct RawRule {
@@ -443,7 +445,7 @@ struct RawRule {
     star_classes: Option<Vec<String>>,
 }
 
-/// `srvsurvey_crosscheck`: SrvSurvey's criteria tree flattened (bio-criteria JSON, Canonn-derived).
+/// `srvsurvey_crosscheck`: the second criteria tree, flattened ([`Species::crosscheck`]).
 #[derive(Deserialize, Default)]
 #[serde(default)]
 struct RawSrvSurvey {
@@ -455,7 +457,7 @@ struct RawSrvSurvey {
     max_temp_k: Option<f64>,
     min_pressure_atm: Option<f64>,
     max_pressure_atm: Option<f64>,
-    /// `"any"` or exact SrvSurvey volcanism names ("Minor Rocky Magma", "None").
+    /// `"any"` or exact volcanism names without the " volcanism" suffix ("Minor Rocky Magma", "None").
     volcanism: Option<RawVolcanism>,
     regions_in: Option<Vec<u8>>,
     regions_not_in: Option<Vec<u8>>,
@@ -558,7 +560,7 @@ fn convert_species(r: RawSpecies) -> Species {
         value_pre_update14: r.value_pre_update14,
         rulesets,
         envelope,
-        srvsurvey: r.srvsurvey_crosscheck.map(convert_srvsurvey),
+        crosscheck: r.srvsurvey_crosscheck.map(convert_crosscheck),
         colour_basis,
         variants: r
             .color_variants
@@ -610,7 +612,7 @@ fn convert_rule(r: RawRule) -> RuleSet {
                 .collect::<Vec<_>>()
         })
     };
-    // Envelope star classes ("B IV") apply to any star in the system (the looser of the two BioScan rules).
+    // Envelope star classes ("B IV") apply to any star in the system (the looser of the two kinds of star rule).
     let envelope_stars = r.star_classes.map(|list| {
         list.into_iter()
             .map(|s| match s.split_once(' ') {
@@ -646,8 +648,8 @@ fn convert_rule(r: RawRule) -> RuleSet {
     }
 }
 
-fn convert_srvsurvey(r: RawSrvSurvey) -> RuleSet {
-    // SrvSurvey volcanism names are exact journal values without the " volcanism" suffix ("any" = unchecked).
+fn convert_crosscheck(r: RawSrvSurvey) -> RuleSet {
+    // The cross-check's volcanism names are exact journal values without the " volcanism" suffix ("any" = unchecked).
     let volcanism = match r.volcanism {
         Some(RawVolcanism::List(names)) if !names.iter().any(|n| n.eq_ignore_ascii_case("any")) => {
             let or_none = names.iter().any(|n| n.eq_ignore_ascii_case("none"));
@@ -679,13 +681,14 @@ fn convert_srvsurvey(r: RawSrvSurvey) -> RuleSet {
     }
 }
 
-/// BioScan leaves some constraints open that the merged envelope (SrvSurvey side) constrains, e.g. atmosphere,
-/// body class and gravity for Horizons-era organics. Fill those from the envelope ("constrained side taken").
+/// The rule sets leave some constraints open that the merged envelope (its cross-check side) constrains, e.g.
+/// atmosphere, body class and gravity for Horizons-era organics. Fill those from the envelope ("constrained side
+/// taken").
 ///
 /// Atmosphere and body-class lists are filled per rule set (the envelope only drops classes nobody has seen, e.g.
-/// metal-rich bodies for Bacterium Tela). Numeric limits are filled only when *no* BioScan rule set of the species
+/// metal-rich bodies for Bacterium Tela). Numeric limits are filled only when *no* rule set of the species
 /// constrains them: where some rule sets carry a limit and others don't (Clypeus/Concha Renibus temperature and
-/// pressure, Stratum water-atmosphere rules), BioScan's omission looks deliberate and is kept.
+/// pressure, Stratum water-atmosphere rules), the omission looks deliberate and is kept.
 fn fill_open_constraints(rulesets: &mut [RuleSet], env: &RuleSet) {
     fn fill<T: Clone>(slot: &mut Option<T>, from: &Option<T>, allowed: bool) {
         if allowed && slot.is_none() {
@@ -718,7 +721,7 @@ fn fill_open_constraints(rulesets: &mut [RuleSet], env: &RuleSet) {
 }
 
 /// The dataset's `conditions` envelope does not carry system-level requirements (they are prose in `special`).
-/// Add those every BioScan rule set shares, so the wider envelope cannot bypass them.
+/// Add those every rule set shares, so the wider envelope cannot bypass them.
 fn add_shared_requirements(env: &mut RuleSet, rulesets: &[RuleSet]) {
     if rulesets.is_empty() {
         return;
@@ -863,8 +866,7 @@ mod tests {
         ("Tussock Serrati", 4_447_100),
         ("Tussock Stigmasis", 19_010_800),
         ("Tussock Triticum", 7_774_700),
-        // The hand table had 3_277_700 (transposed digits); BioScan, EDDiscovery and the Canonn codex reference
-        // all give 3,227,700.
+        // The hand table had 3_277_700 (transposed digits); every value source in the dataset gives 3,227,700.
         ("Tussock Ventusa", 3_227_700),
         ("Tussock Virgam", 14_313_700),
     ];
@@ -952,8 +954,8 @@ mod tests {
 
     #[test]
     fn rules_are_merged_with_envelope() {
-        // BioScan's Brain Tree rule only has temperature/volcanism/region/guardian; atmosphere and body class
-        // come from the SrvSurvey side of the envelope.
+        // The Brain Tree rule set only has temperature/volcanism/region/guardian; atmosphere and body class
+        // come from the cross-check side of the envelope.
         let s = species("Roseum Brain Tree").expect("species");
         let rs = &s.rulesets[0];
         assert_eq!(rs.atmospheres.as_deref(), Some(&["None".to_string()][..]));

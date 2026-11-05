@@ -1,7 +1,6 @@
-//! Cartographic value estimates.
-//!
-//! The community-standard formula (MattG's "Exploration value formulae", as implemented by
-//! EDDiscovery, EDMC plugins and Observatory). Values are what Universal Cartographics pays.
+//! Cartographic value estimates: what Universal Cartographics pays for a body's data, from its class, mass and
+//! terraformability, with what a mapping, first discovery and first mapping add (the formula and its order of
+//! operations: `docs/research/exploration.md` §1).
 
 /// Mass-term constant.
 const Q: f64 = 0.565_918_28;

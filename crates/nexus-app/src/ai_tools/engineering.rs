@@ -235,7 +235,7 @@ fn fitted_row(m: &ShipModule) -> Value {
     let mut v = json!({ "slot": slot_display(&m.slot), "module": display_name(&m.item) });
     match &m.engineering {
         Some(e) => {
-            v["blueprint"] = json!(eng::blueprint_for(&m.item, &e.blueprint).map_or_else(|| e.blueprint.clone(), |b| b.name.clone()));
+            v["blueprint"] = json!(eng::blueprint_name(&m.item, &e.blueprint));
             v["grade"] = json!(e.level);
             v["quality_pct"] = json!((e.quality * 100.0).round() as i64);
             v["experimental"] = json!(e.experimental);
