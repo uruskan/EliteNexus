@@ -202,10 +202,11 @@ pub struct MiningUi {
 }
 
 impl MiningUi {
-    /// `where` (or `where-route`) opens Where to mine; `autorun` starts its search on the first frame (screenshots).
+    /// `where` (or `where-route`, or `where:Monazite`) opens Where to mine; `autorun` starts its search on the first frame
+    /// (screenshots).
     pub fn new(tab: Option<&str>, autorun: bool) -> Self {
         let find = WhereUi::new(tab, autorun);
-        let tab = if matches!(tab, Some("where" | "where-route")) { Tab::Where } else { Tab::Sites };
+        let tab = if tab.is_some_and(|t| matches!(t, "where" | "where-route") || t.starts_with("where:")) { Tab::Where } else { Tab::Sites };
         MiningUi { tab, find }
     }
 }

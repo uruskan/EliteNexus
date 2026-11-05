@@ -4,10 +4,12 @@
 //!
 //! A body's mining-location count is known only when someone sharing data scanned it since the Rhino update (4.4.1,
 //! September 2026), so a body without one may still have locations. No journal or feed says what a location holds:
-//! the ground ([`Ground`]) and the commander's own runs ([`own_grounds`]) are leads, not promises.
+//! the ground ([`Ground`]), how often each material turned up on it in a survey of locations read in the game
+//! ([`ground_odds`]) and the commander's own runs ([`own_grounds`]) are leads, not promises.
 
 use crate::pages::navigation::{PlannedRoute, Waypoint};
 use crate::tours;
+use nexus_data::ground_odds::{self, Share};
 use nexus_data::grounds::{Class, Ground, Volcanism};
 use nexus_model::GameState;
 use nexus_model::location::distance;
@@ -89,6 +91,9 @@ pub struct Query {
     pub min_locations: u32,
     /// Furthest from the arrival star, ls (0: any).
     pub max_ls: u32,
+    /// The material looked for, as the game names it: with no class asked for, Spansh is asked only for the classes
+    /// where the survey saw it, and bodies are ranked by their odds of it.
+    pub material: Option<&'static str>,
 }
 
 /// One page of the body search, nearest first.
@@ -105,8 +110,13 @@ pub fn request(q: &Query, page: u32) -> SearchRequest {
         .sort(sort::field("distance", SortDir::Asc))
         .size(nexus_spansh::search::MAX_PAGE_SIZE)
         .page(page);
-    if let Some(c) = q.class {
-        req = req.filter("subtype", filter::any_of([spansh_class(c)]));
+    let classes = match (q.class, q.material) {
+        (Some(c), _) => vec![c],
+        (None, Some(m)) => ground_odds::classes_for(m),
+        (None, None) => Vec::new(),
+    };
+    if !classes.is_empty() {
+        req = req.filter("subtype", filter::any_of(classes.into_iter().map(spansh_class)));
     }
     if let Some(v) = q.volcanism.and_then(volcanism_filter) {
         req = req.filter("volcanism_type", v);
@@ -145,6 +155,26 @@ impl Candidate {
     pub fn short_body(&self) -> &str {
         self.body.strip_prefix(&self.system).map(str::trim).filter(|s| !s.is_empty()).unwrap_or(&self.body)
     }
+
+    /// How many of the surveyed locations on this body's ground listed `material`: None when the survey read none of
+    /// its ground (or its ground isn't known).
+    pub fn odds(&self, material: &str) -> Option<Share> {
+        odds(self.ground, material)
+    }
+
+    /// How many of its mining locations would list `material`, if they're like the ones read on its ground: an
+    /// average. With no material, its count of locations.
+    pub fn likely(&self, material: Option<&str>) -> f64 {
+        match material {
+            Some(m) => self.odds(m).map_or(0.0, |s| s.expected(self.locations)),
+            None => f64::from(self.locations),
+        }
+    }
+}
+
+/// The survey's share of a ground's locations that listed `material`.
+pub fn odds(ground: Option<Ground>, material: &str) -> Option<Share> {
+    ground_odds::survey(ground?).map(|g| g.share(material))
 }
 
 pub fn candidate(b: BodyRecord) -> Candidate {
@@ -272,20 +302,21 @@ pub struct RouteStop {
 }
 
 impl RouteStop {
-    pub fn most_locations(&self) -> u32 {
-        self.bodies.first().map_or(0, |c| c.locations)
+    /// Its best body's mining locations, or with a material how many of them would list it ([`Candidate::likely`]).
+    pub fn best(&self, material: Option<&str>) -> f64 {
+        self.bodies.first().map_or(0.0, |c| c.likely(material))
     }
 }
 
-/// A system is better with a body of more mining locations, then with more bodies that have them, then closer to the
-/// line.
-fn better(a: &RouteStop, b: &RouteStop) -> Ordering {
-    a.most_locations().cmp(&b.most_locations()).then(a.bodies.len().cmp(&b.bodies.len())).then(b.off_line_ly.total_cmp(&a.off_line_ly))
+/// A system is better with a better body (more mining locations, or with a material more of them likely to list it),
+/// then with more bodies that have them, then closer to the line.
+fn better(a: &RouteStop, b: &RouteStop, material: Option<&str>) -> Ordering {
+    a.best(material).total_cmp(&b.best(material)).then(a.bodies.len().cmp(&b.bodies.len())).then(b.off_line_ly.total_cmp(&a.off_line_ly))
 }
 
-/// The best system in each of `stops` equal stretches of the route, in route order. Stretches where the search found
-/// nothing are left out.
-pub fn route_stops(found: &Found, stops: usize) -> Vec<RouteStop> {
+/// The best system in each of `stops` equal stretches of the route, in route order, for `material` when one is asked
+/// for. Stretches where the search found nothing are left out.
+pub fn route_stops(found: &Found, stops: usize, material: Option<&str>) -> Vec<RouteStop> {
     let Some((a, b)) = found.ends else { return Vec::new() };
     let n = stops.max(1);
     let length = distance(a, b);
@@ -303,9 +334,9 @@ pub fn route_stops(found: &Found, stops: usize) -> Vec<RouteStop> {
     }
     let mut best: Vec<Option<RouteStop>> = vec![None; n];
     for mut s in systems.into_values() {
-        s.bodies.sort_by(|x, y| y.locations.cmp(&x.locations).then_with(|| x.body.cmp(&y.body)));
+        s.bodies.sort_by(|x, y| y.likely(material).total_cmp(&x.likely(material)).then(y.locations.cmp(&x.locations)).then_with(|| x.body.cmp(&y.body)));
         let i = stretch(if length > 0.0 { s.along_ly / length } else { 0.0 }, n);
-        if best[i].as_ref().is_none_or(|cur| better(&s, cur) == Ordering::Greater) {
+        if best[i].as_ref().is_none_or(|cur| better(&s, cur, material) == Ordering::Greater) {
             best[i] = Some(s);
         }
     }
@@ -483,7 +514,7 @@ mod tests {
     use nexus_model::mining::{SiteKey, SurfaceSite};
 
     fn query(class: Option<Class>, volcanism: Option<Volcanism>) -> Query {
-        Query { around: Around::Here([1.0, 2.0, 3.0]), radius_ly: 100.0, class, volcanism, min_locations: 5, max_ls: 0 }
+        Query { around: Around::Here([1.0, 2.0, 3.0]), radius_ly: 100.0, class, volcanism, min_locations: 5, max_ls: 0, material: None }
     }
 
     /// Spansh's `volcanism_type` values other than "No volcanism", as its field values listed them on 2026-11-04.
@@ -600,7 +631,7 @@ mod tests {
             ends: Some(([0.0; 3], [1000.0, 0.0, 0.0])),
             ..Found::default()
         };
-        let stops = route_stops(&found, 4);
+        let stops = route_stops(&found, 4, None);
         let names: Vec<&str> = stops.iter().map(|s| s.system.as_str()).collect();
         // Stretches of 250 ly. First: 20 locations beat 6. Second: Middle's two bodies of 3 beat one, though further
         // from the line. Third: nothing.
@@ -613,6 +644,43 @@ mod tests {
         assert_eq!(plan.waypoints[0].jumps, 3, "120 ly at 50 ly a jump");
         assert_eq!(plan.waypoints[1].note, "2 · 3 locations, 3 · 3 locations");
         assert!(plan.waypoints.iter().all(|w| w.value.is_none()));
+    }
+
+    /// A material asked for with no class narrows the search to the classes where the survey saw it; a class asked
+    /// for still wins.
+    #[test]
+    fn a_material_asks_for_the_classes_where_it_turned_up() {
+        let platinum = Query { material: Some("Platinum"), ..query(None, None) };
+        let j = request(&platinum, 0).to_json();
+        assert_eq!(j["filters"]["subtype"]["value"], json!(["Metal-rich body", "High metal content world"]));
+        let rocky = Query { class: Some(Class::Rocky), ..platinum };
+        assert_eq!(request(&rocky, 0).to_json()["filters"]["subtype"]["value"], json!(["Rocky body"]));
+        assert!(request(&query(None, None), 0).to_json()["filters"].get("subtype").is_none());
+    }
+
+    /// A rocky magma moon of 14 locations: 21 of the 36 rocky magma locations read listed Monazite, so about 8 of its.
+    #[test]
+    fn a_body_has_the_odds_of_its_ground() {
+        let c = body("Alpha", "A 1", 10.0, 1.0, 14);
+        let monazite = c.odds("Monazite").expect("rocky magma was read");
+        assert_eq!((monazite.listed, monazite.of), (21, 36));
+        assert_eq!(c.likely(Some("Monazite")).round(), 8.0);
+        assert_eq!(c.likely(Some("Platinum")), 0.0, "never seen on rocky magma");
+        assert_eq!(c.likely(None), 14.0, "no material: the locations");
+        let geysers = Candidate { ground: Some(Ground { class: Class::Rocky, volcanism: Volcanism::WaterGeysers }), ..c.clone() };
+        assert_eq!(geysers.odds("Monazite"), None, "a ground nobody read");
+    }
+
+    /// With a material, each stretch's stop is the system whose best body is likeliest to hold it, not the one with the
+    /// most locations.
+    #[test]
+    fn route_stops_follow_the_odds_of_a_material() {
+        let magma = body("Magma", "1", 100.0, 1.0, 6);
+        let quiet = Candidate { ground: Some(Ground { class: Class::Rocky, volcanism: Volcanism::Inactive }), ..body("Quiet", "1", 120.0, 1.0, 20) };
+        let found = Found { list: vec![magma, quiet], ends: Some(([0.0; 3], [1000.0, 0.0, 0.0])), ..Found::default() };
+        let stop = |material| route_stops(&found, 1, material).into_iter().map(|s| s.system).collect::<Vec<_>>();
+        assert_eq!(stop(None), ["Quiet"], "20 locations beat 6");
+        assert_eq!(stop(Some("Monazite")), ["Magma"], "about 3.5 of 6 against 0.7 of 20");
     }
 
     /// Seen live: a route from a system Spansh doesn't know answers HTTP 400 "Invalid request".
@@ -698,7 +766,7 @@ mod tests {
         let sp = Spansh::new();
         // The nearest rocky magma body with mining locations is 55 ly from Sol (2026-11-04).
         let rocky_magma = Ground { class: Class::Rocky, volcanism: Volcanism::RockyMagma };
-        let near_q = Query { around: Around::Here([0.0, 0.0, 0.0]), radius_ly: 100.0, class: Some(Class::Rocky), volcanism: Some(Volcanism::RockyMagma), min_locations: 1, max_ls: 0 };
+        let near_q = Query { around: Around::Here([0.0, 0.0, 0.0]), radius_ly: 100.0, class: Some(Class::Rocky), volcanism: Some(Volcanism::RockyMagma), min_locations: 1, max_ls: 0, material: None };
         let found = rt.block_on(near(&sp, &near_q)).expect("near");
         println!("near Sol: {} matched, {} read", found.matched, found.list.len());
         assert!(!found.list.is_empty());
@@ -709,9 +777,9 @@ mod tests {
         println!("rocky, no volcanism, within 20 ly of Sol: {}", found.matched);
         assert!(found.list.iter().any(|c| c.body == "Ganymede"));
         assert!(found.list.iter().all(|c| c.ground.is_some_and(|g| g.volcanism == Volcanism::Inactive)));
-        let route_q = Query { around: Around::Route { from: "Sol".into(), to: "Colonia".into() }, radius_ly: 25.0, class: None, volcanism: None, min_locations: 10, max_ls: 0 };
+        let route_q = Query { around: Around::Route { from: "Sol".into(), to: "Colonia".into() }, radius_ly: 25.0, class: None, volcanism: None, min_locations: 10, max_ls: 0, material: None };
         let found = rt.block_on(along(&sp, &route_q, 10)).expect("along");
-        let stops = route_stops(&found, 10);
+        let stops = route_stops(&found, 10, None);
         for s in &stops {
             println!("{:>6.0} ly  {:<36} {:>4.1} ly off  {}", s.along_ly, s.system, s.off_line_ly, bodies_note(s.bodies.iter()));
         }

@@ -2,7 +2,8 @@
 
 Researched 2026-11-05. Game state: Odyssey 4.4.2.1 (the Rhino arrived with 4.4.1.0 on 2 September 2026). What the
 journal and Status.json say about surface mining is in `journal.md` §5.7; this file holds the game facts the Mining
-page uses that no journal records: how far apart rigs go, how big deposits are, what a rig and a deposit give.
+page uses that no journal records: how far apart rigs go, how big deposits are, what a rig and a deposit give, and
+how often each material turns up on each ground (§4).
 
 Certainty: **Frontier** means Frontier's own update notes; **players** means commanders' reports on Frontier's forums,
 with no published measurement method; **codex** means the in-game codex as players quote it (not checked in the game
@@ -53,6 +54,31 @@ within 200 m (`SPOT_RADIUS_M`) belong to it, and those at least 20 m from the on
 are kept as the places it refined. The Rhino collects at each rig, so with rigs at least 75 m apart those places
 show where the rigs stood. The outline drawn is the circle around them: the ground worked, which the deposit may
 exceed.
+
+## 4. What each ground holds: the survey behind Where to mine's odds
+
+No journal or feed says what a planetary mining location holds. In the game, a location's target panel lists its
+materials once it's targeted after a DSS scan (§2). A survey of what those panels listed is the one source of odds:
+
+* **What it is:** 1,131 mining locations read in the game up to 2026-10-11 14:28 UTC, published as the share of each
+  ground's locations whose panel listed each material ("50% means 5 of every 10 locations listed it"). A listing
+  "says the material is there to find, not how many patches are in it".
+* **Grounds:** the body class as the system map names it, a rocky body split by its volcanism; magma on a metal-rich
+  or high metal content body counts under its class. Locations read: metal-rich 114, high metal content 276, rocky
+  without volcanism 242, rocky with metallic magma 99, rocky magma 36, silicate vapour geysers 139, rocky ice 47,
+  icy 178. Rocky bodies with other volcanism weren't read.
+* **Counts:** `nexus_data::ground_odds` keeps, per ground, how many locations listed each material:
+  round(share × locations read). All 192 counts give back the published share to a tenth of a percent (checked
+  2026-11-05), so they are the survey's own counts. Materials are named as the game names the commodities ("Low Temp
+  Diamonds" there is Low Temperature Diamonds).
+* **What the page does with them:** the share per ground, "x of n read" wherever it matters (36 rocky magma
+  locations make rough odds), and share × a body's own locations as "≈ n" (an average, which holds however the
+  locations of one body go together). With a material and no class, Spansh is asked only for the classes where it
+  turned up; the survey's prices are not used (Elite Nexus has its own market data).
+* **Where it was read:** the "Ground Mining Table" at https://wiknow.pages.dev/ref/ground-mining ("Generated from
+  EDIntel, 2026-10-11 14:28 UTC"), and with the per-ground location counts in `mining_sheet.json` of
+  github.com/Fumlop/EDRhinoSpotter (GPL-3.0; "source": "EDIntel prospecting guide"), both read 2026-11-05. Only the
+  numbers are used; no file was copied.
 
 ## Sources
 

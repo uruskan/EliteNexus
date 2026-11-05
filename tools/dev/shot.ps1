@@ -3,11 +3,11 @@
 #   powershell -File tools\dev\shot.ps1 -Page Exobiology -Tab untouched -Out bonus -Size 1300x900 -Delay 20
 # -Page: a sidebar page (Dashboard, Exploration, Exobiology, Navigation, Market, ...).
 # -Tab:  market sections (abnormal, database, ...), galaxy (whole-galaxy map), find / history /
-#        unsold (Exploration), untouched / known (Exobiology > Find planets), where / where-route
-#        (Mining > Where to mine: near you, or along a route towards Colonia). find, untouched,
-#        known, where and where-route start their search on the first frame, so give them
-#        -Delay 15-25 for Spansh. routes (Market > Trade routes) searches the local database on
-#        the first frame too.
+#        unsold (Exploration), untouched / known (Exobiology > Find planets), where / where:Monazite /
+#        where-route (Mining > Where to mine: near you, near you for that material, or along a route
+#        towards Colonia). find, untouched, known and the where tabs start their search on the first
+#        frame, so give them -Delay 15-25 for Spansh. routes (Market > Trade routes) searches the
+#        local database on the first frame too.
 #        With -Page Hud: glare or cockpit (those tabs), or a preset name (mocha, royalpurple, ...)
 #        to start the HUD colours tab from; add ,options (empireblue,options) to open the
 #        protection's options. Set ELITE_NEXUS_GAME_DIR to show the page for a test copy of the

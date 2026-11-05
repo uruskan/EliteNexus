@@ -10,6 +10,7 @@ use crate::tours::{self, limits};
 use crate::widgets::{self, GAP, badge, card_tinted, footnote, th};
 use egui::{Grid, RichText, Ui};
 use egui_phosphor::regular as icon;
+use nexus_data::ground_odds::{self, Share};
 use nexus_data::grounds::{Class, Ground, Volcanism};
 use nexus_data::names::group_digits;
 use nexus_model::GameState;
@@ -26,6 +27,8 @@ enum Order {
     #[default]
     Nearest,
     MostLocations,
+    /// The most locations likely to list the material searched for.
+    BestOdds,
 }
 
 /// State of the Where to mine tab.
@@ -33,6 +36,8 @@ pub struct WhereUi {
     pub mode: Mode,
     class: Option<Class>,
     volcanism: Option<Volcanism>,
+    /// The material looked for (as the game names it), or any.
+    material: Option<&'static str>,
     min_locations: u32,
     /// Furthest from the arrival star, ls (0: any).
     max_ls: u32,
@@ -62,6 +67,7 @@ impl Default for WhereUi {
             mode: Mode::Near,
             class: None,
             volcanism: None,
+            material: None,
             min_locations: 1,
             max_ls: 0,
             radius: 100,
@@ -81,12 +87,18 @@ impl Default for WhereUi {
 }
 
 impl WhereUi {
-    /// `where` searches near you on the first frame when `autorun`, `where-route` towards Colonia (screenshot runs).
+    /// `where` searches near you on the first frame when `autorun`, `where:Monazite` looking for that material,
+    /// `where-route` towards Colonia (screenshot runs).
     pub fn new(tab: Option<&str>, autorun: bool) -> Self {
         let mut ui = WhereUi::default();
         match tab {
             Some("where") => ui.autorun = autorun,
             Some("where-route") => (ui.mode, ui.to, ui.autorun) = (Mode::Route, "Colonia".into(), autorun),
+            Some(t) if t.starts_with("where:") => {
+                let asked = &t["where:".len()..];
+                ui.material = ground_odds::materials().into_iter().find(|m| m.eq_ignore_ascii_case(asked));
+                ui.autorun = autorun;
+            }
             _ => {}
         }
         ui
@@ -106,14 +118,28 @@ pub enum Action {
     Follow(PlannedRoute),
 }
 
-const NO_PROMISE: &str = "No journal or feed says what a mining location holds: the game records what the Rhino's refinery made, not what was in the deposit. A ground and your own runs are leads, not promises.";
+const NO_PROMISE: &str = "No journal or feed says what a mining location holds: the game records what the Rhino's refinery made, not what was in the deposit. A ground, its odds and your own runs are leads, not promises.";
+
+/// What the odds rest on and what they can't know.
+fn odds_note() -> String {
+    format!(
+        "Odds: of the mining locations commanders read on a ground in the game (a survey of {} locations up to {}), the share whose target panel \
+         listed the material; ≈ is that share of a body's own locations, an average. A listing says the material is there to find, not how much, \
+         and a ground with few locations read (rocky with rocky magma: {}) gives rough odds. In the game, target a location after a DSS scan and \
+         its panel lists what it holds: look before you land.",
+        group_digits(i64::from(ground_odds::locations_read())),
+        ground_odds::SURVEYED,
+        ground_odds::ROCKY_MAGMA.locations,
+    )
+}
 
 pub fn show(ui: &mut Ui, gs: &GameState, st: &mut WhereUi, spansh: &nexus_spansh::Spansh, rt: &tokio::runtime::Handle, route_end: Option<&str>) -> Option<Action> {
     let mut action = None;
     let own = sf::own_grounds(gs);
+    let material = st.material;
     // Wide windows put this system and your grounds beside the search, where a long list doesn't push them away.
     widgets::split(ui, 0.66, 620.0, |ui| search(ui, gs, st, spansh, rt, route_end, &own, &mut action), |ui| {
-        this_system(ui, gs);
+        this_system(ui, gs, material);
         ui.add_space(GAP);
         your_grounds(ui, &own);
     });
@@ -151,6 +177,7 @@ fn search(
             ui,
             "Mining-location counts come from FSS and DSS scans commanders share through EDDN (EDMC, EDDiscovery…), collected by Spansh. Only scans since the Rhino update (September 2026) carry them, so a body without a count may still have mining locations.",
         );
+        footnote(ui, &odds_note());
         footnote(ui, NO_PROMISE);
         ui.label(RichText::new("Body data © Spansh (spansh.co.uk)").size(size::CAPTION).color(pal::FAINT));
     });
@@ -211,6 +238,99 @@ fn locations_control(ui: &mut Ui, st: &mut WhereUi) {
     widgets::segmented(ui, &mut st.min_locations, &[(1, "1+"), (5, "5+"), (10, "10+"), (20, "20+")]);
 }
 
+fn material_control(ui: &mut Ui, st: &mut WhereUi) {
+    label(ui, "Material");
+    egui::ComboBox::from_id_salt("where-material")
+        .width(220.0)
+        .selected_text(st.material.unwrap_or("Any material"))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut st.material, None, "Any material");
+            for m in ground_odds::materials() {
+                ui.selectable_value(&mut st.material, Some(m), m);
+            }
+        })
+        .response
+        .on_hover_text("A material the Rhino mines. The grounds where it turned up show below, each body gets its odds of it, and with no class picked only the classes where it turned up are searched.");
+}
+
+/// "a, b and c".
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// Where the material looked for turned up: each ground with its share of the locations read there, a click searching
+/// that ground; then the grounds where none listed it.
+fn material_grounds(ui: &mut Ui, st: &mut WhereUi) {
+    let Some(m) = st.material else { return };
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        label(ui, &format!("{m} turned up on"));
+        for (g, s) in ground_odds::grounds_for(m) {
+            let on = st.class == Some(g.class) && st.volcanism == g.volcanism;
+            let tip = format!("{} of the {} locations read on {} listed it. Click to search this ground.", s.listed, s.of, g.label().to_lowercase());
+            if widgets::pill(ui, on, &format!("{} {:.0}%", g.label(), s.pct())).on_hover_text(tip).clicked() {
+                (st.class, st.volcanism) = (Some(g.class), g.volcanism);
+            }
+        }
+    });
+    let none: Vec<&ground_odds::SurveyGround> = ground_odds::GROUNDS.iter().copied().filter(|g| g.share(m).listed == 0).collect();
+    if !none.is_empty() {
+        let read: u32 = none.iter().map(|g| g.locations).sum();
+        let names: Vec<String> = none.iter().map(|g| g.label().to_lowercase()).collect();
+        footnote(ui, &format!("None of the {} locations read on {} listed it.", group_digits(i64::from(read)), and_list(&names)));
+    }
+}
+
+/// A body's odds of `material`: the share of its ground's surveyed locations that listed it, and about how many of its
+/// own would.
+fn odds_cell(ui: &mut Ui, c: &Candidate, material: &str) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        match c.odds(material) {
+            Some(s) if s.listed > 0 => {
+                let likely = s.expected(c.locations);
+                ui.label(RichText::new(format!("{:.0}%", s.pct())).font(display(size::CALLOUT)).color(pal::GOLD)).on_hover_text(format!(
+                    "{} of the {} locations read on its ground listed {material}; about {} of this body's {} would, if they're like those",
+                    s.listed,
+                    s.of,
+                    likely_text(likely),
+                    c.locations
+                ));
+                ui.label(RichText::new(format!("≈ {} of {}", likely_text(likely), c.locations)).size(size::CAPTION).color(pal::DIM));
+            }
+            Some(s) => {
+                ui.label(RichText::new("0%").color(pal::FAINT)).on_hover_text(format!("None of the {} locations read on its ground listed {material}", s.of));
+            }
+            None => {
+                ui.label(RichText::new("?").color(pal::FAINT)).on_hover_text("The survey read no locations on its ground");
+            }
+        }
+    });
+}
+
+/// "8", or "0.4" under one.
+fn likely_text(v: f64) -> String {
+    if v < 1.0 { format!("{v:.1}") } else { format!("{v:.0}") }
+}
+
+/// "Monazite 58% · Olivine 58% · Bastnasite 53%": what a ground's locations listed most, or the odds of `material`.
+fn odds_line(ground: Option<Ground>, locations: u32, material: Option<&str>) -> Option<String> {
+    let survey = ground_odds::survey(ground?)?;
+    let share = |s: Share| format!("{:.0}%", s.pct());
+    Some(match material {
+        Some(m) => {
+            let s = survey.share(m);
+            let likely = if locations > 0 && s.listed > 0 { format!(", ≈ {} of its {locations}", likely_text(s.expected(locations))) } else { String::new() };
+            format!("{m}: {} of {} read{likely}", share(s), s.of)
+        }
+        None => survey.listed.iter().take(3).map(|(m, _)| format!("{m} {}", share(survey.share(m)))).collect::<Vec<_>>().join(" · "),
+    })
+}
+
 fn search_button(ui: &mut Ui, busy: bool, enabled: bool) -> bool {
     let label = if busy { format!("{} Searching…", icon::HOURGLASS) } else { format!("{} Search", icon::MAGNIFYING_GLASS) };
     let clicked = ui.add_enabled_ui(!busy && enabled, |ui| widgets::primary_button(ui, &label)).inner.clicked();
@@ -234,7 +354,11 @@ fn near_you(ui: &mut Ui, gs: &GameState, st: &mut WhereUi, spansh: &nexus_spansh
         class_control(ui, st, own);
         volcanism_control(ui, st, own);
     });
-    controls_row(ui, |ui| locations_control(ui, st));
+    controls_row(ui, |ui| {
+        material_control(ui, st);
+        locations_control(ui, st);
+    });
+    material_grounds(ui, st);
     controls_row(ui, |ui| {
         label(ui, "Within");
         widgets::segmented(ui, &mut st.radius, &[(25, "25 ly"), (50, "50 ly"), (100, "100 ly"), (250, "250 ly"), (500, "500 ly"), (1000, "1,000 ly")]);
@@ -250,6 +374,7 @@ fn near_you(ui: &mut Ui, gs: &GameState, st: &mut WhereUi, spansh: &nexus_spansh
                 volcanism: st.volcanism,
                 min_locations: st.min_locations,
                 max_ls: st.max_ls,
+                material: st.material,
             };
             st.near_query = Some(q.clone());
             let sp = spansh.clone();
@@ -273,19 +398,28 @@ fn near_you(ui: &mut Ui, gs: &GameState, st: &mut WhereUi, spansh: &nexus_spansh
     };
     let Some(q) = &st.near_query else { return };
     if found.list.is_empty() {
-        widgets::empty(ui, icon::PLANET, &format!("Nothing within {:.0} ly", q.radius_ly), "No landable body there has as many mining locations on record. Search further, or ask for fewer locations or any class or volcanism.");
+        widgets::empty(ui, icon::PLANET, &format!("Nothing within {:.0} ly", q.radius_ly), "No landable body there has as many mining locations on record. Search further, or ask for fewer locations or any class, volcanism or material.");
         return;
     }
     ui.add(egui::Label::new(RichText::new(found_line(found, q)).color(pal::TEXT)).wrap());
     ui.add_space(6.0);
+    // Best odds needs a material: a search without one sorts nearest first.
+    if q.material.is_none() && st.order == Order::BestOdds {
+        st.order = Order::Nearest;
+    }
     let mut list: Vec<&Candidate> = found.list.iter().collect();
-    if st.order == Order::MostLocations {
-        list.sort_by(|a, b| b.locations.cmp(&a.locations).then(a.distance_ly.total_cmp(&b.distance_ly)));
+    match (st.order, q.material) {
+        (Order::MostLocations, _) => list.sort_by(|a, b| b.locations.cmp(&a.locations).then(a.distance_ly.total_cmp(&b.distance_ly))),
+        (Order::BestOdds, Some(m)) => list.sort_by(|a, b| b.likely(Some(m)).total_cmp(&a.likely(Some(m))).then(a.distance_ly.total_cmp(&b.distance_ly))),
+        _ => {}
     }
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
         ui.label(RichText::new("Sort").color(pal::DIM));
-        widgets::segmented(ui, &mut st.order, &[(Order::Nearest, "Nearest"), (Order::MostLocations, "Most locations")]);
+        match q.material {
+            Some(_) => widgets::segmented(ui, &mut st.order, &[(Order::Nearest, "Nearest"), (Order::MostLocations, "Most locations"), (Order::BestOdds, "Best odds")]),
+            None => widgets::segmented(ui, &mut st.order, &[(Order::Nearest, "Nearest"), (Order::MostLocations, "Most locations")]),
+        };
         let systems = count_systems(&list).min(TOUR_SYSTEMS);
         if widgets::primary_button(ui, &format!("{} Tour {systems} systems", icon::PATH))
             .on_hover_text("A route through the first systems in this list, each leg to the nearest one left, on the Navigation page")
@@ -295,7 +429,7 @@ fn near_you(ui: &mut Ui, gs: &GameState, st: &mut WhereUi, spansh: &nexus_spansh
         }
     });
     ui.add_space(6.0);
-    bodies_table(ui, gs, &list[..list.len().min(st.shown)], action);
+    bodies_table(ui, gs, &list[..list.len().min(st.shown)], q.material, action);
     if list.len() > st.shown {
         ui.add_space(6.0);
         if widgets::button(ui, &format!("Show {} more", (list.len() - st.shown).min(ROWS))).clicked() {
@@ -304,9 +438,23 @@ fn near_you(ui: &mut Ui, gs: &GameState, st: &mut WhereUi, spansh: &nexus_spansh
     }
 }
 
-/// "rocky bodies with rocky magma", "icy bodies without volcanism", "bodies".
+/// "rocky bodies with rocky magma", "icy bodies without volcanism", "metal-rich and high metal content bodies" (the
+/// classes a material turned up on), "bodies".
 fn subject(q: &Query, several: bool) -> String {
-    let noun = q.class.map_or_else(|| (if several { "bodies" } else { "body" }).to_string(), |c| c.noun(several));
+    let classes = match (q.class, q.material) {
+        (Some(c), _) => vec![c],
+        (None, Some(m)) => ground_odds::classes_for(m),
+        (None, None) => Vec::new(),
+    };
+    let bodies = if several { "bodies" } else { "body" };
+    let noun = match classes.as_slice() {
+        [c] => c.noun(several),
+        some if !some.is_empty() && some.len() < Class::ALL.len() => {
+            let names: Vec<String> = some.iter().map(|c| c.label().to_lowercase()).collect();
+            format!("{} {bodies}", and_list(&names))
+        }
+        _ => bodies.to_string(),
+    };
     match q.volcanism {
         None => noun,
         Some(Volcanism::Inactive) => format!("{noun} without volcanism"),
@@ -321,7 +469,11 @@ fn found_line(found: &Found, q: &Query) -> String {
     let several = found.matched != 1;
     let have = if several { "have" } else { "has" };
     let locations = if q.min_locations <= 1 { "mining locations".to_string() } else { format!("{} or more mining locations", q.min_locations) };
-    let mut line = format!("Within {:.0} ly, Spansh lists {matched} {} that {have} {locations}.", q.radius_ly, subject(q, several));
+    let why = match (q.class, q.material) {
+        (None, Some(m)) if ground_odds::classes_for(m).len() < Class::ALL.len() => format!(", the classes where {m} turned up"),
+        _ => String::new(),
+    };
+    let mut line = format!("Within {:.0} ly, Spansh lists {matched} {} that {have} {locations}{why}.", q.radius_ly, subject(q, several));
     if (found.list.len() as u64) < found.matched {
         line.push_str(&format!(" These are the {} nearest, out to {:.0} ly.", group_digits(found.list.len() as i64), found.reach_ly));
     }
@@ -342,9 +494,10 @@ fn ground_text(g: Option<Ground>) -> String {
     g.map_or_else(|| "?".to_string(), Ground::label)
 }
 
-/// A ground in a table cell: the class, and under it the volcanism, so the column stays narrow.
-fn ground_cell(ui: &mut Ui, g: Option<Ground>) {
-    ui.vertical(|ui| {
+/// A ground in a table cell: the class, and under it the volcanism, so the column stays narrow; hovered, what its
+/// surveyed locations listed most.
+fn ground_cell(ui: &mut Ui, g: Option<Ground>, locations: u32) {
+    let cell = ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         match g {
             Some(g) => {
@@ -358,6 +511,9 @@ fn ground_cell(ui: &mut Ui, g: Option<Ground>) {
             }
         }
     });
+    if let Some(line) = odds_line(g, locations, None) {
+        cell.response.on_hover_text(format!("Its surveyed locations listed most: {line}"));
+    }
 }
 
 /// "12 ly", and under it the distance from the arrival star.
@@ -369,9 +525,16 @@ fn distance_cell(ui: &mut Ui, ly: f64, ls: Option<f64>) {
     });
 }
 
-fn bodies_table(ui: &mut Ui, gs: &GameState, list: &[&Candidate], action: &mut Option<Action>) {
-    Grid::new("where-bodies").max_col_width(ui.available_width()).num_columns(7).striped(true).spacing([14.0, 10.0]).show(ui, |ui| {
-        for t in ["Body", "Ground", "Locations", "Distance", "Gravity", "Reported", ""] {
+fn bodies_table(ui: &mut Ui, gs: &GameState, list: &[&Candidate], material: Option<&str>, action: &mut Option<Action>) {
+    let columns = if material.is_some() { 8 } else { 7 };
+    Grid::new("where-bodies").max_col_width(ui.available_width()).num_columns(columns).striped(true).spacing([14.0, 10.0]).show(ui, |ui| {
+        for t in ["Body", "Ground", "Locations"] {
+            th(ui, t);
+        }
+        if let Some(m) = material {
+            th(ui, m);
+        }
+        for t in ["Distance", "Gravity", "Reported", ""] {
             th(ui, t);
         }
         ui.end_row();
@@ -397,8 +560,11 @@ fn bodies_table(ui: &mut Ui, gs: &GameState, list: &[&Candidate], action: &mut O
                 c.volcanism.as_deref().filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("No volcanism")).map(|v| format!(", {}", v.to_lowercase())).unwrap_or_default(),
                 c.atmosphere.as_deref().unwrap_or("atmosphere not on record"),
             ));
-            ground_cell(ui, c.ground);
+            ground_cell(ui, c.ground, c.locations);
             ui.label(RichText::new(c.locations.to_string()).font(display(size::CALLOUT)).color(pal::ACCENT));
+            if let Some(m) = material {
+                odds_cell(ui, c, m);
+            }
             distance_cell(ui, c.distance_ly, c.distance_ls);
             ui.label(RichText::new(c.gravity_g.map(|g| format!("{g:.2} g")).unwrap_or_else(|| "?".into())).color(pal::DIM));
             ui.label(RichText::new(c.reported.map(|t| widgets::ago(nexus_journal::Timestamp(t))).unwrap_or_else(|| "?".into())).color(pal::DIM))
@@ -439,8 +605,10 @@ fn along_route(
     });
     controls_row(ui, |ui| {
         volcanism_control(ui, st, own);
-        locations_control(ui, st);
+        material_control(ui, st);
     });
+    controls_row(ui, |ui| locations_control(ui, st));
+    material_grounds(ui, st);
     controls_row(ui, |ui| {
         label(ui, "Off the line");
         widgets::segmented(ui, &mut st.corridor, &[(10, "10 ly"), (25, "25 ly"), (50, "50 ly"), (100, "100 ly")]);
@@ -460,6 +628,7 @@ fn along_route(
                 volcanism: st.volcanism,
                 min_locations: st.min_locations,
                 max_ls: st.max_ls,
+                material: st.material,
             };
             st.route_query = Some((q.clone(), st.stops));
             let (sp, stops) = (spansh.clone(), st.stops as usize);
@@ -489,21 +658,22 @@ fn along_route(
     };
     let Some((q, stops_asked)) = &st.route_query else { return };
     let Around::Route { from, to } = &q.around else { return };
-    let stops = sf::route_stops(found, *stops_asked as usize);
+    let stops = sf::route_stops(found, *stops_asked as usize, q.material);
     let length = found.ends.map_or(0.0, |(a, b)| nexus_model::location::distance(a, b));
     if stops.is_empty() {
         widgets::empty(
             ui,
             icon::PATH,
             "No stops on this route",
-            &format!("Spansh lists no landable body with mining locations within {:.0} ly of the line from {from} to {to}. Widen the search, or ask for fewer locations or any class or volcanism.", q.radius_ly),
+            &format!("Spansh lists no landable body with mining locations within {:.0} ly of the line from {from} to {to}. Widen the search, or ask for fewer locations or any class, volcanism or material.", q.radius_ly),
         );
         return;
     }
     let matched = if found.matched >= 10_000 { "10,000+".to_string() } else { group_digits(found.matched as i64) };
     let stretch = length / f64::from((*stops_asked).max(1));
+    let best = q.material.map_or_else(|| "the best system".to_string(), |m| format!("the system with the most locations likely to list {m}"));
     let mut line = format!(
-        "From {from} to {to}, {} ly. Within {:.0} ly of the line Spansh lists {matched} {} with mining locations; of the {} nearest it, here is the best system in each {} ly stretch.",
+        "From {from} to {to}, {} ly. Within {:.0} ly of the line Spansh lists {matched} {} with mining locations; of the {} nearest it, here is {best} in each {} ly stretch.",
         group_digits(length.round() as i64),
         q.radius_ly,
         subject(q, found.matched != 1),
@@ -524,7 +694,7 @@ fn along_route(
         *action = Some(Action::Follow(sf::route_plan(&stops, gs.location.star_pos, to, to_pos, tours::jump_range(gs))));
     }
     ui.add_space(6.0);
-    stops_table(ui, gs, &stops, action);
+    stops_table(ui, gs, &stops, q.material, action);
     footnote(
         ui,
         "Spansh measures how far a body is from the straight line between your system and the destination; a plotted route stays close to it. \
@@ -532,7 +702,7 @@ fn along_route(
     );
 }
 
-fn stops_table(ui: &mut Ui, gs: &GameState, stops: &[RouteStop], action: &mut Option<Action>) {
+fn stops_table(ui: &mut Ui, gs: &GameState, stops: &[RouteStop], material: Option<&str>, action: &mut Option<Action>) {
     // The wrapping column goes last: a grid gives the last column the width that's left.
     Grid::new("where-stops").max_col_width(ui.available_width()).num_columns(5).striped(true).spacing([14.0, 8.0]).show(ui, |ui| {
         for t in ["#", "System", "On the way", "Off the line", "Bodies with mining locations"] {
@@ -560,8 +730,9 @@ fn stops_table(ui: &mut Ui, gs: &GameState, stops: &[RouteStop], action: &mut Op
                     };
                     let mined = if worked > 0 { " · mined" } else { "" };
                     let ls = c.distance_ls.map(|d| format!(" · {} ls", group_digits(d.round() as i64))).unwrap_or_default();
+                    let odds = material.and_then(|m| c.odds(m).map(|s| format!(" · {m} {:.0}%", s.pct()))).unwrap_or_default();
                     ui.add(
-                        egui::Label::new(RichText::new(format!("{} · {} · {} locations{ls}{mined}", c.short_body(), ground_text(c.ground), c.locations)).color(pal::TEXT))
+                        egui::Label::new(RichText::new(format!("{} · {} · {} locations{odds}{ls}{mined}", c.short_body(), ground_text(c.ground), c.locations)).color(pal::TEXT))
                             .wrap(),
                     );
                 }
@@ -574,42 +745,43 @@ fn stops_table(ui: &mut Ui, gs: &GameState, stops: &[RouteStop], action: &mut Op
     });
 }
 
-/// The landable planets of this system, from your own scans.
-fn this_system(ui: &mut Ui, gs: &GameState) {
+/// The landable planets of this system, from your own scans, each with what its ground's surveyed locations listed most
+/// (or the odds of the material looked for).
+fn this_system(ui: &mut Ui, gs: &GameState, material: Option<&str>) {
     card_tinted(ui, icon::PLANET, "In this system", pal::CYAN, |ui| {
         let list = sf::this_system(gs);
         if list.is_empty() {
             footnote(ui, "Scan this system with the FSS: its landable planets show here with their ground and mining locations.");
             return;
         }
-        Grid::new("where-here").max_col_width(ui.available_width()).num_columns(3).striped(true).spacing([12.0, 6.0]).show(ui, |ui| {
-            for t in ["Body", "Ground", "Locations"] {
-                th(ui, t);
+        // A list rather than a grid: the odds run long, and this card is narrow beside the search.
+        for (i, b) in list.iter().enumerate() {
+            if i > 0 {
+                ui.add_space(6.0);
             }
-            ui.end_row();
-            for b in &list {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&b.name).color(pal::TEXT));
-                        if b.worked > 0 {
-                            badge(ui, "Mined", pal::GOOD).on_hover_text(format!("You've worked {} mining location{} here", b.worked, if b.worked == 1 { "" } else { "s" }));
-                        }
-                    });
-                    let gravity = b.gravity_g.map(|g| format!(" · {g:.2} g")).unwrap_or_default();
-                    ui.label(RichText::new(format!("{} ls{gravity}", group_digits(b.distance_ls.round() as i64))).size(size::CAPTION).color(pal::DIM));
-                });
-                ground_cell(ui, b.ground);
-                if b.locations > 0 {
-                    ui.label(RichText::new(b.locations.to_string()).color(pal::ACCENT));
-                } else {
-                    ui.label(RichText::new("–").color(pal::FAINT)).on_hover_text("None in your scans: the FSS and the DSS report them, and scans from before September 2026 don't.");
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(&b.name).font(display(size::CALLOUT)).color(pal::TEXT));
+                if b.worked > 0 {
+                    badge(ui, "Mined", pal::GOOD).on_hover_text(format!("You've worked {} mining location{} here", b.worked, if b.worked == 1 { "" } else { "s" }));
                 }
-                ui.end_row();
+                if b.locations > 0 {
+                    ui.label(RichText::new(format!("{} location{}", b.locations, if b.locations == 1 { "" } else { "s" })).size(size::CAPTION).color(pal::ACCENT));
+                } else {
+                    ui.label(RichText::new("no locations in your scans").size(size::CAPTION).color(pal::FAINT))
+                        .on_hover_text("The FSS and the DSS report them, and scans from before September 2026 don't.");
+                }
+            });
+            let gravity = b.gravity_g.map(|g| format!(" · {g:.2} g")).unwrap_or_default();
+            ui.label(RichText::new(format!("{} · {} ls{gravity}", ground_text(b.ground), group_digits(b.distance_ls.round() as i64))).size(size::CAPTION).color(pal::DIM));
+            if let Some(line) = odds_line(b.ground, b.locations, material) {
+                ui.add(egui::Label::new(RichText::new(line).size(size::CAPTION).color(pal::TEXT)).wrap());
             }
-        });
+        }
         ui.add_space(4.0);
-        footnote(ui, "From your own scans. To mine one, target the body and pick a Planetary Mining Location in the navigation panel.");
+        footnote(
+            ui,
+            "From your own scans; the odds come from the survey (see the footnotes under the search). To mine one, target the body and pick a Planetary Mining Location in the navigation panel.",
+        );
     });
 }
 
@@ -657,7 +829,7 @@ mod tests {
 
     #[test]
     fn the_found_line_says_what_was_read() {
-        let q = Query { around: Around::Here([0.0; 3]), radius_ly: 100.0, class: Some(Class::Rocky), volcanism: Some(Volcanism::RockyMagma), min_locations: 5, max_ls: 0 };
+        let q = Query { around: Around::Here([0.0; 3]), radius_ly: 100.0, class: Some(Class::Rocky), volcanism: Some(Volcanism::RockyMagma), min_locations: 5, max_ls: 0, material: None };
         let body = sf::candidate(nexus_spansh::BodyRecord::default());
         let found = Found { matched: 1234, reach_ly: 87.4, list: vec![body; 500], ends: None };
         assert_eq!(
@@ -672,12 +844,32 @@ mod tests {
         assert!(found_line(&capped, &any).starts_with("Within 100 ly, Spansh lists 10,000+ bodies that have mining locations."));
     }
 
+    /// A material with no class searches the classes where it turned up, and the page says so; each body shows what its
+    /// ground listed most, or the odds of the material.
+    #[test]
+    fn a_material_and_its_odds() {
+        let q = Query { around: Around::Here([0.0; 3]), radius_ly: 100.0, class: None, volcanism: None, min_locations: 1, max_ls: 0, material: Some("Platinum") };
+        let found = Found { matched: 30, reach_ly: 80.0, list: vec![sf::candidate(nexus_spansh::BodyRecord::default()); 30], ends: None };
+        assert_eq!(found_line(&found, &q), "Within 100 ly, Spansh lists 30 metal-rich and high metal content bodies that have mining locations, the classes where Platinum turned up.");
+        let helium3 = Query { material: Some("Helium-3"), ..q.clone() };
+        assert_eq!(found_line(&found, &helium3), "Within 100 ly, Spansh lists 30 icy bodies that have mining locations, the classes where Helium-3 turned up.");
+        let magma = Some(Ground { class: Class::Rocky, volcanism: Volcanism::RockyMagma });
+        assert_eq!(odds_line(magma, 14, None).as_deref(), Some("Monazite 58% · Olivine 58% · Bastnasite 53%"));
+        assert_eq!(odds_line(magma, 14, Some("Monazite")).as_deref(), Some("Monazite: 58% of 36 read, ≈ 8 of its 14"));
+        assert_eq!(odds_line(magma, 14, Some("Platinum")).as_deref(), Some("Platinum: 0% of 36 read"));
+        assert_eq!(odds_line(Some(Ground { class: Class::Rocky, volcanism: Volcanism::WaterGeysers }), 3, None), None, "a ground nobody read");
+        assert_eq!(and_list(&["a".into(), "b".into(), "c".into()]), "a, b and c");
+        assert_eq!(likely_text(0.43), "0.4");
+    }
+
     #[test]
     fn screenshot_tabs() {
         let route = WhereUi::new(Some("where-route"), true);
         assert!(route.mode == Mode::Route && route.to == "Colonia" && route.autorun);
         let near = WhereUi::new(Some("where"), true);
         assert!(near.mode == Mode::Near && near.autorun);
+        let monazite = WhereUi::new(Some("where:monazite"), true);
+        assert!(monazite.mode == Mode::Near && monazite.autorun && monazite.material == Some("Monazite"));
         assert!(!WhereUi::new(Some("find"), true).autorun, "another page's tab starts nothing here");
     }
 }

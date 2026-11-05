@@ -5,6 +5,7 @@
 use super::{NexusTools, SPANSH_TIMEOUT, arg_f64, arg_str, fit, r1, strip_nulls};
 use crate::surface_finder::{self as sf, Around, Candidate, Found, GroundYield, Query, RouteStop};
 use nexus_data::commodities::name_key;
+use nexus_data::ground_odds;
 use nexus_data::grounds::{Class, Ground, Volcanism};
 use nexus_data::materials::{self, Material, MaterialKind};
 use nexus_journal::Timestamp;
@@ -106,7 +107,8 @@ const STOPS: usize = 10;
 /// A route search reads up to four pages: it gets longer than one call's timeout.
 const ROUTE_TIMEOUT: Duration = Duration::from_secs(60);
 
-const NO_PROMISE: &str = "No journal or feed says what a mining location holds: the game records what the Rhino's refinery made, not what was in the deposit. A ground (class and volcanism) and the commander's own runs on it are leads, not promises.";
+const NO_PROMISE: &str = "No journal or feed says what a mining location holds: the game records what the Rhino's refinery made, not what was in the deposit. A ground (class and volcanism), its odds and the commander's own runs on it are leads, not promises.";
+const ODDS: &str = "pct_listing and odds_pct: of the mining locations commanders read on that ground in the game (a survey of 1,131 locations up to 11 October 2026), the share whose target panel listed the material. likely_locations is that share of the body's locations, an average. A listing says the material is there to find, not how much. In the game, targeting a location after a DSS scan shows its materials.";
 const COUNTS: &str = "Mining-location counts come from the FSS and DSS scans commanders shared through EDDN, as Spansh holds them. Only scans since the Rhino update (September 2026) carry them, so a body without a count may still have locations.";
 
 /// The class asked for: "rocky", "Rocky ice", "metal-rich", "high metal"…; "any" or nothing for any class.
@@ -134,6 +136,20 @@ fn volcanism_arg(a: &Value) -> Result<Option<Volcanism>, String> {
     Ok(Some(v))
 }
 
+/// The material asked for, as the game names it ("monazite", "LTD", "low temp"); None for any.
+fn material_arg(a: &Value) -> Result<Option<&'static str>, String> {
+    let Some(asked) = arg_str(a, "material").filter(|m| !matches!(m.trim().to_ascii_lowercase().as_str(), "" | "any" | "all")) else { return Ok(None) };
+    let k = name_key(&asked);
+    let all = ground_odds::materials();
+    all.iter()
+        .copied()
+        .find(|m| name_key(m) == k)
+        .or_else(|| matches!(k.as_str(), "ltd" | "ltds").then_some("Low Temperature Diamonds"))
+        .or_else(|| all.iter().copied().find(|m| !k.is_empty() && name_key(m).starts_with(&k)))
+        .map(Some)
+        .ok_or_else(|| format!("material must be one the Rhino mines: {}; not \"{asked}\".", all.join(", ")))
+}
+
 /// "rocky bodies with rocky magma and 5 or more mining locations", as the Mining page says it.
 fn what(q: &Query) -> String {
     let noun = q.class.map_or_else(|| "bodies".to_string(), |c| c.noun(true));
@@ -143,7 +159,29 @@ fn what(q: &Query) -> String {
         Some(v) => format!(" with {}", v.label()),
     };
     let locations = if q.min_locations <= 1 { "mining locations".to_string() } else { format!("{} or more mining locations", q.min_locations) };
-    format!("landable {noun}{volcanism} that have {locations}")
+    let material = q.material.map(|m| format!(", for {m} (the classes where it turned up unless a class is given)")).unwrap_or_default();
+    format!("landable {noun}{volcanism} that have {locations}{material}")
+}
+
+/// A body's odds of the material asked for: the share of its ground's surveyed locations that listed it, and about how
+/// many of its own locations would.
+fn add_odds(v: &mut Value, c: &Candidate, material: Option<&str>) {
+    if let Some(s) = material.and_then(|m| c.odds(m)) {
+        v["odds_pct"] = json!((s.pct() * 10.0).round() / 10.0);
+        v["likely_locations"] = json!((s.expected(c.locations) * 10.0).round() / 10.0);
+    }
+}
+
+/// For each ground among `bodies` that the survey read, the share of its locations that listed each material.
+fn grounds_odds<'a>(bodies: impl Iterator<Item = &'a Candidate>) -> Value {
+    let mut out = serde_json::Map::new();
+    for s in bodies.filter_map(|c| ground_odds::survey(c.ground?)) {
+        out.entry(s.label()).or_insert_with(|| {
+            let shares: Vec<String> = s.listed.iter().map(|(m, n)| format!("{m} {:.0}", f64::from(*n) * 100.0 / f64::from(s.locations))).collect();
+            json!({ "locations_read": s.locations, "pct_listing": shares.join(", ") })
+        });
+    }
+    Value::Object(out)
 }
 
 fn ground(g: Option<Ground>) -> Value {
@@ -155,12 +193,13 @@ fn date(unix: i64) -> String {
 }
 
 /// A body near the commander. `worked`: the mining locations their own Rhino worked on it.
-fn mine_body(c: &Candidate, worked: usize) -> Value {
+fn mine_body(c: &Candidate, worked: usize, material: Option<&str>) -> Value {
     let mut v = json!({
         "body": c.body, "system": c.system, "ground": ground(c.ground), "mining_locations": c.locations,
         "distance_ly": r1(c.distance_ly), "distance_ls": c.distance_ls.map(f64::round), "gravity_g": c.gravity_g.map(|g| (g * 100.0).round() / 100.0),
         "counted_on": c.reported.map(date), "you_worked": (worked > 0).then_some(worked),
     });
+    add_odds(&mut v, c, material);
     strip_nulls(&mut v);
     v
 }
@@ -194,12 +233,15 @@ fn shape_near(near: &str, q: &Query, found: &Found, list: &[&Candidate], most: b
         let mut out = json!({
             "near": near, "within_ly": q.radius_ly, "looking_for": what(q), "max_distance_ls": (q.max_ls > 0).then_some(q.max_ls),
             "bodies_matching": matched(found.matched),
-            "bodies": list[..n].iter().map(|c| mine_body(c, worked(c))).collect::<Vec<_>>(),
+            "bodies": list[..n].iter().map(|c| mine_body(c, worked(c), q.material)).collect::<Vec<_>>(),
         });
+        if q.material.is_none() {
+            out["grounds_odds"] = grounds_odds(list[..n].iter().copied());
+        }
         if !own.is_empty() {
             out["your_grounds"] = json!(yields(own, if level == 0 { 6 } else { 0 }));
         }
-        let mut notes = vec![COUNTS.to_string(), NO_PROMISE.to_string()];
+        let mut notes = vec![COUNTS.to_string(), NO_PROMISE.to_string(), ODDS.to_string()];
         if most {
             notes.push(format!("The {n} with the most mining locations among the {} nearest are listed.", found.list.len()));
         } else if (n as u64) < found.matched {
@@ -231,6 +273,7 @@ fn shape_route(from: &str, to: &str, q: &Query, found: &Found, stops: &[RouteSto
                     "system": s.system, "along_ly": s.along_ly.round(), "off_line_ly": r1(s.off_line_ly),
                     "bodies": s.bodies.iter().take(per_stop).map(|c| {
                         let mut v = json!({ "body": c.short_body(), "ground": ground(c.ground), "mining_locations": c.locations, "distance_ls": c.distance_ls.map(f64::round) });
+                        add_odds(&mut v, c, q.material);
                         strip_nulls(&mut v);
                         v
                     }).collect::<Vec<_>>(),
@@ -242,13 +285,21 @@ fn shape_route(from: &str, to: &str, q: &Query, found: &Found, stops: &[RouteSto
             "from": from, "to": to, "length_ly": length.round(), "off_line_ly": q.radius_ly, "looking_for": what(q),
             "bodies_matching": matched(found.matched), "bodies_read": found.list.len(), "stops": rows,
         });
+        if q.material.is_none() && level == 0 {
+            out["grounds_odds"] = grounds_odds(stops[..n].iter().flat_map(|s| s.bodies.iter().take(per_stop)));
+        }
         if !own.is_empty() {
             out["your_grounds"] = json!(yields(own, if level <= 1 { 6 } else { 0 }));
         }
+        let best = match q.material {
+            Some(m) => format!("the most mining locations likely to list {m} on one body"),
+            None => "most mining locations on one body".to_string(),
+        };
         let mut notes = vec![
-            format!("The best system (most mining locations on one body) in each of {asked} stretches of {} ly, nearest the straight line first; Spansh reads at most 2,000 bodies.", (length / asked.max(1) as f64).round()),
+            format!("The best system ({best}) in each of {asked} stretches of {} ly, nearest the straight line first; Spansh reads at most 2,000 bodies.", (length / asked.max(1) as f64).round()),
             COUNTS.to_string(),
             NO_PROMISE.to_string(),
+            ODDS.to_string(),
         ];
         if stops.len() < asked {
             notes.push(format!("{} stretches had none.", asked - stops.len()));
@@ -285,6 +336,7 @@ impl NexusTools {
     pub(super) fn where_to_mine(&self, a: &Value) -> Result<Value, String> {
         let class = class_arg(a)?;
         let volcanism = volcanism_arg(a)?;
+        let material = material_arg(a)?;
         let min_locations = arg_f64(a, "min_locations").map_or(1, |n| n.round().clamp(1.0, 999.0) as u32);
         let max_ls = arg_f64(a, "max_distance_ls").map_or(0, |d| d.round().clamp(0.0, 1.0e9) as u32);
         let radius = |default: f64| arg_f64(a, "max_distance_ly").unwrap_or(default).clamp(1.0, f64::from(*crate::tours::limits::RADIUS_LY.end()));
@@ -299,18 +351,19 @@ impl NexusTools {
                 return Err("The commander's system isn't known yet: give near_system as the start.".into());
             }
             let asked = arg_f64(a, "stops").map_or(STOPS, |n| n.round().clamp(1.0, f64::from(*crate::tours::limits::SYSTEMS.end())) as usize);
-            let q = Query { around: Around::Route { from: from.clone(), to: to.clone() }, radius_ly: radius(25.0), class, volcanism, min_locations, max_ls };
+            let q = Query { around: Around::Route { from: from.clone(), to: to.clone() }, radius_ly: radius(25.0), class, volcanism, min_locations, max_ls, material };
             let found = self.spansh_search(ROUTE_TIMEOUT, sf::along(&self.spansh, &q, asked))?;
-            let stops = sf::route_stops(&found, asked);
+            let stops = sf::route_stops(&found, asked, material);
             return Ok(shape_route(&from, &to, &q, &found, &stops, asked, &own_runs(), self.budget));
         }
         let (origin, near) = self.origin_online(a, &me)?;
-        let q = Query { around: Around::Here(origin), radius_ly: radius(100.0), class, volcanism, min_locations, max_ls };
+        let q = Query { around: Around::Here(origin), radius_ly: radius(100.0), class, volcanism, min_locations, max_ls, material };
         let found = self.spansh_search(SPANSH_TIMEOUT, sf::near(&self.spansh, &q))?;
         let mut list: Vec<&Candidate> = found.list.iter().collect();
+        // "Most locations" with a material asked for: those likeliest to list it.
         let most = arg_str(a, "sort").is_some_and(|s| s.eq_ignore_ascii_case("most_locations"));
         if most {
-            list.sort_by(|x, y| y.locations.cmp(&x.locations).then(x.distance_ly.total_cmp(&y.distance_ly)));
+            list.sort_by(|x, y| y.likely(material).total_cmp(&x.likely(material)).then(x.distance_ly.total_cmp(&y.distance_ly)));
         }
         let model = self.model.read();
         let gs = model.active();
@@ -433,7 +486,7 @@ mod tests {
     }
 
     fn query(around: Around) -> Query {
-        Query { around, radius_ly: 100.0, class: Some(Class::Rocky), volcanism: Some(Volcanism::RockyMagma), min_locations: 5, max_ls: 0 }
+        Query { around, radius_ly: 100.0, class: Some(Class::Rocky), volcanism: Some(Volcanism::RockyMagma), min_locations: 5, max_ls: 0, material: None }
     }
 
     #[test]
@@ -458,12 +511,31 @@ mod tests {
         assert!(short["bodies"].as_array().unwrap().len() < MINE_HITS);
     }
 
+    /// Asked for a material, each body has its odds; asked for none, each ground in the reply has its shares once.
+    #[test]
+    fn the_reply_carries_the_odds_per_material() {
+        let found = Found { matched: 1, reach_ly: 3.0, list: vec![mine("Alpha", "A 1", 5, 3.0, 0.0)], ends: None };
+        let refs: Vec<&Candidate> = found.list.iter().collect();
+        let monazite = Query { material: Some("Monazite"), ..query(Around::Here([0.0; 3])) };
+        let v = shape_near("Alpha", &monazite, &found, &refs, false, &|_| 0, &[], 11_500);
+        assert_eq!((&v["bodies"][0]["odds_pct"], &v["bodies"][0]["likely_locations"]), (&json!(58.3), &json!(2.9)), "21 of 36, and 58 % of 5: {v}");
+        assert!(v.get("grounds_odds").is_none() && v["looking_for"].as_str().unwrap().contains("for Monazite"), "{v}");
+        let any = shape_near("Alpha", &query(Around::Here([0.0; 3])), &found, &refs, false, &|_| 0, &[], 11_500);
+        assert_eq!(any["grounds_odds"]["Rocky · rocky magma"]["locations_read"], 36, "{any}");
+        assert!(any["grounds_odds"]["Rocky · rocky magma"]["pct_listing"].as_str().unwrap().starts_with("Monazite 58, Olivine 58, Bastnasite 53"), "{any}");
+        assert!(any["bodies"][0].get("odds_pct").is_none());
+        // The material is read however it's written, and only one the Rhino mines.
+        let arg = |m: &str| material_arg(&json!({ "material": m }));
+        assert_eq!((arg("ltd"), arg("monaz"), arg("helium-3"), arg("any")), (Ok(Some("Low Temperature Diamonds")), Ok(Some("Monazite")), Ok(Some("Helium-3")), Ok(None)));
+        assert!(arg("Painite").is_err_and(|e| e.contains("Monazite")));
+    }
+
     #[test]
     fn along_a_route_the_reply_names_the_best_system_in_each_stretch() {
         // A 1,000 ly route along x: bodies near its start and its end, none in the middle.
         let list = vec![mine("Start", "B 1", 9, 2.0, 50.0), mine("Start", "B 2", 3, 2.0, 50.0), mine("End", "C 1", 12, 4.0, 950.0)];
         let found = Found { matched: 3, reach_ly: 4.0, list, ends: Some(([0.0; 3], [1000.0, 0.0, 0.0])) };
-        let stops = sf::route_stops(&found, 4);
+        let stops = sf::route_stops(&found, 4, None);
         let v = shape_route("Here", "There", &query(Around::Route { from: "Here".into(), to: "There".into() }), &found, &stops, 4, &[], 11_500);
         let rows = v["stops"].as_array().unwrap();
         assert_eq!((rows.len(), &rows[0]["system"], &rows[1]["system"], &v["length_ly"]), (2, &json!("Start"), &json!("End"), &json!(1000.0)), "{v}");
