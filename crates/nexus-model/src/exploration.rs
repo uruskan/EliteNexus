@@ -311,6 +311,9 @@ impl Body {
 
 #[derive(Debug, Clone)]
 pub struct FssSignal {
+    /// Tells signals apart: the journal's own name (which numbers conflict zones that share a shown name), and an
+    /// unidentified signal source's type and threat.
+    pub key: String,
     pub name: String,
     pub kind: Option<String>,
     pub uss_type: Option<String>,
@@ -740,21 +743,21 @@ impl Exploration {
 
     pub fn on_fss_signal(&mut self, f: &ev::FSSSignalDiscovered, system_name: &str, ts: Timestamp) {
         let sys = self.system_mut(f.system_address, system_name, ts);
-        let name = f.signal_name_localised.clone().unwrap_or_else(|| f.signal_name.clone());
-        if let Some(s) = sys.signals.iter_mut().find(|s| s.name == name) {
-            // Seen again (another visit): fleet carriers come and go, so "when" matters.
-            s.ts = s.ts.max(ts);
-            return;
-        }
-        sys.signals.push(FssSignal {
-            name,
+        let signal = FssSignal {
+            key: format!("{}|{}|{}", f.signal_name, f.uss_type.as_deref().unwrap_or_default(), f.threat_level.map(|t| t.to_string()).unwrap_or_default()),
+            name: f.signal_name_localised.clone().unwrap_or_else(|| f.signal_name.clone()),
             kind: f.signal_type.clone(),
             uss_type: f.uss_type_localised.clone().or_else(|| f.uss_type.clone()),
             is_station: f.is_station.unwrap_or(false),
             threat: f.threat_level,
             faction: f.spawning_faction.clone(),
             ts,
-        });
+        };
+        match sys.signals.iter_mut().find(|s| s.key == signal.key) {
+            // Seen again (another visit): as it is now, and when, since fleet carriers come and go.
+            Some(s) => *s = FssSignal { ts: s.ts.max(ts), ..signal },
+            None => sys.signals.push(signal),
+        }
     }
 
     pub fn on_nav_beacon(&mut self, n: &ev::NavBeaconScan, system_name: &str, ts: Timestamp) {
@@ -961,5 +964,39 @@ impl Body {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn signal(ex: &mut Exploration, json: &str, ts: i64) {
+        let f: ev::FSSSignalDiscovered = serde_json::from_str(json).expect("signal");
+        ex.on_fss_signal(&f, "Orrere", Timestamp(ts));
+    }
+
+    /// Lines as the game wrote them (Orrere, November 2026), and an unidentified source seen twice.
+    #[test]
+    fn signals_sharing_a_name_stay_apart_and_take_their_latest_details() {
+        let mut ex = Exploration::default();
+        for (i, ts) in [(1, 100), (2, 100), (1, 200)] {
+            let zone = format!(r#"{{ "SystemAddress":5306667012834, "SignalName":"$Warzone_Powerplay_Med:#index={i};", "SignalName_Localised":"Power Conflict Zone [Medium Intensity]", "SignalType":"Combat" }}"#);
+            signal(&mut ex, &zone, ts);
+        }
+        let uss = |threat: u32| format!(r#"{{ "SystemAddress":5306667012834, "SignalName":"$USS;", "SignalName_Localised":"Unidentified signal source", "SignalType":"USS", "USSType":"$USS_Type_Salvage;", "USSType_Localised":"Degraded emissions", "SpawningFaction":"Alliance Rapid-reaction Corps", "ThreatLevel":{threat} }}"#);
+        signal(&mut ex, &uss(0), 100);
+        signal(&mut ex, &uss(2), 150);
+        signal(&mut ex, &uss(0), 300);
+        signal(&mut ex, r#"{ "SystemAddress":5306667012834, "SignalName":"BLUESTAR HAVEN [ROTV] T9V-NQH", "SignalType":"FleetCarrier", "IsStation":true }"#, 100);
+        signal(&mut ex, r#"{ "SystemAddress":5306667012834, "SignalName":"BLUESTAR HAVEN [ROTV] T9V-NQH", "SignalType":"FleetCarrier", "IsStation":true }"#, 400);
+        let sys = &ex.systems[&5306667012834];
+        let count = |kind: &str| sys.signals.iter().filter(|s| s.kind.as_deref() == Some(kind)).count();
+        assert_eq!((count("Combat"), count("USS"), count("FleetCarrier")), (2, 2, 1), "two zones, two sources (threat 0 and 2), one carrier");
+        let zone = sys.signals.iter().find(|s| s.key.contains("index=1")).expect("zone 1");
+        assert_eq!(zone.ts, Timestamp(200), "seen again later");
+        let calm = sys.signals.iter().find(|s| s.threat == Some(0)).expect("threat 0");
+        assert_eq!((calm.ts, calm.uss_type.as_deref()), (Timestamp(300), Some("Degraded emissions")));
+        assert_eq!(sys.signals.iter().find(|s| s.kind.as_deref() == Some("FleetCarrier")).map(|s| s.ts), Some(Timestamp(400)));
     }
 }

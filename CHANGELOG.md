@@ -168,8 +168,17 @@ release time that section becomes the new version and the release workflow publi
 - **Fleet › Where to buy offers every ship to start from.** It offered only ships whose modules the game had recorded,
   one of seventeen in a play-test. The others are listed too, greyed, saying why: the game writes a ship's modules to
   its journal only while you fly it.
+- **Exploration** › Current system lists a system's signals by kind (stations, installations, megaships, conflict
+  zones, carriers…) with counts, plain names and callsigns, in columns that use the page's width, and says where they
+  come from. Signals kept from earlier visits show when they were seen, since carriers come and go. Click one to copy
+  its name.
+- **Exploration** › Find valuable bodies shows its settings in a bar under the search, each once: Within, Stops, Jump
+  range, Bodies worth at least, Furthest from the star, and Values (if you map them, or from the scan alone). Type a
+  value or step it with − and +.
 
 ### Fixed
+- **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at
+  the window's edge, and the bodies table scrolled in a box of its own.
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
