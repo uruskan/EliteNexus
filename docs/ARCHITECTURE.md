@@ -151,7 +151,9 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   `autocomplete`/`combobox` (a search field with suggestions; `combobox_grouped` groups them under headings that can't
   be picked), `th` table headings, `table` (an `egui_extras` table with striped rows; its `flex_column`, or two sharing
   equally, takes the room left). Pages use these instead of raw egui widgets so the look stays uniform
-  and every layout adapts to the window width (the sidebar becomes an icon rail below 1180 px).
+  and every layout adapts to the window width (the sidebar becomes an icon rail below 1180 px). Where the look is
+  going (colour by meaning, neutral card titles, hairline tables, the chart rules) is `docs/DESIGN.md`; the components
+  change to match it step by step.
 * History is folded with alerts **disabled**; only live events raise alerts or get uploaded. Never upload history.
   Test runs (`--journal-dir`, `--screenshot`) never upload at all.
 * The UI never blocks: long work (DB queries, HTTP) runs off-thread and results are polled each frame.

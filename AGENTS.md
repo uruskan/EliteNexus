@@ -7,6 +7,8 @@ file is for anyone changing the code. Read it before your first change; several 
 ## Read first
 
 * `docs/ARCHITECTURE.md`: crates, threads, the design system, code conventions.
+* `docs/DESIGN.md`: how the app looks and why: principles, colours, type, components, charts and a checklist for new
+  pages. Every UI change follows it; its last section says how far the app has moved to it.
 * `docs/USER_GUIDE.md`: what every page does. It's compiled into the in-app assistant's knowledge base, together
   with `crates/nexus-ai/knowledge/*.md`, so the assistant tells users whatever it says. When behaviour changes,
   update it in the same commit.
@@ -131,7 +133,8 @@ egui 0.36 layout lessons learned here:
 * Pages that `app.rs` doesn't wrap in a `ScrollArea` (Exploration, Navigation, Market, Logbook, ...) scroll
   themselves: a `TableBuilder` scrolls on its own, anything else needs an explicit `ScrollArea`.
 * Build pages from `widgets.rs` (`cards`, `group`, `tabs`/`segmented`, `toggle`, `primary_button`, `badge`,
-  `footnote`, `empty`) and `theme.rs` (`pal`, `size`): no raw egui styling, no text below 12 pt.
+  `footnote`, `empty`) and `theme.rs` (`pal`, `size`): no raw egui styling, no text below 12 pt. `docs/DESIGN.md`
+  says which component and which colour to use where.
 
 ## Working in parallel
 
