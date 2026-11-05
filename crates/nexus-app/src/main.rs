@@ -222,6 +222,7 @@ fn main() -> eframe::Result {
     #[cfg(windows)]
     if see_through && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
         use eframe::wgpu;
+        use overlay::window::NoSeeThrough;
         setup.instance_descriptor.backend_options.dx12.presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
         setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'_>>| {
             let usable = |a: &&wgpu::Adapter| surface.is_none_or(|s| a.is_surface_supported(s));
@@ -230,10 +231,28 @@ fn main() -> eframe::Result {
                 (info.backend == wgpu::Backend::Dx12, info.device_type == wgpu::DeviceType::DiscreteGpu)
             };
             let chosen = adapters.iter().filter(usable).max_by_key(rank).cloned().ok_or_else(|| "No graphics adapter can draw to the window".to_string())?;
-            // Another adapter draws no see-through window: the overlay's island is then a window of its own.
-            overlay::window::SEE_THROUGH_RENDERER.store(chosen.get_info().backend == wgpu::Backend::Dx12, std::sync::atomic::Ordering::Relaxed);
+            // Another adapter, or a surface that blends nothing, draws no see-through window: the overlay's island is
+            // then a window of its own.
+            let info = chosen.get_info();
+            let alpha = surface.map(|s| s.get_capabilities(&chosen).alpha_modes);
+            let blends = alpha.as_ref().is_none_or(|modes| modes.iter().any(|m| matches!(m, wgpu::CompositeAlphaMode::PreMultiplied | wgpu::CompositeAlphaMode::PostMultiplied)));
+            let why = if info.backend != wgpu::Backend::Dx12 {
+                Some(NoSeeThrough::NoDirectX12)
+            } else if !blends {
+                Some(NoSeeThrough::NoTransparency)
+            } else {
+                None
+            };
+            NoSeeThrough::record(why);
+            tracing::info!(adapter = %info.name, backend = ?info.backend, ?alpha, ?why, "see-through overlay");
             Ok(chosen)
         }));
+    }
+    // X11 shows nothing see-through without a compositor: the island is then a window of its own (Settings says why).
+    #[cfg(target_os = "linux")]
+    if see_through && !overlay::platform::composited() {
+        overlay::window::NoSeeThrough::record(Some(overlay::window::NoSeeThrough::NoCompositor));
+        tracing::info!("see-through overlay: no compositor runs on this X11 desktop");
     }
     eframe::run_native(
         "Elite Nexus",
