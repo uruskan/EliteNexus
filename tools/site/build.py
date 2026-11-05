@@ -16,19 +16,23 @@ SPONSOR = 'https://github.com/sponsors/uruskan'
 VERSION = re.search(r'^version = "([^"]+)"', (ROOT / 'Cargo.toml').read_text(encoding='utf-8'), re.M).group(1)
 # What the app does, for the SoftwareApplication schema that search engines and AI assistants read.
 FEATURES = [
-    'Live market data from EDDN: commodity search, sell-my-cargo, trade routes, pinned orders, a run planner and price alerts',
-    'Exploration body values, Observatory-style highlights and Road to Riches tours',
+    'Live market data from EDDN: commodity search, up to eight stations side by side, sell-my-cargo, trade routes for any cargo space, a shopping trip for several goods, pinned orders, a run planner and price alerts',
+    'Plan a loadout: modules and engineering with jump range, speed, shields, armour, weapons, power and heat as you change them, saved builds and Compare',
+    'Where to buy: the nearest stations that sell a ship, a module or a whole build',
+    'Combat: the nearest wars and civil wars with days won and a route there, and a guide to fighting without a bounty',
+    'Statistics: career, activity and per-ship statistics in plain words',
+    'Exploration body values, Observatory-style highlights, signals by kind and Road to Riches tours',
     'Exobiology sampling radar, species predictions and a first-logged bonus hunt',
-    'Spansh neutron, exact and fleet-carrier route planners, with the next system copied to the clipboard',
+    'Spansh neutron, exact and fleet-carrier route planners, a route back to your carrier and the nearest Fleet Carrier Administration',
     'HUD colour editor that keeps hostile red, friendly green and shield blue',
     'Cockpit light dimmer and Odyssey glare and exposure presets',
-    'Engineering blueprint wishlist, materials shopping list and material-trader plan',
-    'Fleet loadouts, missions and massacre stacks, mining, fleet carrier, colonisation and BGS tracking',
-    'An overlay at the top of the game screen: next jump, arrivals, approach, sampling distance, Rhino deposits, trade stops',
+    'Engineering blueprint planner with rolls at each grade, a materials shopping list, a material-trader plan and the way to each engineer',
+    'Fleet, missions and massacre stacks, Rhino surface mining sites and where to mine, fleet carrier, colonisation and BGS and Powerplay tracking',
+    'An overlay at the top of the game screen: next jump and where the route ends, arrivals, approach, sampling distance, Rhino deposits, trade stops, docking granted',
     'AI co-pilot grounded in your own ship, journal and market data',
     'Opt-in sync with EDDN, EDSM, Inara and EDAstro',
 ]
-KEYWORDS = 'Elite Dangerous, companion app, EDDN, exobiology, exploration, trading, HUD colours, cockpit lights, Odyssey glare, engineering, fleet carrier, Spansh, EDDiscovery alternative, EDMC alternative'
+KEYWORDS = 'Elite Dangerous, Elite Dangerous companion app, Elite Nexus, EDDN, exobiology, exploration, trading, loadout planner, conflict zones, HUD colours, cockpit lights, Odyssey glare, engineering, fleet carrier, Spansh, Windows, Linux, macOS, EDDiscovery alternative, EDMC alternative'
 
 def faq_schema(body):
     """The page's plain <details><summary> questions as an FAQPage schema, or None."""
