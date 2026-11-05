@@ -237,6 +237,10 @@ release time that section becomes the new version and the release workflow publi
   how old prices may be, the least stock or demand, fleet carriers and planetary ports, and the order. Click a number
   to type it, or step it with − and + through round values (50, 75, 100, 150 ly…); a reset button appears once a
   filter differs from the defaults.
+- **Market**: Trade routes, Mining hotspots, Abnormal prices and the Run planner set their searches in the same bar as
+  Find commodity: each setting a caption over its controls, numbers to type or step with − and +, the landing pad as
+  Any, S, M or L, fleet carriers as a chip. What a search is for (your ship's hold and credits, the pad it needs)
+  reads in the bar beside the settings. Mining hotspots says what to do before its first search.
 - **Market**: columns can be widened or narrowed: drag the edge between two headings (the pointer turns into ↔
   there). One column in each list, such as the station, takes the room left, so the list still fits the window, and
   each list remembers its widths between runs.

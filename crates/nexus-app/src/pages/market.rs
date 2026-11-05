@@ -860,21 +860,6 @@ fn item_suggestions(all: &[CommodityInfo], recent: &[String], category: &str, ty
     out
 }
 
-fn pad_combo(ui: &mut Ui, id: &str, pad: &mut Option<char>) {
-    egui::ComboBox::from_id_salt(id)
-        .width(70.0)
-        .selected_text(match pad {
-            Some(c) => format!("{c} pad"),
-            None => "Any pad".into(),
-        })
-        .show_ui(ui, |ui| {
-            ui.selectable_value(pad, None, "Any pad");
-            ui.selectable_value(pad, Some('S'), "S pad");
-            ui.selectable_value(pad, Some('M'), "M pad");
-            ui.selectable_value(pad, Some('L'), "L pad");
-        });
-}
-
 /// Distances the − and + of a distance step through, ly.
 const LY: &[f64] = &[
     5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0, 250.0, 300.0, 400.0, 500.0, 750.0, 1_000.0, 1_500.0, 2_000.0, 2_500.0, 5_000.0, 10_000.0, 25_000.0,
@@ -1127,24 +1112,37 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
             let from = docked.filter(|_| st.prefs.routes_here);
             let mut find = std::mem::take(&mut st.autorun);
             let p = &mut st.prefs;
-            ui.horizontal_wrapped(|ui| {
+            crate::widgets::filter_bar(ui, "routes-filters", |bar| {
                 match from {
                     Some(s) => {
-                        ui.label(format!("Buy at {} and sell within", s.name));
-                        ui.add(egui::DragValue::new(&mut p.hop).range(1.0..=500.0).suffix(" ly")).on_hover_text("Up to 500 ly. Every market within reach is loaded, so far reaches take a few seconds.");
+                        bar.field(&format!("Buy at {}, sell within", s.name), |ui| {
+                            ui.add(Number::new(&mut p.hop, 1.0..=500.0).ladder(LY).unit(" ly")).on_hover_text("Up to 500 ly. Every market within reach is loaded, so far reaches take a few seconds.");
+                        });
                     }
                     None => {
-                        ui.label("Routes within");
-                        ui.add(egui::DragValue::new(&mut p.radius).range(5.0..=1000.0).suffix(" ly")).on_hover_text("Up to 1,000 ly. Every market in the area is loaded, so wide areas take a few seconds.");
-                        ui.label("of here, hop up to");
-                        ui.add(egui::DragValue::new(&mut p.hop).range(1.0..=500.0).suffix(" ly")).on_hover_text("Longest trip between buying and selling, up to 500 ly.");
+                        bar.field("Routes within", |ui| {
+                            ui.add(Number::new(&mut p.radius, 5.0..=1000.0).ladder(LY).unit(" ly"))
+                                .on_hover_text("How far from you the routes may start and end, up to 1,000 ly. Every market in the area is loaded, so wide areas take a few seconds.");
+                        });
+                        bar.field("Longest hop", |ui| {
+                            ui.add(Number::new(&mut p.hop, 1.0..=500.0).ladder(LY).unit(" ly")).on_hover_text("The longest trip between buying and selling, up to 500 ly.");
+                        });
                     }
                 }
-                pad_combo(ui, "rpad", &mut p.min_pad);
-                ui.label(format!("cargo {cargo} t, capital {}", short_credits(gs.cmdr.credits)));
-                crate::widgets::toggle(ui, &mut p.carriers, "Carriers");
-                find |= crate::widgets::primary_button(ui, "Find routes").clicked();
+                bar.field_tip("Landing pad", PAD_TIP, |ui| {
+                    if pad_picker(ui, &mut p.min_pad) {
+                        p.pad_auto = false;
+                    }
+                });
+                bar.field("Include", |ui| {
+                    crate::widgets::chip_toggle(ui, &mut p.carriers, "Fleet carriers").on_hover_text("Fleet carriers' markets: their owners set the prices and who may dock, and they move.");
+                });
+                bar.field_tip("For your ship", "Each route fills this hold, with what these credits buy.", |ui| {
+                    ui.label(RichText::new(format!("{cargo} t · {}", short_credits(gs.cmdr.credits))).font(display(size::CALLOUT)).color(pal::TEXT));
+                });
+                bar.end(|ui| find |= crate::widgets::primary_button(ui, "Find routes").clicked());
             });
+            ui.add_space(6.0);
             if find && let Some(o) = origin {
                 let p = &st.prefs;
                 let q = TradeQuery {
@@ -1240,37 +1238,46 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
         }
         Tab::Hotspots => {
             // Opened from a "where to get it" panel: search at once.
-            let auto = std::mem::take(&mut st.autorun);
+            let mut find = std::mem::take(&mut st.autorun);
             let p = &mut st.prefs;
-            ui.horizontal_wrapped(|ui| {
-                egui::ComboBox::from_id_salt("hsig").selected_text(p.hotspot_signal.clone()).show_ui(ui, |ui| {
-                    for s in HOTSPOT_SIGNALS {
-                        ui.selectable_value(&mut p.hotspot_signal, (*s).to_string(), *s);
+            crate::widgets::filter_bar(ui, "hotspot-filters", |bar| {
+                bar.field("Hotspots of", |ui| {
+                    egui::ComboBox::from_id_salt("hsig").selected_text(p.hotspot_signal.clone()).width(200.0).show_ui(ui, |ui| {
+                        for s in HOTSPOT_SIGNALS {
+                            ui.selectable_value(&mut p.hotspot_signal, (*s).to_string(), *s);
+                        }
+                    });
+                });
+                bar.field("In one ring, at least", |ui| {
+                    let mut n = p.hotspot_min as f64;
+                    if ui.add(Number::new(&mut n, 1.0..=6.0)).on_hover_text("Hotspots of this commodity in the same ring: overlapping hotspots yield more.").changed() {
+                        p.hotspot_min = n as i64;
                     }
                 });
-                ui.label("at least");
-                ui.add(egui::DragValue::new(&mut p.hotspot_min).range(1..=6));
-                ui.label("hotspots within");
-                ui.add(egui::DragValue::new(&mut p.max_dist).range(1.0..=MAX_SEARCH_LY).suffix(" ly")).on_hover_text("Searches every market Elite Nexus knows, up to the whole galaxy.");
-                if (crate::widgets::primary_button(ui, "Find hotspots").clicked() || auto)
-                    && let Some(o) = origin {
-                        let q = HotspotQuery { origin: o, signal: p.hotspot_signal.clone(), max_distance_ly: Some(p.max_dist), min_count: p.hotspot_min, limit: 50 };
-                        let db2 = db.clone();
-                        st.hotspots.run(&ctx, move || db2.hotspots_near(&q).map_err(|e| e.to_string()));
-                        let pq = CommodityQuery {
-                            commodity: p.hotspot_signal.clone(),
-                            mode: TradeMode::SellToStation,
-                            origin: Some(o),
-                            max_distance_ly: Some(p.max_dist * 2.0),
-                            max_age_hours: Some(72.0),
-                            limit: 10,
-                            ..Default::default()
-                        };
-                        let db3 = db.clone();
-                        st.hotspot_prices.run(&ctx, move || db3.search_commodity(&pq).map_err(|e| e.to_string()));
-                    }
+                bar.field("Within", |ui| {
+                    ui.add(Number::new(&mut p.max_dist, 1.0..=MAX_SEARCH_LY).ladder(LY).unit(" ly")).on_hover_text("Every ring Elite Nexus knows, up to the whole galaxy.");
+                });
+                bar.end(|ui| find |= crate::widgets::primary_button(ui, "Find hotspots").clicked());
             });
-            ui.add(egui::Label::new(RichText::new("Hotspots come from DSS ring scans shared over EDDN, and your own. For galaxy-wide searches use Navigation › Spansh.").small().color(pal::DIM)).wrap());
+            if find && let Some(o) = origin {
+                let p = &st.prefs;
+                let q = HotspotQuery { origin: o, signal: p.hotspot_signal.clone(), max_distance_ly: Some(p.max_dist), min_count: p.hotspot_min, limit: 50 };
+                let db2 = db.clone();
+                st.hotspots.run(&ctx, move || db2.hotspots_near(&q).map_err(|e| e.to_string()));
+                let pq = CommodityQuery {
+                    commodity: p.hotspot_signal.clone(),
+                    mode: TradeMode::SellToStation,
+                    origin: Some(o),
+                    max_distance_ly: Some(p.max_dist * 2.0),
+                    max_age_hours: Some(72.0),
+                    limit: 10,
+                    ..Default::default()
+                };
+                let db3 = db.clone();
+                st.hotspot_prices.run(&ctx, move || db3.search_commodity(&pq).map_err(|e| e.to_string()));
+            }
+            ui.add_space(4.0);
+            crate::widgets::footnote(ui, "Hotspots come from the ring scans (DSS) commanders share over the live feed, and your own. For galaxy-wide searches use Navigation › Spansh.");
             ui.add_space(8.0);
             let signal = st.prefs.hotspot_signal.clone();
             crate::widgets::split(
@@ -1280,6 +1287,9 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
                 |ui| results_hotspots(ui, &st.hotspots),
                 |ui| {
                     card(ui, "Best places to sell nearby", |ui| {
+                        if st.hotspot_prices.last.is_none() && !st.hotspot_prices.busy() {
+                            ui.label(RichText::new("Where it sells best within twice that distance, with prices up to 72 h old.").size(size::FOOTNOTE).color(pal::DIM));
+                        }
                         if !status(ui, &st.hotspot_prices) {
                             return;
                         }
@@ -2247,32 +2257,41 @@ fn history_plot(ui: &mut Ui, market_id: u64, pts: &[PricePoint]) {
 fn abnormal_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Option<Nav> {
     let origin = gs.location.star_pos;
     let p = &mut st.prefs;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
-        crate::widgets::segmented(ui, &mut p.abn_mode, &[(TradeMode::SellToStation, "Paying far above average"), (TradeMode::BuyFromStation, "Selling far below average")]);
-        ui.label(RichText::new("at least").color(pal::DIM));
-        let ratios: &[(u32, &str)] = &[(150, "1.5×"), (200, "2×"), (300, "3×"), (500, "5×"), (1000, "10×")];
-        let mut r = (p.abn_ratio * 100.0).round() as u32;
-        if crate::widgets::segmented(ui, &mut r, ratios) {
-            p.abn_ratio = f64::from(r) / 100.0;
-        }
-        let scopes: &[(u32, &str)] = &[(0, "Whole galaxy"), (100, "Within 100 ly"), (500, "Within 500 ly")];
-        let mut scope = p.abn_radius.map_or(0, |d| d as u32);
-        if crate::widgets::segmented(ui, &mut scope, scopes) {
-            p.abn_radius = (scope > 0).then_some(f64::from(scope));
-        }
+    let mut refresh = false;
+    crate::widgets::filter_bar(ui, "abnormal-filters", |bar| {
+        bar.field("Stations and carriers", |ui| {
+            crate::widgets::segmented(ui, &mut p.abn_mode, &[(TradeMode::SellToStation, "Paying far above average"), (TradeMode::BuyFromStation, "Selling far below average")]);
+        });
+        bar.field_tip("At least", "How far from the galactic average: at 2×, a station pays twice the average, or sells for half of it.", |ui| {
+            let ratios: &[(u32, &str)] = &[(150, "1.5×"), (200, "2×"), (300, "3×"), (500, "5×"), (1000, "10×")];
+            let mut r = (p.abn_ratio * 100.0).round() as u32;
+            if crate::widgets::segmented(ui, &mut r, ratios) {
+                p.abn_ratio = f64::from(r) / 100.0;
+            }
+        });
+        bar.field("Where", |ui| {
+            let scopes: &[(u32, &str)] = &[(0, "Whole galaxy"), (100, "Within 100 ly"), (500, "Within 500 ly")];
+            let mut scope = p.abn_radius.map_or(0, |d| d as u32);
+            if crate::widgets::segmented(ui, &mut scope, scopes) {
+                p.abn_radius = (scope > 0).then_some(f64::from(scope));
+            }
+        });
+        bar.field("Prices no older than", |ui| {
+            ui.add(Number::new(&mut p.abn_age_h, 1.0..=720.0).ladder(HOURS).unit(" h"));
+        });
+        bar.field_tip("Landing pad", PAD_TIP, |ui| {
+            if pad_picker(ui, &mut p.min_pad) {
+                p.pad_auto = false;
+            }
+        });
+        bar.field("Include", |ui| {
+            crate::widgets::chip_toggle(ui, &mut p.abn_carriers, "Fleet carriers").on_hover_text("Fleet carriers' orders: their owners set the prices, and they move.");
+        });
+        bar.end(|ui| refresh = crate::widgets::icon_button(ui, icon::ARROW_CLOCKWISE, "Scan again with the latest prices").clicked());
     });
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(14.0, 8.0);
-        crate::widgets::toggle(ui, &mut p.abn_carriers, "Fleet carriers");
-        ui.label(RichText::new("Prices from the last").color(pal::DIM));
-        ui.add(egui::DragValue::new(&mut p.abn_age_h).range(1.0..=720.0).suffix(" h"));
-        pad_combo(ui, "abnpad", &mut p.min_pad);
-        if crate::widgets::button(ui, &format!("{} Refresh", icon::ARROW_CLOCKWISE)).clicked() {
-            st.abn_key = None;
-        }
-    });
+    if refresh {
+        st.abn_key = None;
+    }
     let p = &st.prefs;
     let key = (p.abn_mode, (p.abn_ratio * 100.0) as u64, p.abn_radius.map(|r| r as u64), p.abn_age_h as u64, p.abn_carriers, p.min_pad);
     if st.abn_key != Some(key) && !st.abn.busy() && (p.abn_radius.is_none() || origin.is_some()) {
@@ -2645,19 +2664,22 @@ fn plan_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Op
     let cargo_used: i64 = gs.inventory.cargo.items.iter().map(|c| c.count).sum();
     let p = &mut st.prefs;
     let mut again = false;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(10.0, 8.0);
-        ui.label("Look for sellers and buyers within");
-        ui.add(egui::DragValue::new(&mut p.plan_radius).range(5.0..=MAX_SEARCH_LY).suffix(" ly")).on_hover_text("Around each pinned order: sellers near a pinned buyer, buyers near a pinned seller.");
-        ui.label("of each order, by");
-        crate::widgets::segmented(ui, &mut p.plan_cheapest, &[(false, "Shortest detour"), (true, "Cheapest price")]);
-    });
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(14.0, 8.0);
-        crate::widgets::toggle(ui, &mut p.plan_hold, "Sell what's aboard first").on_hover_text("Cargo you already carry fills a pinned buyer before anything is bought for it.");
-        crate::widgets::toggle(ui, &mut p.plan_carriers, "Fleet carriers").on_hover_text("Let the planner pick fleet carriers as sellers or buyers (pinned carriers always count).");
-        ui.label(RichText::new(format!("{} pad · hold {} t, {} t free · {} · prices up to {:.0} h old", pad.unwrap_or('L'), capacity, (capacity - cargo_used).max(0), short_credits(gs.cmdr.credits), p.max_age_h)).color(pal::DIM));
-        again = crate::widgets::button(ui, &format!("{} Plan again", icon::ARROWS_CLOCKWISE)).clicked();
+    crate::widgets::filter_bar(ui, "plan-filters", |bar| {
+        bar.field("Sellers and buyers within", |ui| {
+            ui.add(Number::new(&mut p.plan_radius, 5.0..=MAX_SEARCH_LY).ladder(LY).unit(" ly")).on_hover_text("Around each pinned order: sellers near a pinned buyer, buyers near a pinned seller.");
+        });
+        bar.field("Pick sellers by", |ui| {
+            crate::widgets::segmented(ui, &mut p.plan_cheapest, &[(false, "Shortest detour"), (true, "Cheapest price")]);
+        });
+        bar.field("Include", |ui| {
+            crate::widgets::chip_toggle(ui, &mut p.plan_hold, "What's aboard first").on_hover_text("Cargo you already carry fills a pinned buyer before anything is bought for it.");
+            crate::widgets::chip_toggle(ui, &mut p.plan_carriers, "Fleet carriers").on_hover_text("Let the planner pick fleet carriers as sellers or buyers (pinned carriers always count).");
+        });
+        bar.field_tip("For your ship", "The run fits this hold and these credits, at stations with this pad, with prices up to Find commodity's age limit.", |ui| {
+            let text = format!("{} pad · {} t, {} t free · {}", pad.unwrap_or('L'), capacity, (capacity - cargo_used).max(0), short_credits(gs.cmdr.credits));
+            ui.label(RichText::new(text).font(display(size::CALLOUT)).color(pal::TEXT));
+        });
+        bar.end(|ui| again = crate::widgets::button(ui, &format!("{} Plan again", icon::ARROWS_CLOCKWISE)).clicked());
     });
     let orders: Vec<Order> =
         p.pins.iter().filter(|x| x.in_plan).map(|x| Order { market_id: x.market_id, symbol: x.symbol.clone(), name: x.name.clone(), sell_here: x.sell_here }).collect();
@@ -3087,6 +3109,9 @@ fn results_stations(ui: &mut Ui, slot: &Slot<Res<StationHit>>) {
 
 fn results_hotspots(ui: &mut Ui, slot: &Slot<Res<HotspotHit>>) {
     card(ui, "Rings", |ui| {
+        if slot.last.is_none() && !slot.busy() {
+            ui.label(RichText::new("Pick a commodity and press Find hotspots: the rings with the most hotspots of it, nearest first.").size(size::FOOTNOTE).color(pal::DIM));
+        }
         if !status(ui, slot) {
             return;
         }
