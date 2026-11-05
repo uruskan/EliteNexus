@@ -1019,6 +1019,12 @@ impl<'a> Number<'a> {
         self
     }
 
+    /// What 0 shows as ("anywhere").
+    pub fn zero(mut self, label: &'a str) -> Self {
+        self.zero = Some(label);
+        self
+    }
+
     fn text(&self, v: f64) -> String {
         match self.zero {
             Some(z) if v == 0.0 => z.to_string(),

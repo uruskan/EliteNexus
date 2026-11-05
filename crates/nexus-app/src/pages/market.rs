@@ -427,8 +427,10 @@ pub struct MarketUi {
     sell: Slot<Result<SellPlan, String>>,
     /// (cargo snapshot time, tonnes, system): re-plan when any of them changes.
     sell_key: (i64, i64, u64),
-    /// The rule being composed in "Price alerts".
+    /// The rule being composed in "Price alerts", and the prices it's measured against (with what they were found for).
     new_watch: PriceWatch,
+    alert_ref: Slot<Result<AlertRef, String>>,
+    alert_ref_key: Option<String>,
     abn: Slot<Res<Deal>>,
     /// The pins' markets as the database has them now, refreshed every half minute and on arrival.
     pins_live: Slot<Result<FxHashMap<u64, Option<StationMarket>>, String>>,
@@ -496,6 +498,8 @@ impl MarketUi {
             sell: Slot::default(),
             sell_key: (0, 0, 0),
             new_watch: PriceWatch::default(),
+            alert_ref: Slot::default(),
+            alert_ref_key: None,
             abn: Slot::default(),
             abn_key: None,
             pins_live: Slot::default(),
@@ -1044,6 +1048,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
     st.sell.tick();
     st.abn.tick();
     st.pins_live.tick();
+    st.alert_ref.tick();
     st.plan.tick();
     // An answer is for the question asked last: no new one is asked while one runs.
     if st.here.tick() {
@@ -1295,7 +1300,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
             egui::ScrollArea::vertical().id_salt("msell").auto_shrink([false, false]).show(ui, |ui| nav = sell_tab(ui, gs, &db, st).or(nav.take()));
         }
         Tab::Alerts => {
-            egui::ScrollArea::vertical().id_salt("malerts").auto_shrink([false, false]).show(ui, |ui| changed |= alerts_tab(ui, svc, &db, st, watches));
+            egui::ScrollArea::vertical().id_salt("malerts").auto_shrink([false, false]).show(ui, |ui| changed |= alerts_tab(ui, gs, svc, &db, st, watches));
         }
         Tab::Docked => nav = station_tab(ui, gs, &db, st).or(nav),
         Tab::Database => {
@@ -4405,7 +4410,7 @@ fn sell_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Op
 
 fn describe_watch(w: &PriceWatch) -> String {
     let digits = nexus_data::names::group_digits;
-    let mut s = format!("{} {} {} Cr", w.commodity, if w.sell { "sells for at least" } else { "can be bought for at most" }, digits(w.price));
+    let mut s = format!("{}: a station {} {} Cr", w.commodity, if w.sell { "pays at least" } else { "sells it for at most" }, digits(w.price));
     s += &if w.max_ly > 0.0 { format!(" within {:.0} ly", w.max_ly) } else { " anywhere".to_string() };
     if let Some(p) = w.min_pad {
         s += &format!(", {p} pad");
@@ -4417,73 +4422,172 @@ fn describe_watch(w: &PriceWatch) -> String {
     s
 }
 
+/// Distances an alert's "within" steps through, ly; 0 is anywhere.
+const ALERT_LY: &[f64] = &[0.0, 10.0, 25.0, 50.0, 75.0, 100.0, 150.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0, 20_000.0];
+
+/// What a new price alert can be measured against: the commodity's galactic average, and the best price in its range
+/// right now (the highest a station pays, or the lowest one sells for).
+pub struct AlertRef {
+    average: Option<i64>,
+    best: Option<CommodityHit>,
+}
+
+/// The prices under the new alert to measure it against: the galactic average and the best price in its range now
+/// (with its filters), each a click away from being the alert's price.
+fn alert_reference(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) {
+    let w = &st.new_watch;
+    let key = format!("{:?}", (w.commodity.trim().to_lowercase(), w.sell, w.max_ly.round() as i64, w.min_pad, w.carriers, w.min_qty, gs.location.system_address));
+    if st.alert_ref_key.as_deref() != Some(key.as_str()) && !st.alert_ref.busy() {
+        st.alert_ref_key = Some(key);
+        let (db, origin) = (db.clone(), gs.location.star_pos);
+        let q = CommodityQuery {
+            commodity: w.commodity.trim().to_string(),
+            mode: if w.sell { TradeMode::SellToStation } else { TradeMode::BuyFromStation },
+            origin,
+            max_distance_ly: (w.max_ly > 0.0).then_some(w.max_ly),
+            min_pad: w.min_pad,
+            max_age_hours: Some(72.0),
+            min_quantity: w.min_qty.max(1),
+            include_carriers: w.carriers,
+            include_planetary: true,
+            limit: 1,
+            sort: Sort::BestPrice,
+        };
+        st.alert_ref.run(ui.ctx(), move || {
+            let average = db.commodity_summary(&q.commodity, q.max_age_hours).map_err(|e| e.to_string())?.and_then(|s| s.average);
+            let best = db.search_commodity(&q).map_err(|e| e.to_string())?.into_iter().next();
+            Ok(AlertRef { average, best })
+        });
+    }
+    let Some(Ok(r)) = &st.alert_ref.last else { return };
+    let w = &st.new_watch;
+    let mut set = None;
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 6.0);
+        ui.label(RichText::new("Measure it against").size(size::FOOTNOTE).color(pal::DIM));
+        if let Some(a) = r.average
+            && crate::widgets::button(ui, &format!("Galactic average {}", cr(a))).on_hover_text("The average price the game reports for it. Click to make it the alert's price.").clicked()
+        {
+            set = Some(a);
+        }
+        let range = if w.max_ly > 0.0 { format!(" within {:.0} ly", w.max_ly) } else { String::new() };
+        match &r.best {
+            Some(h) => {
+                let what = if w.sell { "Best paid" } else { "Cheapest" };
+                let tip = format!(
+                    "At {} in {}, reported {} ago, with the filters above (prices up to 72 h old). Click to make it the alert's price: the alert then fires when a station {} that.",
+                    h.station,
+                    h.system,
+                    age(h.updated_unix).0,
+                    if w.sell { "pays at least" } else { "sells for at most" }
+                );
+                if crate::widgets::button(ui, &format!("{what}{range} now {}", cr(h.price))).on_hover_text(tip).clicked() {
+                    set = Some(h.price);
+                }
+            }
+            None => {
+                let side = if w.sell { "buys" } else { "sells" };
+                ui.label(RichText::new(format!("No market{range} {side} it with these filters now (prices up to 72 h old).")).size(size::FOOTNOTE).color(pal::FAINT));
+            }
+        }
+    });
+    if let Some(p) = set {
+        st.new_watch.price = p;
+    }
+}
+
 /// Rules checked against every live market update. Returns true when the rules changed.
-fn alerts_tab(ui: &mut Ui, svc: &MarketService, db: &GalaxyDb, st: &mut MarketUi, watches: &mut Vec<PriceWatch>) -> bool {
+fn alerts_tab(ui: &mut Ui, gs: &GameState, svc: &MarketService, db: &GalaxyDb, st: &mut MarketUi, watches: &mut Vec<PriceWatch>) -> bool {
     let mut changed = false;
     if st.commodities.is_empty() {
         st.commodities = db.commodities();
     }
-    ui.label(
-        RichText::new(
-            "Every market update from the live feed (and every market you open) is checked against these rules the moment it arrives, \
-             usually seconds after a commander docks. A rule fires at most once per station per hour, as a toast and, with voice on, spoken.",
+    ui.add(
+        egui::Label::new(
+            RichText::new(
+                "Every market update from the live feed (and every market you open) is checked against these rules the moment it arrives, \
+                 usually seconds after a commander docks. A rule fires at most once per station per hour, as a toast and, with voice on, spoken.",
+            )
+            .size(size::FOOTNOTE)
+            .color(pal::DIM),
         )
-        .color(pal::DIM),
+        .wrap(),
     );
-    ui.add_space(6.0);
-    card(ui, "New alert", |ui| {
+    crate::widgets::section(ui, "New alert");
+    let known = !st.new_watch.commodity.trim().is_empty() && svc.resolves(st.new_watch.commodity.trim());
+    let mut add = false;
+    {
         let w = &mut st.new_watch;
         let (all, recent) = (&st.commodities, &st.prefs.recent);
-        ui.horizontal_wrapped(|ui| {
-            crate::widgets::autocomplete(ui, "alert-commodity", &mut w.commodity, "Commodity", 210.0, |t| commodity_suggestions(all, recent, t));
-            crate::widgets::segmented(ui, &mut w.sell, &[(true, "sells for at least"), (false, "can be bought for at most")]);
-            ui.add(egui::DragValue::new(&mut w.price).range(1..=100_000_000).speed(100.0).suffix(" Cr"));
-            ui.label("within");
-            ui.add(egui::DragValue::new(&mut w.max_ly).range(0.0..=20_000.0).suffix(" ly")).on_hover_text("0 = anywhere");
-            pad_combo(ui, "wpad", &mut w.min_pad);
-            ui.label(if w.sell { "min demand" } else { "min stock" });
-            ui.add(egui::DragValue::new(&mut w.min_qty).range(1..=1_000_000).suffix(" t"));
-            crate::widgets::toggle(ui, &mut w.carriers, "Fleet carriers");
-        });
-        let known = !w.commodity.trim().is_empty() && svc.resolves(w.commodity.trim());
-        ui.horizontal(|ui| {
-            if ui.add_enabled(known, egui::Button::new(RichText::new(format!("{} Add alert", icon::BELL_RINGING)).color(pal::ACCENT))).clicked() {
-                let mut rule = w.clone();
-                rule.commodity = rule.commodity.trim().to_string();
-                rule.enabled = true;
-                watches.push(rule);
-                changed = true;
-            }
-            if !known && !w.commodity.trim().is_empty() {
-                ui.label(RichText::new("Unknown commodity: pick one from the suggestions").color(pal::BAD));
-            }
-        });
-    });
-    ui.add_space(8.0);
-    card(ui, "Your alerts", |ui| {
-        if watches.is_empty() {
-            ui.label(RichText::new("No alerts yet. Example: Tritium sells for at least 60,000 Cr within 50 ly.").color(pal::FAINT));
-            return;
-        }
-        let mut remove = None;
-        for (i, w) in watches.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                changed |= crate::widgets::switch(ui, &mut w.enabled).on_hover_text("Enabled").changed();
-                let col = if w.enabled { pal::TEXT } else { pal::FAINT };
-                ui.label(RichText::new(describe_watch(w)).color(col));
-                if !svc.resolves(&w.commodity) {
-                    ui.label(RichText::new("unknown commodity").small().color(pal::BAD));
-                }
-                if ui.small_button(icon::TRASH).on_hover_text("Delete").clicked() {
-                    remove = Some(i);
+        crate::widgets::filter_bar(ui, "alert-new", |bar| {
+            bar.field("Commodity", |ui| {
+                crate::widgets::autocomplete(ui, "alert-commodity", &mut w.commodity, "Commodity", 200.0, |t| commodity_suggestions(all, recent, t));
+            });
+            bar.field("Alert when a station", |ui| {
+                crate::widgets::segmented(ui, &mut w.sell, &[(true, "pays at least"), (false, "sells for at most")]);
+            });
+            bar.field("Price", |ui| {
+                let mut price = w.price as f64;
+                let tip = "Type a price (48300, 48k or 1.5m), or step it with − and +: by 1,000 Cr around 48,000 Cr, by 100,000 Cr around 1.5 M Cr. Shift steps ten times as far.";
+                if ui.add(Number::new(&mut price, 1.0..=100_000_000.0).unit(" Cr")).on_hover_text(tip).changed() {
+                    w.price = price.round() as i64;
                 }
             });
-        }
+            bar.field("Within", |ui| {
+                ui.add(Number::new(&mut w.max_ly, 0.0..=20_000.0).ladder(ALERT_LY).unit(" ly").zero("anywhere")).on_hover_text("From where you are when the market report arrives. 0 is anywhere.");
+            });
+            bar.field_tip("Landing pad", PAD_TIP, |ui| {
+                pad_picker(ui, &mut w.min_pad);
+            });
+            bar.field(if w.sell { "Demand at least" } else { "Stock at least" }, |ui| {
+                let mut q = w.min_qty as f64;
+                if ui.add(Number::new(&mut q, 1.0..=1_000_000.0).ladder(TONNES).unit(" t")).changed() {
+                    w.min_qty = q as i64;
+                }
+            });
+            bar.field("Include", |ui| {
+                crate::widgets::chip_toggle(ui, &mut w.carriers, "Fleet carriers").on_hover_text("Fleet carriers' orders: their owners set the prices, and they move.");
+            });
+            bar.end(|ui| {
+                add = ui.add_enabled_ui(known, |ui| crate::widgets::primary_button(ui, &format!("{} Add alert", icon::BELL_RINGING))).inner.clicked();
+            });
+        });
+    }
+    if !known && !st.new_watch.commodity.trim().is_empty() {
+        ui.label(RichText::new("Unknown commodity: pick one from the suggestions").color(pal::BAD));
+    }
+    if known {
+        alert_reference(ui, gs, db, st);
+    }
+    if add {
+        let mut rule = st.new_watch.clone();
+        rule.commodity = rule.commodity.trim().to_string();
+        rule.enabled = true;
+        watches.push(rule);
+        changed = true;
+    }
+    crate::widgets::section(ui, "Your alerts");
+    if watches.is_empty() {
+        crate::widgets::footnote(ui, "No alerts yet. Example: Tritium, a station pays at least 60,000 Cr, within 50 ly.");
+    } else {
+        let mut remove = None;
+        crate::widgets::group(ui, |g| {
+            for (i, w) in watches.iter_mut().enumerate() {
+                let detail = if svc.resolves(&w.commodity) { "" } else { "Unknown commodity: this rule can't fire" };
+                g.row(&describe_watch(w), detail, |ui| {
+                    if crate::widgets::icon_button(ui, icon::TRASH, "Delete this alert").clicked() {
+                        remove = Some(i);
+                    }
+                    changed |= crate::widgets::switch(ui, &mut w.enabled).on_hover_text(if w.enabled { "On: click to pause it" } else { "Paused: click to switch it on" }).changed();
+                });
+            }
+        });
         if let Some(i) = remove {
             watches.remove(i);
             changed = true;
         }
-    });
+    }
     if svc.feed_state().is_none() {
         ui.add_space(6.0);
         ui.label(RichText::new(format!("{} The live feed is off, so only markets you open yourself are checked. Turn on \"Receive the live market feed\" in Accounts & sync.", icon::WARNING)).color(pal::WARN));

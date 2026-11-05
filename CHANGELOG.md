@@ -179,6 +179,10 @@ release time that section becomes the new version and the release workflow publi
   goes further (it used to stop at 25). It says how many stations the database knows and, while that's few, that the
   Spansh import searches the whole galaxy. Its settings sit in a bar: the landing pad, and whether fleet carriers (left
   out by default: they move) and planetary ports count.
+- **Market › Price alerts**: a new alert is set in a bar like the other tabs' settings. Its price can still be typed
+  ("48300", "48k", "1.5m"), and − and + step it by an amount that fits its size (1,000 Cr around 48,000 Cr; Shift ten
+  times as far). Under it, the commodity's galactic average and the best price in the alert's range right now, with
+  its filters, each set the price in one click. Your alerts are a list with a switch and a delete button on each.
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
