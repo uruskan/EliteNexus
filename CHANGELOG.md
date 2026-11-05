@@ -260,6 +260,9 @@ release time that section becomes the new version and the release workflow publi
 - **Exploration** › Find valuable bodies shows its settings in a bar under the search, each once: Within, Stops, Jump
   range, Bodies worth at least, Furthest from the star, and Values (if you map them, or from the scan alone). Type a
   value or step it with − and +.
+- **Typed values** in search settings and price alerts read a k, M or B after the figure as thousands, millions or
+  billions: a price alert set to 50k means 50,000 Cr, not 50 Cr. In a field already in millions (Bodies worth at
+  least, M Cr), 500k is 0.5. A decimal comma works too (19,6).
 - **Mining** › Surface radar is scaled to what's near you (deposits, your ship, where it landed): one deposit far away
   no longer squeezes the rest into the middle. On the Mining page anything further out waits on the rim, in its
   direction, with its distance, and labels stay inside the radar instead of being cut off (seen by Chequers2). The

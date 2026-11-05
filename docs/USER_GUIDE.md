@@ -41,7 +41,9 @@ and only while Elite Nexus runs.
 
 Each page shows the one thing you usually need, with smart defaults (your current system, your ship's jump range and
 landing pad). Searches show all their settings in a bar under the search, each with a short caption (hover it for
-what it does and its limits): type a value, or step it with − and +. Every Market tab, Exploration › Find valuable
+what it does and its limits): type a value, or step it with − and +. A k, M or B typed after a figure counts
+thousands, millions or billions (50k is 50,000 Cr in a price alert; 500k is 0.5 in a field of M Cr), and a decimal
+comma works too (19,6). Every Market tab, Exploration › Find valuable
 bodies and the Navigation planners work this way, including everything the original tools offer, such as Spansh's
 routing algorithm and neutron or injection choices. Elsewhere, advanced settings are one click away under **› Options**.
 

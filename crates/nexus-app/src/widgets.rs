@@ -920,9 +920,9 @@ impl Steps<'_> {
 }
 
 /// A number to type or step (macOS 26's stepper and its field in one glass capsule): − and + move it by `steps`, a
-/// click on the value types a new one, a drag across it slides it. Kept within `range`, written with `decimals`
-/// places, its thousands grouped, and `suffix` after it (" ly"). The response is the value's and reports `changed()`
-/// whichever way it changed.
+/// click on the value types a new one (read by [`parse_typed`]: "50k" is 50,000), a drag across it slides it. Kept
+/// within `range`, written with `decimals` places, its thousands grouped, and `suffix` after it (" ly"). The response
+/// is the value's and reports `changed()` whichever way it changed.
 pub fn number(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>, steps: Steps, decimals: usize, suffix: &str) -> Response {
     const H: f32 = 28.0;
     let (lo, hi) = (*range.start(), *range.end());
@@ -960,7 +960,7 @@ pub fn number(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>
                         .fixed_decimals(decimals)
                         .suffix(suffix)
                         .custom_formatter(move |v, _| grouped(v, decimals))
-                        .custom_parser(parse_number),
+                        .custom_parser(move |s| parse_typed(s, suffix)),
                 )
             })
             .inner;
@@ -1054,6 +1054,28 @@ pub fn parse_number(s: &str) -> Option<f64> {
     };
     let end = t.char_indices().find(|&(i, c)| !(c.is_ascii_digit() || c == '.' || (i == 0 && matches!(c, '-' | '+')))).map_or(t.len(), |(i, _)| i);
     t[..end].parse().ok()
+}
+
+/// What's typed into a [`number`] with `unit` after it: as [`parse_number`] reads it, and a k, M or B right after the
+/// figure counts thousands, millions or billions ("50k" is 50,000 and "1.5M Cr" 1,500,000; a price alert set to "50k"
+/// must not mean 50 Cr). When the field's own unit is one of them, the figure is measured in it: "1.25M" in a field of
+/// M Cr is 1.25, and "500k" there is 0.5.
+pub fn parse_typed(s: &str, unit: &str) -> Option<f64> {
+    let v = parse_number(s)?;
+    let scale = |word: &str| match word.to_ascii_lowercase().as_str() {
+        "k" => Some(1e3),
+        "m" => Some(1e6),
+        "b" => Some(1e9),
+        _ => None,
+    };
+    // The word right after the figure ("50k", "1.5 M Cr", "19,6 ly"), and the first word of the field's own unit.
+    let figure = |c: char| c.is_ascii_digit() || matches!(c, '.' | ',' | ' ' | '_' | '\u{a0}' | '\u{202f}');
+    let after = s.trim_start().trim_start_matches(['-', '+', '\u{2212}']).trim_start_matches(figure);
+    let word: String = after.chars().take_while(char::is_ascii_alphabetic).collect();
+    Some(match scale(&word) {
+        Some(typed) => v * typed / unit.split_whitespace().next().and_then(scale).unwrap_or(1.0),
+        None => v,
+    })
 }
 
 /// One option of [`choices`]: its icon, its name, and when to pick it.
@@ -1741,6 +1763,30 @@ mod tests {
             assert_eq!(parse_number(typed), Some(value), "{typed}");
         }
         assert_eq!(parse_number("ly"), None);
+    }
+
+    #[test]
+    fn typed_figures_count_thousands_millions_and_billions() {
+        for (typed, unit, value) in [
+            ("50k", " Cr", 50_000.0),
+            ("50 K", " Cr", 50_000.0),
+            ("1.25M", " Cr", 1_250_000.0),
+            ("1,5 M Cr", " Cr", 1_500_000.0),
+            ("2b", " Cr", 2e9),
+            ("-3k", "", -3_000.0),
+            ("1.25M", " M Cr", 1.25),
+            ("500k", " M Cr", 0.5),
+            ("0,5 M Cr", " M Cr", 0.5),
+            ("50,000", " Cr", 50_000.0),
+            ("50 000 ls", " ls", 50_000.0),
+            ("19,6 ly", " ly", 19.6),
+            ("48 h", " h", 48.0),
+            ("5 min", " min", 5.0),
+            ("12 t", " t", 12.0),
+        ] {
+            assert_eq!(parse_typed(typed, unit), Some(value), "{typed} in a field of{unit}");
+        }
+        assert_eq!(parse_typed("k", " Cr"), None, "no figure");
     }
 
     #[test]
