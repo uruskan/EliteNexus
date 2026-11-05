@@ -906,6 +906,8 @@ fn search_filters(ui: &mut Ui, p: &mut MarketPrefs, gs: &GameState) {
         });
         bar.field("Include", "Fleet carriers' markets (their owners set the prices and who may dock, and they move) and ports on planets' surfaces.", |ui| {
             ui.horizontal(|ui| {
+                // The bar spaces its fields wide; controls within one field sit close.
+                ui.spacing_mut().item_spacing.x = 8.0;
                 crate::widgets::chip_toggle(ui, &mut p.carriers, "Fleet carriers");
                 crate::widgets::chip_toggle(ui, &mut p.planetary, "Planetary");
             });
@@ -1194,6 +1196,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
                 });
                 bar.field("Include", "Fleet carriers move, and their owners switch services on and off, so they're left out unless you include them. Planetary: ports and settlements on planets' surfaces.", |ui| {
                     ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
                         crate::widgets::chip_toggle(ui, &mut p.services_carriers, "Fleet carriers");
                         crate::widgets::chip_toggle(ui, &mut p.services_planetary, "Planetary");
                     });
@@ -2677,6 +2680,7 @@ fn plan_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Op
             "What's aboard first: cargo you already carry fills a pinned buyer before anything is bought for it. Fleet carriers: the planner may pick them as sellers or buyers (pinned carriers always count).",
             |ui| {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
                     crate::widgets::chip_toggle(ui, &mut p.plan_hold, "What's aboard first");
                     crate::widgets::chip_toggle(ui, &mut p.plan_carriers, "Fleet carriers");
                 });
@@ -4233,6 +4237,7 @@ fn sell_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Op
         });
         bar.field("", "", |ui| {
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
                 search |= crate::widgets::icon_button(ui, icon::ARROWS_CLOCKWISE, "Plan again with the latest prices").clicked();
                 if let Some(t) = took {
                     ui.label(RichText::new(format!("Planned in {:.1} ms", t.as_secs_f64() * 1e3)).size(size::CAPTION).color(pal::FAINT));
@@ -4579,6 +4584,7 @@ fn alerts_tab(ui: &mut Ui, gs: &GameState, svc: &MarketService, db: &GalaxyDb, s
             });
             bar.field("Within", "From where you are when the market report arrives, or anywhere.", |ui| {
                 ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
                     let mut anywhere = w.max_ly <= 0.0;
                     if crate::widgets::chip_toggle(ui, &mut anywhere, "Anywhere").changed() {
                         w.max_ly = if anywhere { 0.0 } else { 50.0 };
