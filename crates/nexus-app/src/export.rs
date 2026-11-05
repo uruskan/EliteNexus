@@ -39,6 +39,14 @@ pub fn coriolis_url(loadout: &str) -> Option<String> {
     encode_loadout(loadout).map(|d| format!("https://coriolis.io/import?data={d}"))
 }
 
+/// The build as a SLEF export (EDSY and Coriolis both import it): one item with Elite Nexus's header and the build's
+/// `Loadout` as its data.
+pub fn slef(loadout: &str) -> Option<String> {
+    let data = loadout_event(loadout)?;
+    let header = serde_json::json!({ "appName": "Elite Nexus", "appVersion": env!("CARGO_PKG_VERSION"), "appURL": "https://github.com/uruskan/EliteNexus" });
+    serde_json::to_string(&serde_json::json!([{ "header": header, "data": data }])).ok()
+}
+
 /// The build JSON inside an EDSY or Coriolis *import* link (`edsy.org/#/I=…`,
 /// `coriolis.io/import?data=…`, beta sites too), as EDMC, EDDiscovery and Elite Nexus write them.
 /// The sites' own share links (`edsy.org/#/L=…`, `coriolis.io/outfit/…?code=…`) are coded with
@@ -108,6 +116,20 @@ pub(crate) mod tests {
         assert!(coriolis_url(line).unwrap().starts_with("https://coriolis.io/import?data="));
         // A journal line goes as it is, compact.
         assert_eq!(both_sites_import(line), serde_json::from_str::<Value>(line).unwrap());
+    }
+
+    /// Elite Nexus's own SLEF export: EDSY takes it as SLEF, Coriolis by its first item's data, and Where to buy and
+    /// the planner read it back.
+    #[test]
+    fn its_own_slef_export_goes_everywhere() {
+        let journal = r#"{"event":"Loadout","Ship":"python","Modules":[{"Slot":"FrameShiftDrive","Item":"int_hyperdrive_size5_class5","On":true,"Priority":0}]}"#;
+        let text = slef(journal).expect("slef");
+        let v: Value = serde_json::from_str(&text).expect("json");
+        assert!(edsy_imports(&v) && coriolis_imports(&v), "{text}");
+        assert_eq!(v[0]["header"]["appName"], "Elite Nexus");
+        let back = crate::shopping::parse_build(&text).expect("read back");
+        assert_eq!((back.ship.as_str(), back.modules.len()), ("python", 1));
+        both_sites_import(&text);
     }
 
     /// Finding 15 of the 2026-11-04 play-test: a build pasted from Coriolis's SLEF export opened

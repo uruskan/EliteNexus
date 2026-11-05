@@ -47,18 +47,22 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   exact module (a weapon's mount, the hull's own bulkheads), with how old each station's list is, the total price,
   and two stops when no one station has it all. What the commander has (fitted on their ship of that type, in
   storage) isn't searched for. Station data from Spansh.
-- Plan a loadout (Fleet page): start from a new hull, one of your ships or a pasted build, swap modules (each slot
-  lists only what the game lets you fit there) and plan engineering (blueprint, grade, how far it's rolled,
-  experimental effect; the bulkheads too): the figures follow, worked out from each grade's range as the game applies
+- Plan a loadout (Fleet page): start from a new hull (a sortable table of every hull: price, speed, shields, armour,
+  mass, slots), one of your ships, a saved build or a pasted build, swap modules (each slot lists only what the game
+  lets you fit there) and plan engineering (blueprint, grade, how far it's rolled, experimental effect, the engineers
+  who offer that grade; the bulkheads too): the figures follow, worked out from each grade's range as the game applies
   it, and the materials it takes are added up against what you hold. Panels: Overview (jump range, speed, shields,
-  armour, power, mass, firepower, cost and rebuy, each compared with the ship as it is), Defence (shields and armour
-  against each damage type, regeneration, recharge and recovery times by systems pips), Weapons (sustained and raw
-  DPS, damage types, weapons capacitor drain by weapon pips, heat, range and falloff, ammunition, what gets through a
-  target ship's hardness), Power & heat (priority groups 1-5 and what switches off first, each module's group and
-  switch, power plant and weapon heat), Travel (jump range with the cargo and fuel set, fuel a jump, speed by engine
-  pips, boost interval, turn rates). What's new goes to Where to buy; EDSY and Coriolis open the plan with the
-  engineering already on its modules. Hull, module and engineering figures from EDCD's coriolis-data; how fast a hull
-  sheds heat isn't in it, so the heat level over time isn't worked out.
+  armour, power, mass, firepower, cost and rebuy at a discount you set, each compared with the ship as it is),
+  Defence (shields and armour against each damage type, regeneration, recharge and recovery times by systems pips),
+  Weapons (sustained and raw DPS, damage types, weapons capacitor drain by weapon pips, heat, range and falloff,
+  ammunition, and the seconds to break a target build's shields and destroy its hull through its resistances,
+  systems pips and hardness), Power & heat (priority groups 1-5 and what switches off first, each module's group and
+  switch, power plant and weapon heat), Travel (jump range with the cargo and fuel set, fuel a jump, neutron and white
+  dwarf supercharge, FSD injection, speed by engine pips, boost interval, turn rates), Compare (beside the ship as it
+  is, the stock hull, a saved build or another of your ships). Builds are saved on the computer to open, rename or
+  delete. What's new goes to Where to buy; Share opens the plan in EDSY or Coriolis or copies it (the game's Loadout,
+  SLEF) with its engineering, planned engineering included. Hull, module and engineering figures from EDCD's
+  coriolis-data; how fast a hull sheds heat isn't in it, so the heat level over time isn't worked out.
 - Combat: the nearest wars and civil wars (the fights with conflict zones), from the local database the live EDDN feed
   and the commander's journal fill: distance, active or pending, the two factions with the days each has won and what
   each stands to lose, the system's government, the report's age and a route button; elections on request. A guide in

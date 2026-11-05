@@ -105,14 +105,21 @@ release time that section becomes the new version and the release workflow publi
   engineering** adds up what it takes against the materials you hold. Beside the Overview's tiles, **Defence** shows
   shields and armour against each damage type, regeneration, and how long shields take to recharge and to come back
   from broken; **Weapons** each weapon's damage a second (with reloads), damage type, draw on the weapons capacitor,
-  heat, range and ammunition, how long the capacitor lasts, and what gets through a target ship's armour; **Power &
+  heat, range and ammunition, how long the capacitor lasts, and how long a target's shields and hull last against
+  them (a ship as a shipyard sells it, a saved build or one of yours); **Power &
   heat** the five priority groups (what switches off first), each module's group and switch, and heat; **Travel**
-  jump range with the cargo and fuel you set, fuel a jump, speed by pips, boost interval and turn rates. The game's
-  pip buttons set the pips these use. **EDSY**, **Coriolis** and **Copy build** take the plan out with the
-  engineering already on its modules. The figures come from EDCD's coriolis-data: an unengineered Kestrel Mk II comes
-  to the unladen mass and jump range its journal reports, and engineering on your ship counts with the game's own
-  values. On a ship's Loadout card, **Plan changes** replaces Where to buy (a ship you own has nothing to buy), and
-  **Copy JSON** is now **Copy build**.
+  jump range with the cargo and fuel you set, fuel a jump, one jump boosted by a neutron star, a white dwarf or FSD
+  injection, speed by pips, boost interval and turn rates; **Compare** puts the plan beside your ship as it is, the
+  hull as a shipyard sells it, a saved build or another of your ships, figure by figure. The game's pip buttons set
+  the pips these use, and a **Discount** brings the prices and rebuy down. **Save** keeps a plan on this computer,
+  with its planned engineering, to open, rename or delete from the start screen, where **Every hull** also lists the
+  hulls to sort by price, speed, shields, armour, mass or slots. **Share** opens the plan in EDSY or Coriolis, or
+  copies it as the game's Loadout or a SLEF export, with its engineering, planned engineering too. Engineering to plan
+  names the engineers who offer the grade, yours first, and lists the figures it changes, where you can type a real
+  module's values. The figures come from EDCD's coriolis-data: an unengineered
+  Kestrel Mk II comes to the unladen mass and jump range its journal reports, and engineering on your ship counts with
+  the game's own values. On a ship's Loadout card, **Plan changes** replaces Where to buy (a ship you own has nothing
+  to buy), and **Copy JSON** is now **Copy build**.
 - **Fleet › Where to buy: one ship or module.** Type a ship or a module ("Anaconda", "6A FSD", "gimballed
   multi-cannon"), pick it from the suggestions, and Elite Nexus finds the nearest stations that sell it, with its
   price there and how old the station's list is. A module is searched where the ship you fly can land; a hull, where
