@@ -7,7 +7,7 @@ use crate::pages::navigation::PlannedRoute;
 use crate::pages::where_to_mine::{self, WhereUi};
 use crate::theme::{display, pal, size};
 use crate::widgets::{self, GAP, badge, card, card_tinted, duration, empty, footnote};
-use egui::{Align, Align2, Grid, Layout, Pos2, RichText, Sense, Stroke, Ui, Vec2};
+use egui::{Align, Align2, Grid, Layout, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use egui_phosphor::regular as icon;
 use nexus_journal::Timestamp;
 use nexus_model::location::{surface_bearing, surface_distance};
@@ -483,6 +483,52 @@ pub fn radar_view(gs: &GameState, prefs: &MiningPrefs) -> Option<RadarView> {
     (!marks.is_empty()).then(|| RadarView { heading: st.heading.unwrap_or(0.0), marks })
 }
 
+/// How far the surface radar reaches and where a mark sits on it, for the Mining page and the overlay's dial alike.
+/// It's scaled for the deposits near you, so one far away doesn't squeeze them into the middle: the reach takes in
+/// every mark up to three times as far as the nearest deposit, and anything within a kilometre, and is at least
+/// 250 m. Marks further out wait on the rim, in their direction.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RadarScale {
+    /// The distance the rim stands for, metres.
+    pub(crate) reach_m: f64,
+}
+
+impl RadarScale {
+    /// Marks up to this many times as far as the nearest deposit are near.
+    const SPREAD: f64 = 3.0;
+    /// So are marks within this many metres, however close the nearest deposit is.
+    const NEAR_M: f64 = 1_000.0;
+    /// The shortest reach, metres.
+    const MIN_M: f64 = 250.0;
+    /// Room between the farthest mark near you and the rim.
+    const MARGIN: f64 = 1.15;
+
+    pub(crate) fn of(v: &RadarView) -> RadarScale {
+        let deposits: Vec<f64> = v.marks.iter().filter(|m| m.kind == MarkKind::Deposit).map(|m| m.dist_m).collect();
+        let all: Vec<f64> = v.marks.iter().map(|m| m.dist_m).collect();
+        RadarScale::fit(&deposits, &all)
+    }
+
+    /// Scaled around the nearest of `deposits` (with none, the nearest of `all`), taking in every one of `all` near it.
+    fn fit(deposits: &[f64], all: &[f64]) -> RadarScale {
+        let nearest = |d: &[f64]| d.iter().copied().reduce(f64::min);
+        let near = nearest(deposits).or_else(|| nearest(all)).map_or(0.0, |d| d * Self::SPREAD).max(Self::NEAR_M);
+        let far = all.iter().copied().filter(|d| *d <= near).fold(0.0, f64::max);
+        RadarScale { reach_m: (far * Self::MARGIN).max(Self::MIN_M) }
+    }
+
+    /// How far out from the centre a mark `dist_m` metres away sits, as a share of the radius: 1 on the rim, where the
+    /// marks beyond the reach wait.
+    pub(crate) fn at(&self, dist_m: f64) -> f64 {
+        (dist_m / self.reach_m).min(1.0)
+    }
+
+    /// Beyond the reach: on the rim, with its distance beside it.
+    pub(crate) fn beyond(&self, dist_m: f64) -> bool {
+        dist_m > self.reach_m
+    }
+}
+
 /// The radar and the distances and bearings under it, with a note on each deposit (Mining page). True when a note
 /// changed.
 pub fn surface_radar(ui: &mut Ui, v: &RadarView, prefs: &mut MiningPrefs) -> bool {
@@ -491,7 +537,8 @@ pub fn surface_radar(ui: &mut Ui, v: &RadarView, prefs: &mut MiningPrefs) -> boo
     let changed = radar_list(ui, v, 8, prefs);
     footnote(
         ui,
-        "Up is the way you're facing; turn until your heading shows the bearing. Deposits are where the Rhino refined while Elite Nexus was running \
+        "Up is the way you're facing; turn until your heading shows the bearing. The radar is scaled to the deposits near you: anything \
+         further out waits on the rim, in its direction, with its distance. Deposits are where the Rhino refined while Elite Nexus was running \
          (the journal records no positions), numbered on each body in the order they were found; numbers and notes are kept between runs. \
          Rigs aren't in the journal, so they can't be shown.",
     );
@@ -507,49 +554,92 @@ fn radar(ui: &mut Ui, v: &RadarView, max_side: f32) {
     let r_px = side / 2.0 - 8.0;
     p.circle_filled(c, r_px, pal::FIELD);
     p.circle_stroke(c, r_px, Stroke::new(1.0, pal::SEPARATOR));
-    let far = v.marks.iter().map(|m| m.dist_m).fold(0.0, f64::max);
-    let max_d = (far * 1.15).max(250.0);
-    let scale = f64::from(r_px) / max_d;
-    let step = ring_step(max_d);
+    let scale = RadarScale::of(v);
+    let step = ring_step(scale.reach_m);
     let mut ring = step;
-    while ring < max_d {
-        p.circle_stroke(c, (ring * scale) as f32, Stroke::new(1.0, pal::BORDER.gamma_multiply(0.6)));
+    while ring < scale.reach_m {
+        p.circle_stroke(c, r_px * (ring / scale.reach_m) as f32, Stroke::new(1.0, pal::BORDER.gamma_multiply(0.6)));
         ring += step;
     }
-    // Screen position of a point `dist` metres away on a compass `bearing`, turned so the heading points up.
-    let at = |dist: f64, bearing: f64| -> Pos2 {
+    // Screen position a share `r` of the radius out on a compass `bearing`, turned so the heading points up.
+    let at = |r: f64, bearing: f64| -> Pos2 {
         let a = (bearing - v.heading).to_radians();
-        Pos2::new(c.x + (a.sin() * dist * scale) as f32, c.y - (a.cos() * dist * scale) as f32)
+        c + Vec2::new(a.sin() as f32, -a.cos() as f32) * (r as f32 * r_px)
     };
-    p.text(at(max_d * 0.92, 0.0), Align2::CENTER_CENTER, "N", display(size::CAPTION), pal::DIM);
-    for m in &v.marks {
-        let sp = at(m.dist_m, m.bearing);
+    let north = p.text(at(0.92, 0.0), Align2::CENTER_CENTER, "N", display(size::CAPTION), pal::DIM);
+    let header = p.text(
+        rect.left_top() + Vec2::new(6.0, 4.0),
+        Align2::LEFT_TOP,
+        format!("{} · rings every {}", distance_text(scale.reach_m), distance_text(step)),
+        egui::FontId::proportional(size::CAPTION),
+        pal::DIM,
+    );
+    // Labels go on after every mark, nearest first, so none hides a mark or another label, and each stays inside.
+    let mut marks: Vec<&Mark> = v.marks.iter().collect();
+    marks.sort_by(|a, b| a.dist_m.total_cmp(&b.dist_m));
+    let mut labels = Vec::with_capacity(marks.len());
+    for m in marks {
+        let beyond = scale.beyond(m.dist_m);
+        let sp = at(scale.at(m.dist_m), m.bearing);
+        let fade = if beyond { 0.6 } else { 1.0 };
         match m.kind {
             MarkKind::Deposit => {
                 let diamond = [sp + Vec2::new(0.0, -7.0), sp + Vec2::new(6.0, 0.0), sp + Vec2::new(0.0, 7.0), sp + Vec2::new(-6.0, 0.0)];
-                p.add(egui::Shape::convex_polygon(diamond.to_vec(), pal::ACCENT, Stroke::NONE));
-                if let Some(n) = m.number {
-                    p.text(sp + Vec2::new(-9.0, 0.0), Align2::RIGHT_CENTER, n.to_string(), display(size::CAPTION), pal::TEXT);
-                }
+                p.add(egui::Shape::convex_polygon(diamond.to_vec(), pal::ACCENT.gamma_multiply(fade), Stroke::NONE));
             }
             MarkKind::Ship => {
-                p.circle_filled(sp, 6.0, pal::CYAN);
+                p.circle_filled(sp, 6.0, pal::CYAN.gamma_multiply(fade));
             }
             MarkKind::Landing => {
                 p.circle_stroke(sp, 5.0, Stroke::new(1.5, pal::DIM));
             }
         }
-        p.text(sp + Vec2::new(9.0, -6.0), Align2::LEFT_BOTTOM, &m.tag, display(size::CAPTION), pal::TEXT);
+        labels.push((sp, mark_label(&p, m, beyond)));
     }
     let me = [c + Vec2::new(0.0, -9.0), c + Vec2::new(6.0, 7.0), c + Vec2::new(-6.0, 7.0)];
     p.add(egui::Shape::convex_polygon(me.to_vec(), pal::TEXT, Stroke::NONE));
-    p.text(
-        rect.left_top() + Vec2::new(6.0, 4.0),
-        Align2::LEFT_TOP,
-        format!("{} · rings every {}", distance_text(max_d), distance_text(step)),
-        egui::FontId::proportional(size::CAPTION),
-        pal::DIM,
-    );
+    let inside = rect.shrink(2.0);
+    let mut taken = vec![Rect::from_center_size(c, Vec2::new(14.0, 18.0)), north, header];
+    for (sp, galley) in labels {
+        let pos = place_label(sp, galley.size(), inside, 9.0, &mut taken);
+        p.galley(pos, galley, pal::TEXT);
+    }
+}
+
+/// A mark's label on the radar: a deposit's number, what the mark is, and the distance of one waiting on the rim.
+fn mark_label(p: &egui::Painter, m: &Mark, beyond: bool) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::default();
+    let part = |color| egui::TextFormat { font_id: display(size::CAPTION), color, ..Default::default() };
+    if let Some(n) = m.number {
+        job.append(&format!("{n} "), 0.0, part(pal::ACCENT_SOFT));
+    }
+    job.append(&m.tag, 0.0, part(pal::TEXT));
+    if beyond {
+        job.append(&format!(" · {}", distance_text(m.dist_m)), 0.0, part(pal::DIM));
+    }
+    p.layout_job(job)
+}
+
+/// Where the top left of a label of `size` goes beside a mark at `at`: to its right, or to its left where the right has
+/// no room, moved inside `bounds` where it would still cross them.
+fn label_pos(at: Pos2, size: Vec2, bounds: Rect, gap: f32) -> Pos2 {
+    let x = if at.x + gap + size.x <= bounds.right() { at.x + gap } else { at.x - gap - size.x };
+    let y = at.y - size.y / 2.0;
+    Pos2::new(x.clamp(bounds.left(), (bounds.right() - size.x).max(bounds.left())), y.clamp(bounds.top(), (bounds.bottom() - size.y).max(bounds.top())))
+}
+
+/// [`label_pos`], moved a line down or up (the nearest that's free) when it would cover a label already placed or
+/// another rect in `taken`; the place chosen joins `taken`.
+fn place_label(at: Pos2, size: Vec2, bounds: Rect, gap: f32, taken: &mut Vec<Rect>) -> Pos2 {
+    let line = size.y + 2.0;
+    let free = |p: &Pos2| !taken.iter().any(|r| r.intersects(Rect::from_min_size(*p, size)));
+    let pos = [0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0]
+        .into_iter()
+        .map(|k| label_pos(at + Vec2::new(0.0, k * line), size, bounds, gap))
+        .find(free)
+        .unwrap_or_else(|| label_pos(at, size, bounds, gap));
+    taken.push(Rect::from_min_size(pos, size));
+    pos
 }
 
 /// Nearest first, at most `rows`: what each mark is, how far, and the compass bearing to drive or fly; a deposit also
@@ -731,6 +821,47 @@ mod tests {
         assert_eq!(prefs.notes.len(), 1);
         prefs.set_note(k, "  ".into());
         assert!(prefs.notes.is_empty(), "an emptied note is gone");
+    }
+
+    /// The radar is scaled for the deposits near you; one far away waits on the rim instead of squeezing them together.
+    #[test]
+    fn the_radar_is_scaled_for_the_deposits_near_you() {
+        let reach = |deposits: &[f64], others: &[f64]| {
+            let all: Vec<f64> = deposits.iter().chain(others).copied().collect();
+            RadarScale::fit(deposits, &all).reach_m.round()
+        };
+        // At a deposit, two more a few hundred metres off, the ship 2 km away and another location's deposit 25 km away.
+        let s = RadarScale::fit(&[50.0, 300.0, 350.0, 25_000.0], &[50.0, 300.0, 350.0, 25_000.0, 2_000.0]);
+        assert_eq!(s.reach_m.round(), 402.0, "350 m and a little room");
+        assert!(s.beyond(2_000.0) && s.beyond(25_000.0) && !s.beyond(350.0));
+        assert_eq!((s.at(25_000.0), s.at(0.0)), (1.0, 0.0), "on the rim; you in the middle");
+        // Chequers2's two Iridium deposits (discussion 5), 1.8 and 4.4 km away: both near enough to show in place.
+        assert_eq!(reach(&[1_800.0, 4_400.0], &[]), 5_060.0);
+        // A chain of deposits each about three times further: what's within a kilometre stays, the rest waits.
+        assert_eq!(reach(&[100.0, 250.0, 700.0, 2_000.0, 6_000.0], &[]), 805.0);
+        // Flying in: the cluster 30 km off is in view, a deposit on the far side of the body isn't.
+        assert_eq!(reach(&[30_000.0, 30_200.0, 30_500.0, 300_000.0], &[]), 35_075.0);
+        // No deposit yet: the ship and its last landing.
+        assert_eq!(reach(&[], &[20.0, 600.0]), 690.0);
+        // Never under 250 m.
+        assert_eq!(reach(&[10.0], &[]), 250.0);
+        assert_eq!(reach(&[], &[]), 250.0);
+    }
+
+    /// A label beside a mark near the right or the bottom edge turns or moves to stay inside the radar.
+    #[test]
+    fn labels_stay_inside_the_radar() {
+        let bounds = Rect::from_min_size(Pos2::ZERO, Vec2::splat(300.0));
+        let size = Vec2::new(80.0, 16.0);
+        assert_eq!(label_pos(Pos2::new(100.0, 100.0), size, bounds, 9.0), Pos2::new(109.0, 92.0), "to the right");
+        assert_eq!(label_pos(Pos2::new(280.0, 100.0), size, bounds, 9.0), Pos2::new(191.0, 92.0), "to the left at the right edge");
+        assert_eq!(label_pos(Pos2::new(100.0, 298.0), size, bounds, 9.0), Pos2::new(109.0, 284.0), "up from the bottom edge");
+        assert_eq!(label_pos(Pos2::new(40.0, 2.0), Vec2::new(400.0, 16.0), bounds, 9.0), Pos2::new(0.0, 0.0), "wider than the radar: from its left edge");
+        // Two deposits at the same place far away: the second label goes a line down; one by you goes past your arrow.
+        let mut taken = vec![Rect::from_center_size(Pos2::new(150.0, 150.0), Vec2::new(14.0, 18.0))];
+        assert_eq!(place_label(Pos2::new(250.0, 100.0), size, bounds, 9.0, &mut taken), Pos2::new(161.0, 92.0));
+        assert_eq!(place_label(Pos2::new(250.0, 100.0), size, bounds, 9.0, &mut taken), Pos2::new(161.0, 110.0));
+        assert_eq!(place_label(Pos2::new(140.0, 150.0), size, bounds, 9.0, &mut taken), Pos2::new(149.0, 160.0));
     }
 
     #[test]

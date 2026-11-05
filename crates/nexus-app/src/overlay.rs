@@ -642,8 +642,7 @@ fn read_mining(gs: &GameState, prefs: &MiningPrefs) -> Option<Mining> {
     let nearest = |kind: MarkKind| v.marks.iter().filter(|m| m.kind == kind).min_by(|a, b| a.dist_m.total_cmp(&b.dist_m));
     let deposit = nearest(MarkKind::Deposit);
     let as_target = |m: &crate::pages::mining::Mark, label: &str| target(label.to_string(), m.dist_m, m.bearing, v.heading);
-    let far = v.marks.iter().map(|m| m.dist_m).fold(0.0, f64::max);
-    let max_d = (far * 1.15).max(250.0);
+    let scale = crate::pages::mining::RadarScale::of(&v);
     let marks = v
         .marks
         .iter()
@@ -654,7 +653,7 @@ fn read_mining(gs: &GameState, prefs: &MiningPrefs) -> Option<Mining> {
                 MarkKind::Ship => DialKind::Ship,
                 MarkKind::Landing => DialKind::Landing,
             };
-            DialMark { x: hundredths(a.sin() * m.dist_m / max_d), y: hundredths(a.cos() * m.dist_m / max_d), kind }
+            DialMark { x: hundredths(a.sin() * scale.at(m.dist_m)), y: hundredths(a.cos() * scale.at(m.dist_m)), kind }
         })
         .collect();
     Some(Mining {

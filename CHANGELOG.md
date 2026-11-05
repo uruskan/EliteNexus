@@ -135,6 +135,9 @@ release time that section becomes the new version and the release workflow publi
   into each ingredient against what you have, instead of a run of "3× Vanadium (0)" in coloured brackets.
 - **Market**: the four lines of live-feed messages under every tab are gone, so each tab starts higher up. The
   **Live** badge stays, with the feed's rate and the database's size beside it.
+- **Mining** › Surface radar is scaled to the deposits near you, on the Mining page and the overlay alike: one deposit
+  far away no longer squeezes the near ones into the middle. Anything further out waits on the rim, in its direction,
+  with its distance, and labels by the edge stay inside the radar instead of being cut off (seen by Chequers2).
 
 ### Fixed
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
