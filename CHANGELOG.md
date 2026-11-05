@@ -198,6 +198,10 @@ release time that section becomes the new version and the release workflow publi
   past the table's edge. The Engineering column now takes the room its badges need, and where the two don't fit side
   by side, the experimental effect goes under the blueprint. The ship list sits beside the loadout only once the
   window leaves the loadout enough room; in a narrower window the ships are a row of names above it.
+- **Fleet: EDSY opens a build pasted from Coriolis.** On Where to buy, a build pasted as Coriolis's SLEF export opened
+  in EDSY as "Import failed: Unrecognized JSON format / No builds found": Coriolis leaves out the field that marks a
+  ship's build (`"event":"Loadout"`), and EDSY looks for it. The EDSY and Coriolis buttons now always send the build
+  marked as one, on Where to buy and on the Ships tab alike.
 - **Missions and Statistics say why a wingmate's shared mission isn't counted** (GitHub issue #4). Your own missions,
   wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
   game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The

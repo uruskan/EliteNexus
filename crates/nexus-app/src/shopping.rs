@@ -589,7 +589,8 @@ mod tests {
         let mc = b.modules.iter().find(|m| m.slot == "HugeHardpoint1").expect("multi-cannon");
         // Blueprint names as the Engineering page has them.
         assert_eq!(mc.engineering.as_deref(), Some("G5 Overcharged Weapon, Auto Loader"));
-        assert!(crate::export::edsy_url(&b.loadout).is_some(), "the loadout opens in EDSY again");
+        // The EDSY and Coriolis buttons open it again.
+        crate::export::tests::both_sites_import(&b.loadout);
     }
 
     #[test]
@@ -598,10 +599,14 @@ mod tests {
         let coriolis = r#"[{"header":{"appName":"Coriolis"},"data":{"Ship":"Krait_MkII","Modules":[{"Slot":"FrameShiftDrive","Item":"Int_Hyperdrive_Size5_Class5"}]}}]"#;
         let b = parse_build(coriolis).expect("coriolis");
         assert_eq!((b.ship.as_str(), b.modules[0].item.as_str()), ("krait_mkii", "int_hyperdrive_size5_class5"));
+        // Without an event, EDSY couldn't import it from the build's EDSY button (finding 15, 2026-11-04).
+        assert_eq!(crate::export::tests::both_sites_import(&b.loadout)["Ship"], "Krait_MkII");
         let journal = r#"{ "timestamp":"2026-10-01T12:00:00Z", "event":"Loadout", "Ship":"python", "ShipID":3, "Modules":[ { "Slot":"MainEngines", "Item":"int_engine_size6_class5", "On":true, "Priority":0 } ] }"#;
         assert_eq!(parse_build(journal).expect("journal").modules[0].item, "int_engine_size6_class5");
         let link = crate::export::coriolis_url(journal).expect("link");
-        assert_eq!(parse_build(&link).expect("link").ship, "python");
+        let from_link = parse_build(&link).expect("link");
+        assert_eq!(from_link.ship, "python");
+        crate::export::tests::both_sites_import(&from_link.loadout);
     }
 
     #[test]

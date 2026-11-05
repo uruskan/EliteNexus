@@ -1,24 +1,42 @@
-//! Ship build export links (EDSY, Coriolis): the journal `Loadout` event, compact JSON, gzipped,
-//! URL-safe base64 with `=` escaped as `%3D` — the format both sites (and EDMC) use.
+//! Ship build export links (EDSY, Coriolis): the build as a journal `Loadout` event, compact JSON,
+//! gzipped, URL-safe base64 with `=` escaped as `%3D` — the format both sites (and EDMC) use.
 
 use base64::Engine;
+use serde_json::Value;
 use std::io::{Read, Write};
 
-fn encode_loadout(loadout_line: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(loadout_line).ok()?;
-    let compact = serde_json::to_string(&value).ok()?;
+/// The build as a journal `Loadout` event, the one form both sites import from a link. EDSY tells a
+/// build by its `"event":"Loadout"` (or by a whole SLEF export's header), and Coriolis's SLEF
+/// export has no event: its build alone made EDSY say "Unrecognized JSON format". A SLEF export,
+/// whole or one item, gives its build. `None` for text that isn't a JSON object.
+fn loadout_event(json: &str) -> Option<Value> {
+    let mut v: Value = serde_json::from_str(json).ok()?;
+    if let Value::Array(items) = v {
+        v = items.into_iter().find(Value::is_object)?;
+    }
+    if let Some(data) = v.get("data").filter(|d| d.is_object()) {
+        v = data.clone();
+    }
+    v.as_object_mut()?.insert("event".into(), Value::from("Loadout"));
+    Some(v)
+}
+
+fn encode_loadout(loadout: &str) -> Option<String> {
+    let compact = serde_json::to_string(&loadout_event(loadout)?).ok()?;
     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
     gz.write_all(compact.as_bytes()).ok()?;
     let bytes = gz.finish().ok()?;
     Some(base64::engine::general_purpose::URL_SAFE.encode(bytes).replace('=', "%3D"))
 }
 
-pub fn edsy_url(loadout_line: &str) -> Option<String> {
-    encode_loadout(loadout_line).map(|d| format!("https://edsy.org/#/I={d}"))
+/// An edsy.org link that imports the build: a journal `Loadout` line, a SLEF export or its build.
+pub fn edsy_url(loadout: &str) -> Option<String> {
+    encode_loadout(loadout).map(|d| format!("https://edsy.org/#/I={d}"))
 }
 
-pub fn coriolis_url(loadout_line: &str) -> Option<String> {
-    encode_loadout(loadout_line).map(|d| format!("https://coriolis.io/import?data={d}"))
+/// A coriolis.io link that imports the build, from the same kinds of text as [`edsy_url`].
+pub fn coriolis_url(loadout: &str) -> Option<String> {
+    encode_loadout(loadout).map(|d| format!("https://coriolis.io/import?data={d}"))
 }
 
 /// The build JSON inside an EDSY or Coriolis *import* link (`edsy.org/#/I=…`,
@@ -44,12 +62,43 @@ pub fn decode_link(url: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// EDSY's test for a build it can import (`importData` in edsy.js, read 2026-11-05): a SLEF
+    /// export whose first item has `header.appName` and `data.Ship`, or journal events, of which it
+    /// takes the `Loadout`s. Anything else is "Unrecognized JSON format".
+    fn edsy_imports(v: &Value) -> bool {
+        let first = v.get(0).unwrap_or(v);
+        let slef = v.is_array() && first.pointer("/header/appName").is_some_and(|a| a.as_str().is_some_and(|s| !s.is_empty())) && first.pointer("/data/Ship").is_some();
+        slef || first.get("event").and_then(Value::as_str) == Some("Loadout") && first.get("Ship").is_some_and(Value::is_string) && first.get("Modules").is_some_and(Value::is_array)
+    }
+
+    /// Coriolis's (`_importBuild` in Coriolis.jsx, read 2026-11-05): one SLEF item's `data`, a
+    /// Frontier API ship (`modules`) or a journal `Loadout` (`Modules`).
+    fn coriolis_imports(v: &Value) -> bool {
+        let slef = v.get(0).and_then(|i| i.get("data")).is_some();
+        slef || v.get("modules").is_some() || v.get("Modules").is_some_and(Value::is_array)
+    }
+
+    /// The JSON an import link carries.
+    pub(crate) fn link_json(url: &str) -> Value {
+        serde_json::from_str(&decode_link(url).expect("decodes")).expect("JSON")
+    }
+
+    /// Both sites import the build behind both links.
+    pub(crate) fn both_sites_import(build: &str) -> Value {
+        let (edsy, coriolis) = (edsy_url(build).expect("EDSY link"), coriolis_url(build).expect("Coriolis link"));
+        assert!(edsy.starts_with("https://edsy.org/#/I=H4sI") && coriolis.starts_with("https://coriolis.io/import?data=H4sI"));
+        let json = link_json(&edsy);
+        assert!(edsy_imports(&json), "EDSY can't import {json}");
+        assert!(coriolis_imports(&link_json(&coriolis)), "Coriolis can't import {json}");
+        json
+    }
 
     #[test]
     fn roundtrip() {
-        let line = r#"{ "timestamp":"2026-09-05T00:13:39Z", "event":"Loadout", "Ship":"empire_courier", "ShipID":17 }"#;
+        let line = r#"{ "timestamp":"2026-09-05T00:13:39Z", "event":"Loadout", "Ship":"empire_courier", "ShipID":17, "Modules":[] }"#;
         let url = edsy_url(line).unwrap();
         let data = url.strip_prefix("https://edsy.org/#/I=").unwrap().replace("%3D", "=");
         let gz = base64::engine::general_purpose::URL_SAFE.decode(data).unwrap();
@@ -57,6 +106,27 @@ mod tests {
         flate2::read::GzDecoder::new(&gz[..]).read_to_string(&mut s).unwrap();
         assert!(s.contains("\"Ship\":\"empire_courier\""));
         assert!(coriolis_url(line).unwrap().starts_with("https://coriolis.io/import?data="));
+        // A journal line goes as it is, compact.
+        assert_eq!(both_sites_import(line), serde_json::from_str::<Value>(line).unwrap());
+    }
+
+    /// Finding 15 of the 2026-11-04 play-test: a build pasted from Coriolis's SLEF export opened
+    /// in EDSY as "Import failed: Unrecognized JSON format / No builds found".
+    #[test]
+    fn a_coriolis_slef_build_opens_in_edsy() {
+        let slef = r#"[{"header":{"appName":"Coriolis","appVersion":"4.0","appURL":"https://coriolis.io/outfit/anaconda"},"data":{"Ship":"Anaconda","Modules":[
+            {"Slot":"Armour","Item":"anaconda_armour_grade2","On":true,"Priority":1},
+            {"Slot":"FrameShiftDrive","Item":"int_hyperdrive_size6_class5","On":true,"Priority":1,"Engineering":{"BlueprintName":"FSD_LongRange","Level":4,"Quality":0,"ExperimentalEffect":"special_fsd_heavy"}}]}}]"#;
+        let data = serde_json::from_str::<Value>(slef).unwrap()[0]["data"].to_string();
+        // What Where to buy keeps of a pasted SLEF is its build, which has no event.
+        assert!(!edsy_imports(&serde_json::from_str(&data).unwrap()), "the failing case");
+        for build in [data.as_str(), slef] {
+            let json = both_sites_import(build);
+            assert_eq!((json["event"].as_str(), json["Ship"].as_str()), (Some("Loadout"), Some("Anaconda")));
+            assert_eq!(json["Modules"][1]["Engineering"]["BlueprintName"], "FSD_LongRange", "engineering goes along");
+        }
+        assert_eq!(edsy_url("not JSON"), None);
+        assert_eq!(coriolis_url("[1, 2]"), None);
     }
 
     #[test]
