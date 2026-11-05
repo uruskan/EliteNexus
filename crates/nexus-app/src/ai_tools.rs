@@ -2299,19 +2299,19 @@ pub static TOOLS: &[Tool] = &[
     Tool {
         name: "where_to_mine",
         title: "Where to surface-mine",
-        description: "Rhino surface mining: landable bodies with planetary mining locations near a system, or the best system in each stretch of the way to to_system, from the scans commanders shared that Spansh holds; the odds of each material on each body's ground (how often it was listed at the locations commanders read in the game); and what the commander's own runs gave on each ground (class and volcanism). Nothing records what a given location holds.",
+        description: "Rhino surface mining via Spansh (scans commanders shared): landable bodies with mining locations near a system, or the best system per stretch of the way to to_system; each body's ground (class, volcanism) and a material's odds there (how often locations read in the game listed it); the commander's own runs per ground. Nothing records what a location holds.",
         params: || {
             schema(
                 json!({
                     "near_system": { "type": "string", "description": NEAR },
-                    "to_system": { "type": "string", "description": "Search along the way from near_system (default: the commander's) to here instead." },
+                    "to_system": { "type": "string", "description": "Search along the way here from near_system (default: the commander's)." },
                     "class": { "type": "string", "enum": ["metal-rich", "high metal content", "rocky", "rocky ice", "icy"] },
                     "volcanism": { "type": "string", "description": "e.g. rocky magma, metallic magma, water geysers, or none." },
-                    "material": { "type": "string", "description": "A material the Rhino mines (Monazite, Platinum, Iridium, Low Temperature Diamonds…): without a class, only the classes where it turned up are searched, and each body gets its odds." },
+                    "material": { "type": "string", "description": "e.g. Monazite, Platinum. Without a class, only the classes where it turned up are searched; each body gets its odds." },
                     "min_locations": { "type": "integer", "description": "Default 1." },
                     "max_distance_ly": { "type": "number", "description": "1 to 1,000. Default 100; along a route, from the line, 25." },
                     "max_distance_ls": { "type": "number", "description": "From the arrival star. Default: any." },
-                    "sort": { "type": "string", "enum": ["nearest", "most_locations"], "description": "most_locations: with a material, the most locations likely to list it." },
+                    "sort": { "type": "string", "enum": ["nearest", "most_locations"], "description": "most_locations, with a material: likeliest to list it." },
                     "stops": { "type": "integer", "description": "Along a route: how many stretches. Default 10." }
                 }),
                 &[],
