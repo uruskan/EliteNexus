@@ -183,6 +183,11 @@ impl MarketService {
         self.eddn.as_ref().map(|h| h.stats().snapshot())
     }
 
+    /// The live feed's newest message in words ("Docking granted at Ray Gateway"), while the feed is on.
+    pub fn latest_headline(&self) -> Option<String> {
+        self.eddn.as_ref()?.stats().headlines(1).pop().map(|h| h.text)
+    }
+
     pub fn db_summary(&mut self) -> Option<String> {
         let s = self.db_stats()?;
         Some(format!(

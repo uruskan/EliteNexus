@@ -942,9 +942,19 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
         }
         st.set_tab(t);
     }
-    ui.add_space(8.0);
-    feed_header(ui, svc);
     ui.add_space(12.0);
+    // The live feed's state sits in a slim bar along the bottom; the tab gets everything above it.
+    let full = ui.available_rect_before_wrap();
+    let bar_rect = egui::Rect::from_min_max(egui::pos2(full.left(), full.bottom() - STATUS_BAR_H), full.max);
+    let body_rect = egui::Rect::from_min_max(full.min, egui::pos2(full.right(), bar_rect.top() - 6.0));
+    ui.advance_cursor_after_rect(full);
+    if status_bar(ui, bar_rect, svc) {
+        st.set_tab(Tab::Database);
+    }
+    let mut body = ui.new_child(egui::UiBuilder::new().id_salt("market-body").max_rect(body_rect).layout(egui::Layout::top_down(egui::Align::Min)));
+    // Nothing the tab draws runs over the bar.
+    body.set_clip_rect(body_rect.intersect(body.clip_rect()));
+    let ui = &mut body;
     let Some(db) = svc.db.clone() else {
         empty(ui, icon::DATABASE, "Market database unavailable", svc.db_error.as_deref().unwrap_or("Starting…"));
         return false;
@@ -2719,22 +2729,54 @@ fn service_query(kind: &str, origin: [f64; 3], pad: Option<char>) -> StationQuer
     q
 }
 
-fn feed_header(ui: &mut Ui, svc: &mut MarketService) {
-    ui.horizontal_wrapped(|ui| {
-        match svc.feed_summary() {
-            Some((connected, line)) => {
-                badge(ui, if connected { "Live" } else { "Connecting" }, if connected { pal::GOOD } else { pal::WARN });
-                ui.label(RichText::new(line).color(pal::DIM));
-            }
-            None => {
-                badge(ui, "Feed off", pal::GRAY);
-                ui.label(RichText::new("Turn on the live feed in Accounts & sync for real-time prices.").color(pal::DIM));
-            }
+/// Height of the Market page's status bar.
+const STATUS_BAR_H: f32 = 30.0;
+
+/// The live feed and the database in one slim bar along the bottom of the page, the way an app's status bar sits under
+/// its content: the Live badge and the feed's rate, what the database holds, and on the right the feed's newest message.
+/// A click anywhere on it opens Database & feed (returns true).
+fn status_bar(ui: &mut Ui, rect: egui::Rect, svc: &mut MarketService) -> bool {
+    let latest = svc.latest_headline();
+    // The bar's tooltip is the one that shows over it, so it carries the newest message whole.
+    let mut tip = "The live market feed (EDDN): what commanders all over the galaxy report as they dock, and what Elite Nexus's database holds from it, your journal and the Spansh import. Click for Database & feed.".to_string();
+    if let Some(h) = &latest {
+        tip.push_str(&format!("\n\nNewest message: {h}"));
+    }
+    let resp = ui.interact(rect, ui.id().with("market-status-bar"), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip);
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        if resp.hovered() {
+            p.rect_filled(rect, egui::CornerRadius::same(8), Color32::from_white_alpha(6));
         }
-        if let Some(s) = svc.db_summary() {
-            ui.label(RichText::new(s).small().color(pal::DIM));
+        p.hline(rect.x_range(), rect.top(), egui::Stroke::new(1.0, pal::SEPARATOR));
+    }
+    let mut bar = ui.new_child(egui::UiBuilder::new().id_salt("market-status").max_rect(rect.shrink2(egui::vec2(4.0, 0.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
+    bar.spacing_mut().item_spacing.x = 8.0;
+    // Plain text that lets the click through to the bar.
+    let text = |ui: &mut Ui, t: String, c: Color32| {
+        ui.add(egui::Label::new(RichText::new(t).size(size::CAPTION).color(c)).selectable(false).truncate());
+    };
+    match svc.feed_summary() {
+        Some((connected, line)) => {
+            badge(&mut bar, if connected { "Live" } else { "Connecting" }, if connected { pal::GOOD } else { pal::WARN });
+            text(&mut bar, line, pal::DIM);
         }
-    });
+        None => {
+            badge(&mut bar, "Feed off", pal::GRAY);
+            text(&mut bar, "Turn on the live market feed in Accounts & sync for prices from all over the galaxy.".into(), pal::DIM);
+        }
+    }
+    if let Some(s) = svc.db_summary() {
+        text(&mut bar, format!("·  {s}"), pal::DIM);
+    }
+    // The newest message, where there's room for it to say something.
+    if bar.available_width() > 200.0
+        && let Some(h) = latest
+    {
+        bar.add_space(16.0);
+        bar.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| text(ui, format!("{} {h}", icon::BROADCAST), pal::FAINT));
+    }
+    resp.clicked()
 }
 
 fn status<T>(ui: &mut Ui, slot: &Slot<Res<T>>) -> bool {
@@ -3262,6 +3304,14 @@ fn database_tab(ui: &mut Ui, svc: &mut MarketService, st: &mut MarketUi, rt: &to
                             ui.label(RichText::new(digits(*n)).small().color(pal::DIM));
                         });
                     });
+                }
+                // The stream itself lives here, not over the other tabs (the status bar shows the newest message).
+                if !f.recent_headlines.is_empty() {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("Latest messages").size(size::FOOTNOTE).color(pal::TEXT));
+                    for h in f.recent_headlines.iter().take(10) {
+                        ui.add(egui::Label::new(RichText::new(format!("{} {}", icon::BROADCAST, h.text)).size(size::FOOTNOTE).color(pal::DIM)).truncate());
+                    }
                 }
             }
             None => {

@@ -173,8 +173,10 @@ release time that section becomes the new version and the release workflow publi
 - **Engineering** › Suits & weapons and Synthesis read the same way: each recipe (a grade, a modification, a
   synthesis) is one row that says Ready or how many materials you're short of, with its price or effect, and opens
   into each ingredient against what you have, instead of a run of "3× Vanadium (0)" in coloured brackets.
-- **Market**: the four lines of live-feed messages under every tab are gone, so each tab starts higher up. The
-  **Live** badge stays, with the feed's rate and the database's size beside it.
+- **Market**: the four lines of live-feed messages under every tab are gone, so each tab starts higher up. The feed's
+  state sits in a slim bar along the bottom of the page instead: the **Live** badge, the feed's rate, what the
+  database holds and, on the right, the feed's newest message. Click it for Database & feed, which lists the latest
+  messages.
 - **Fleet › Where to buy: a build for a ship you own is a refit of it.** Modules already fitted on your ship of that
   type count as yours, like those in your storage, and start unticked ("Fitted on your Python"). A build of one of
   your own ships says you have all of it, instead of listing every module to buy again. Ask's where to buy counts them
