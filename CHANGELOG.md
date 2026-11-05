@@ -7,6 +7,51 @@ release time that section becomes the new version and the release workflow publi
 
 ## [0.8.0-beta.1] - 2026-11-05
 
+The first beta of 0.8.0 brings the fixes from a long play-test on 4 November, ideas from GitHub and the Frontier
+Forums, and a lot of polish. In short:
+
+- **Combat** (a new page): the nearest wars and civil wars, with days won and a route there, and a plain guide to
+  fighting without a bounty.
+- **Fleet**:
+  - **Plan a loadout**: plan modules and engineering and watch jump range, speed, shields, armour, weapons, power
+    and heat change as you go, with saved builds and Compare.
+  - **Where to buy**: finds one ship or module, or a whole build.
+  - Every ship shows the landing pad it needs.
+- **Market**:
+  - Up to eight stations side by side.
+  - A **shopping trip** for several goods.
+  - Trade routes for any cargo space, with stock, demand and pins.
+  - Every search's settings in view, and the live feed in a slim bar at the bottom.
+- **Statistics**: rebuilt as Career, Activity, Ships and All statistics, in plain words.
+- **Engineering**:
+  - Rolls at each grade and a number of modules.
+  - Merc blueprints.
+  - Where to get what you're short of.
+  - The whole way to each engineer.
+- **Navigation and Exploration**:
+  - Back to your carrier in one click, and the nearest Fleet Carrier Administration.
+  - Planners that say what each is for.
+  - A system's signals by kind.
+- **Overlay**: the island fits what it shows, says where the route ends and how far, and shows docking granted.
+  See-through really is see-through.
+- **Mining**:
+  - Where to land the Rhino, with the odds of each material.
+  - Numbered deposits, rings and rig spacing on the surface radar.
+- **Missions**: clear the recent history, and find where to get mission goods.
+- **BGS & Powerplay**: the merits you earned in each system, with bounties and data sales counted.
+- **Ask and AI agents**:
+  - Ask can be stopped and lists what it can see and do.
+  - It plans shopping trips and engineering, and searches your whole journal.
+  - AI agents such as Claude Code can use Elite Nexus's read-only tools (off by default).
+- **The app**:
+  - An alert history behind a bell.
+  - A pause for EDSM, Inara and EDAstro.
+  - Follow my flight, screenshots saved as PNG, and a choice of speech engine and voice.
+  - A support card at start while in beta.
+- **Fixes**: more than 40 of them, from charts that cut off their numbers to tables too wide for a narrow window.
+
+Everything in full:
+
 ### Added
 - **A support card at start**: while Elite Nexus is in beta, each start shows a small card in the middle of the main
   window with the **GitHub Sponsors** and **Buy Me a Coffee** buttons, why support matters and what it pays for, and
