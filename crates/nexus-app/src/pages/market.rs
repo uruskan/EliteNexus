@@ -1778,114 +1778,114 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
     let mut sort = TableSort::load(ui, id);
     let layout = format!("{id}/{}", if wide { "wide" } else { "narrow" });
     crate::widgets::table(ui, &layout, |mut table| {
-    table = table.sense(egui::Sense::click());
-    if pins.is_some() {
-        table = table.column(Column::exact(24.0).resizable(false));
-    }
-    if many {
-        table = table.column(Column::initial(180.0).at_least(80.0).clip(true));
-    }
-    table = table
-        .column(Column::initial(118.0).at_least(70.0).clip(true))
-        .column(Column::initial(60.0).at_least(40.0).clip(true))
-        .column(Column::initial(76.0).at_least(40.0).clip(true))
-        .column(crate::widgets::flex_column(150.0))
-        .column(Column::initial(72.0).at_least(50.0).clip(true));
-    if wide {
-        table = table.column(Column::initial(36.0).at_least(28.0).clip(true));
-    }
-    table = table.column(Column::initial(60.0).at_least(40.0).clip(true));
-    // Sortable columns: 0 price, 1 quantity, 2 station, 3 distance, 4 pad, 5 age, 6 commodity. Cheapest
-    // first where you buy, best price first where you sell.
-    let mut heads: Heads = Vec::new();
-    if pins.is_some() {
-        heads.push(("", None));
-    }
-    if many {
-        heads.push(("Commodity", Some((6, false))));
-    }
-    heads.extend([
-        (if buying { "Buy for" } else { "Sell for" }, Some((0, !buying))),
-        ("vs avg", Some((0, !buying))),
-        (if buying { "Stock" } else { "Demand" }, Some((1, true))),
-        ("Station", Some((2, false))),
-        ("Distance", Some((3, false))),
-    ]);
-    if wide {
-        heads.push(("Pad", Some((4, true))));
-    }
-    heads.push(("Updated", Some((5, true))));
-    let table = table.header(28.0, |mut h| headings(&mut h, &heads, &mut sort, id));
-    let order = sort.order(hits, |a, b, c| match c {
-        0 => a.price.cmp(&b.price),
-        1 => a.quantity.cmp(&b.quantity),
-        2 => cmp_text(&a.station, &b.station),
-        3 => cmp_opt(a.distance_ly, b.distance_ly),
-        4 => pad_rank(a.max_pad).cmp(&pad_rank(b.max_pad)),
-        6 => cmp_text(a.commodity.as_ref().map_or("", |c| c.name.as_str()), b.commodity.as_ref().map_or("", |c| c.name.as_str())),
-        _ => a.updated_unix.cmp(&b.updated_unix),
-    });
-    table
-        .body(|body| {
-            body.rows(40.0, hits.len(), |mut row| {
-                let h = &hits[order[row.index()]];
-                // The page's commodity, or (rare goods taken as one) the row's own.
-                let page_good = pins.map_or(("", ""), |p| p.0);
-                let page_rare = pins.is_some_and(|p| p.2);
-                let (symbol, name) = h.commodity.as_ref().map_or(page_good, |c| (c.symbol.as_str(), c.name.as_str()));
-                row.set_selected(selected.is_some_and(|k| k.0 == h.market_id && k.1 == symbol));
-                if let Some((_, prefs, _)) = pins {
-                    row.col(|ui| {
-                        if pin_button(ui, prefs.is_pinned(h.market_id, symbol, !buying)) {
-                            action = Some(RowAction::Pin(Pin {
-                                market_id: h.market_id,
-                                station: h.station.clone(),
-                                system: h.system.clone(),
-                                carrier: h.is_carrier,
-                                symbol: symbol.to_string(),
-                                name: name.to_string(),
-                                sell_here: !buying,
-                                price: h.price,
-                                qty: h.quantity,
-                                ..Default::default()
-                            }));
-                        }
-                    });
-                }
-                if many {
-                    row.col(|ui| {
-                        if let Some(open) = commodity_cell(ui, name, h.commodity.is_some(), page_rare) {
-                            action = Some(open);
-                        }
-                    });
-                }
-                row.col(|ui| {
-                    ui.label(RichText::new(cr(h.price)).font(display(size::CALLOUT)).color(if buying { pal::CYAN } else { pal::GOOD }));
-                });
-                // A rare good against its own average (0 when no market reports one), never the one over all of them.
-                let avg = h.commodity.as_ref().map_or(average, |c| Some(c.mean));
-                row.col(|ui| vs_average(ui, h.price, avg, buying));
-                row.col(|ui| {
-                    ui.label(RichText::new(nexus_data::names::group_digits(h.quantity)).color(pal::DIM));
-                });
-                row.col(|ui| station_cell(ui, &h.station, &h.system, h.is_carrier, h.is_planetary, h.dist_ls, h.carrier_access.as_deref()));
-                row.col(|ui| {
-                    ui.label(RichText::new(h.distance_ly.map(|d| format!("{d:.1} ly")).unwrap_or_default()).color(pal::DIM));
-                });
-                if wide {
-                    row.col(|ui| {
-                        ui.label(RichText::new(h.max_pad.map(String::from).unwrap_or_else(|| "?".into())).color(pal::DIM));
-                    });
-                }
-                row.col(|ui| {
-                    let (t, c) = age(h.updated_unix);
-                    ui.label(RichText::new(t).color(c));
-                });
-                if row.response().clicked() && action.is_none() {
-                    action = Some(RowAction::Select((h.market_id, symbol.to_string())));
-                }
-            });
+        table = table.sense(egui::Sense::click());
+        if pins.is_some() {
+            table = table.column(Column::exact(24.0).resizable(false));
+        }
+        if many {
+            table = table.column(Column::initial(180.0).at_least(80.0).clip(true));
+        }
+        table = table
+            .column(Column::initial(118.0).at_least(70.0).clip(true))
+            .column(Column::initial(60.0).at_least(40.0).clip(true))
+            .column(Column::initial(76.0).at_least(40.0).clip(true))
+            .column(crate::widgets::flex_column(150.0))
+            .column(Column::initial(72.0).at_least(50.0).clip(true));
+        if wide {
+            table = table.column(Column::initial(36.0).at_least(28.0).clip(true));
+        }
+        table = table.column(Column::initial(60.0).at_least(40.0).clip(true));
+        // Sortable columns: 0 price, 1 quantity, 2 station, 3 distance, 4 pad, 5 age, 6 commodity. Cheapest
+        // first where you buy, best price first where you sell.
+        let mut heads: Heads = Vec::new();
+        if pins.is_some() {
+            heads.push(("", None));
+        }
+        if many {
+            heads.push(("Commodity", Some((6, false))));
+        }
+        heads.extend([
+            (if buying { "Buy for" } else { "Sell for" }, Some((0, !buying))),
+            ("vs avg", Some((0, !buying))),
+            (if buying { "Stock" } else { "Demand" }, Some((1, true))),
+            ("Station", Some((2, false))),
+            ("Distance", Some((3, false))),
+        ]);
+        if wide {
+            heads.push(("Pad", Some((4, true))));
+        }
+        heads.push(("Updated", Some((5, true))));
+        let table = table.header(28.0, |mut h| headings(&mut h, &heads, &mut sort, id));
+        let order = sort.order(hits, |a, b, c| match c {
+            0 => a.price.cmp(&b.price),
+            1 => a.quantity.cmp(&b.quantity),
+            2 => cmp_text(&a.station, &b.station),
+            3 => cmp_opt(a.distance_ly, b.distance_ly),
+            4 => pad_rank(a.max_pad).cmp(&pad_rank(b.max_pad)),
+            6 => cmp_text(a.commodity.as_ref().map_or("", |c| c.name.as_str()), b.commodity.as_ref().map_or("", |c| c.name.as_str())),
+            _ => a.updated_unix.cmp(&b.updated_unix),
         });
+        table
+            .body(|body| {
+                body.rows(40.0, hits.len(), |mut row| {
+                    let h = &hits[order[row.index()]];
+                    // The page's commodity, or (rare goods taken as one) the row's own.
+                    let page_good = pins.map_or(("", ""), |p| p.0);
+                    let page_rare = pins.is_some_and(|p| p.2);
+                    let (symbol, name) = h.commodity.as_ref().map_or(page_good, |c| (c.symbol.as_str(), c.name.as_str()));
+                    row.set_selected(selected.is_some_and(|k| k.0 == h.market_id && k.1 == symbol));
+                    if let Some((_, prefs, _)) = pins {
+                        row.col(|ui| {
+                            if pin_button(ui, prefs.is_pinned(h.market_id, symbol, !buying)) {
+                                action = Some(RowAction::Pin(Pin {
+                                    market_id: h.market_id,
+                                    station: h.station.clone(),
+                                    system: h.system.clone(),
+                                    carrier: h.is_carrier,
+                                    symbol: symbol.to_string(),
+                                    name: name.to_string(),
+                                    sell_here: !buying,
+                                    price: h.price,
+                                    qty: h.quantity,
+                                    ..Default::default()
+                                }));
+                            }
+                        });
+                    }
+                    if many {
+                        row.col(|ui| {
+                            if let Some(open) = commodity_cell(ui, name, h.commodity.is_some(), page_rare) {
+                                action = Some(open);
+                            }
+                        });
+                    }
+                    row.col(|ui| {
+                        ui.label(RichText::new(cr(h.price)).font(display(size::CALLOUT)).color(if buying { pal::CYAN } else { pal::GOOD }));
+                    });
+                    // A rare good against its own average (0 when no market reports one), never the one over all of them.
+                    let avg = h.commodity.as_ref().map_or(average, |c| Some(c.mean));
+                    row.col(|ui| vs_average(ui, h.price, avg, buying));
+                    row.col(|ui| {
+                        ui.label(RichText::new(nexus_data::names::group_digits(h.quantity)).color(pal::DIM));
+                    });
+                    row.col(|ui| station_cell(ui, &h.station, &h.system, h.is_carrier, h.is_planetary, h.dist_ls, h.carrier_access.as_deref()));
+                    row.col(|ui| {
+                        ui.label(RichText::new(h.distance_ly.map(|d| format!("{d:.1} ly")).unwrap_or_default()).color(pal::DIM));
+                    });
+                    if wide {
+                        row.col(|ui| {
+                            ui.label(RichText::new(h.max_pad.map(String::from).unwrap_or_else(|| "?".into())).color(pal::DIM));
+                        });
+                    }
+                    row.col(|ui| {
+                        let (t, c) = age(h.updated_unix);
+                        ui.label(RichText::new(t).color(c));
+                    });
+                    if row.response().clicked() && action.is_none() {
+                        action = Some(RowAction::Select((h.market_id, symbol.to_string())));
+                    }
+                });
+            });
     });
     action
 }
@@ -1897,116 +1897,116 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
     const TABLE: &str = "commodity-latest";
     let mut sort = TableSort::load(ui, TABLE);
     crate::widgets::table(ui, if wide { "commodity-latest/wide" } else { "commodity-latest/narrow" }, |table| {
-    let mut table = table
-        .sense(egui::Sense::click())
-        .column(Column::exact(24.0).resizable(false))
-        // Each row names its commodity, as Abnormal prices does.
-        .column(Column::initial(180.0).at_least(80.0).clip(true))
-        .column(crate::widgets::flex_column(150.0))
-        .column(Column::initial(104.0).at_least(60.0).clip(true));
-    if wide {
-        table = table.column(Column::initial(66.0).at_least(40.0).clip(true));
-    }
-    table = table.column(Column::initial(104.0).at_least(60.0).clip(true));
-    if wide {
-        table = table.column(Column::initial(66.0).at_least(40.0).clip(true));
-    }
-    table = table.column(Column::initial(72.0).at_least(50.0).clip(true)).column(Column::initial(60.0).at_least(40.0).clip(true));
-    // Sortable columns: 0 station, 1 buy price, 2 stock, 3 sell price, 4 demand, 5 distance, 6 age,
-    // 7 commodity. A market that doesn't trade that way sorts after the ones that do.
-    let mut heads: Heads = vec![("", None), ("Commodity", Some((7, false))), ("Station", Some((0, false))), ("Buy for", Some((1, false)))];
-    if wide {
-        heads.push(("Stock", Some((2, true))));
-    }
-    heads.push(("Sell for", Some((3, true))));
-    if wide {
-        heads.push(("Demand", Some((4, true))));
-    }
-    heads.extend([("Distance", Some((5, false))), ("Updated", Some((6, true)))]);
-    let table = table.header(28.0, |mut h| headings(&mut h, &heads, &mut sort, TABLE));
-    let desc = sort.descending;
-    // A missing price: last whichever way the column is sorted.
-    let price = move |v: i64| if v > 0 { Some(v as f64) } else if desc { Some(f64::NEG_INFINITY) } else { None };
-    let order = sort.order(quotes, |a, b, c| match c {
-        0 => cmp_text(&a.station, &b.station),
-        1 => cmp_opt(price(a.buy), price(b.buy)),
-        2 => a.stock.cmp(&b.stock),
-        3 => cmp_opt(price(a.sell), price(b.sell)),
-        4 => a.demand.cmp(&b.demand),
-        5 => cmp_opt(a.distance_ly, b.distance_ly),
-        7 => cmp_text(a.commodity.as_ref().map_or("", |c| c.name.as_str()), b.commodity.as_ref().map_or("", |c| c.name.as_str())),
-        _ => a.updated_unix.cmp(&b.updated_unix),
-    });
-    table
-        .body(|body| {
-            body.rows(40.0, quotes.len(), |mut row| {
-                let q = &quotes[order[row.index()]];
-                // The page's commodity, or (rare goods taken as one) the row's own.
-                let (symbol, name) = q.commodity.as_ref().map_or(page_good, |c| (c.symbol.as_str(), c.name.as_str()));
-                row.set_selected(selected.is_some_and(|k| k.0 == q.market_id && k.1 == symbol));
-                // A rare good against its own average, never the one over all of them; the page's commodity against
-                // the one this market reports or (carriers report none) the page's.
-                let avg = q.commodity.as_ref().map_or_else(|| Some(q.mean).filter(|m| *m > 0).or(average), |c| Some(c.mean));
-                row.col(|ui| {
-                    // Pins the side it trades (where it buys, when it does both).
-                    let pinned = [true, false].into_iter().find(|s| prefs.is_pinned(q.market_id, symbol, *s));
-                    let sell_here = pinned.unwrap_or(q.sell > 0 && q.demand > 0);
-                    if pin_button(ui, pinned.is_some()) {
-                        let (price, qty) = if sell_here { (q.sell, q.demand) } else { (q.buy, q.stock) };
-                        action = Some(RowAction::Pin(Pin {
-                            market_id: q.market_id,
-                            station: q.station.clone(),
-                            system: q.system.clone(),
-                            carrier: q.is_carrier,
-                            symbol: symbol.to_string(),
-                            name: name.to_string(),
-                            sell_here,
-                            price,
-                            qty,
-                            ..Default::default()
-                        }));
-                    }
-                });
-                row.col(|ui| {
-                    if let Some(open) = commodity_cell(ui, name, q.commodity.is_some(), page_rare) {
-                        action = Some(open);
-                    }
-                });
-                row.col(|ui| station_cell(ui, &q.station, &q.system, q.is_carrier, q.is_planetary, q.dist_ls, q.carrier_access.as_deref()));
-                let price = |ui: &mut Ui, v: i64, qty: i64, col: Color32, what: &str| {
-                    if v > 0 && qty > 0 {
-                        let r = ui.label(RichText::new(cr(v)).color(col));
-                        if let Some(a) = avg.filter(|a| *a > 0) {
-                            r.on_hover_text(format!("{} {what} · galactic average {}", nexus_data::names::group_digits(qty), cr(a)));
-                        }
-                    } else {
-                        ui.label(RichText::new("—").color(pal::FAINT));
-                    }
-                };
-                row.col(|ui| price(ui, q.buy, q.stock, pal::CYAN, "in stock"));
-                if wide {
-                    row.col(|ui| {
-                        ui.label(RichText::new(if q.stock > 0 { nexus_data::names::group_digits(q.stock) } else { String::new() }).color(pal::DIM));
-                    });
-                }
-                row.col(|ui| price(ui, q.sell, q.demand, pal::GOOD, "wanted"));
-                if wide {
-                    row.col(|ui| {
-                        ui.label(RichText::new(if q.demand > 0 { nexus_data::names::group_digits(q.demand) } else { String::new() }).color(pal::DIM));
-                    });
-                }
-                row.col(|ui| {
-                    ui.label(RichText::new(q.distance_ly.map(|d| format!("{d:.1} ly")).unwrap_or_default()).color(pal::DIM));
-                });
-                row.col(|ui| {
-                    let (t, c) = age(q.updated_unix);
-                    ui.label(RichText::new(t).color(c));
-                });
-                if row.response().clicked() && action.is_none() {
-                    action = Some(RowAction::Select((q.market_id, symbol.to_string())));
-                }
-            });
+        let mut table = table
+            .sense(egui::Sense::click())
+            .column(Column::exact(24.0).resizable(false))
+            // Each row names its commodity, as Abnormal prices does.
+            .column(Column::initial(180.0).at_least(80.0).clip(true))
+            .column(crate::widgets::flex_column(150.0))
+            .column(Column::initial(104.0).at_least(60.0).clip(true));
+        if wide {
+            table = table.column(Column::initial(66.0).at_least(40.0).clip(true));
+        }
+        table = table.column(Column::initial(104.0).at_least(60.0).clip(true));
+        if wide {
+            table = table.column(Column::initial(66.0).at_least(40.0).clip(true));
+        }
+        table = table.column(Column::initial(72.0).at_least(50.0).clip(true)).column(Column::initial(60.0).at_least(40.0).clip(true));
+        // Sortable columns: 0 station, 1 buy price, 2 stock, 3 sell price, 4 demand, 5 distance, 6 age,
+        // 7 commodity. A market that doesn't trade that way sorts after the ones that do.
+        let mut heads: Heads = vec![("", None), ("Commodity", Some((7, false))), ("Station", Some((0, false))), ("Buy for", Some((1, false)))];
+        if wide {
+            heads.push(("Stock", Some((2, true))));
+        }
+        heads.push(("Sell for", Some((3, true))));
+        if wide {
+            heads.push(("Demand", Some((4, true))));
+        }
+        heads.extend([("Distance", Some((5, false))), ("Updated", Some((6, true)))]);
+        let table = table.header(28.0, |mut h| headings(&mut h, &heads, &mut sort, TABLE));
+        let desc = sort.descending;
+        // A missing price: last whichever way the column is sorted.
+        let price = move |v: i64| if v > 0 { Some(v as f64) } else if desc { Some(f64::NEG_INFINITY) } else { None };
+        let order = sort.order(quotes, |a, b, c| match c {
+            0 => cmp_text(&a.station, &b.station),
+            1 => cmp_opt(price(a.buy), price(b.buy)),
+            2 => a.stock.cmp(&b.stock),
+            3 => cmp_opt(price(a.sell), price(b.sell)),
+            4 => a.demand.cmp(&b.demand),
+            5 => cmp_opt(a.distance_ly, b.distance_ly),
+            7 => cmp_text(a.commodity.as_ref().map_or("", |c| c.name.as_str()), b.commodity.as_ref().map_or("", |c| c.name.as_str())),
+            _ => a.updated_unix.cmp(&b.updated_unix),
         });
+        table
+            .body(|body| {
+                body.rows(40.0, quotes.len(), |mut row| {
+                    let q = &quotes[order[row.index()]];
+                    // The page's commodity, or (rare goods taken as one) the row's own.
+                    let (symbol, name) = q.commodity.as_ref().map_or(page_good, |c| (c.symbol.as_str(), c.name.as_str()));
+                    row.set_selected(selected.is_some_and(|k| k.0 == q.market_id && k.1 == symbol));
+                    // A rare good against its own average, never the one over all of them; the page's commodity against
+                    // the one this market reports or (carriers report none) the page's.
+                    let avg = q.commodity.as_ref().map_or_else(|| Some(q.mean).filter(|m| *m > 0).or(average), |c| Some(c.mean));
+                    row.col(|ui| {
+                        // Pins the side it trades (where it buys, when it does both).
+                        let pinned = [true, false].into_iter().find(|s| prefs.is_pinned(q.market_id, symbol, *s));
+                        let sell_here = pinned.unwrap_or(q.sell > 0 && q.demand > 0);
+                        if pin_button(ui, pinned.is_some()) {
+                            let (price, qty) = if sell_here { (q.sell, q.demand) } else { (q.buy, q.stock) };
+                            action = Some(RowAction::Pin(Pin {
+                                market_id: q.market_id,
+                                station: q.station.clone(),
+                                system: q.system.clone(),
+                                carrier: q.is_carrier,
+                                symbol: symbol.to_string(),
+                                name: name.to_string(),
+                                sell_here,
+                                price,
+                                qty,
+                                ..Default::default()
+                            }));
+                        }
+                    });
+                    row.col(|ui| {
+                        if let Some(open) = commodity_cell(ui, name, q.commodity.is_some(), page_rare) {
+                            action = Some(open);
+                        }
+                    });
+                    row.col(|ui| station_cell(ui, &q.station, &q.system, q.is_carrier, q.is_planetary, q.dist_ls, q.carrier_access.as_deref()));
+                    let price = |ui: &mut Ui, v: i64, qty: i64, col: Color32, what: &str| {
+                        if v > 0 && qty > 0 {
+                            let r = ui.label(RichText::new(cr(v)).color(col));
+                            if let Some(a) = avg.filter(|a| *a > 0) {
+                                r.on_hover_text(format!("{} {what} · galactic average {}", nexus_data::names::group_digits(qty), cr(a)));
+                            }
+                        } else {
+                            ui.label(RichText::new("—").color(pal::FAINT));
+                        }
+                    };
+                    row.col(|ui| price(ui, q.buy, q.stock, pal::CYAN, "in stock"));
+                    if wide {
+                        row.col(|ui| {
+                            ui.label(RichText::new(if q.stock > 0 { nexus_data::names::group_digits(q.stock) } else { String::new() }).color(pal::DIM));
+                        });
+                    }
+                    row.col(|ui| price(ui, q.sell, q.demand, pal::GOOD, "wanted"));
+                    if wide {
+                        row.col(|ui| {
+                            ui.label(RichText::new(if q.demand > 0 { nexus_data::names::group_digits(q.demand) } else { String::new() }).color(pal::DIM));
+                        });
+                    }
+                    row.col(|ui| {
+                        ui.label(RichText::new(q.distance_ly.map(|d| format!("{d:.1} ly")).unwrap_or_default()).color(pal::DIM));
+                    });
+                    row.col(|ui| {
+                        let (t, c) = age(q.updated_unix);
+                        ui.label(RichText::new(t).color(c));
+                    });
+                    if row.response().clicked() && action.is_none() {
+                        action = Some(RowAction::Select((q.market_id, symbol.to_string())));
+                    }
+                });
+            });
     });
     action
 }
@@ -2333,110 +2333,110 @@ fn abnormal_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -
     // Narrow windows drop the average and quantity columns rather than spilling off the page.
     let wide = ui.available_width() >= 1040.0;
     crate::widgets::table(ui, if wide { "abnormal/wide" } else { "abnormal/narrow" }, |table| {
-    let mut table = table
-        .column(Column::exact(24.0).resizable(false))
-        .column(Column::initial(180.0).at_least(80.0).clip(true))
-        .column(Column::initial(118.0).at_least(70.0).clip(true));
-    if wide {
-        table = table.column(Column::initial(100.0).at_least(60.0).clip(true)).column(Column::initial(70.0).at_least(44.0).clip(true)).column(Column::initial(84.0).at_least(44.0).clip(true));
-    } else {
-        table = table.column(Column::initial(64.0).at_least(44.0).clip(true));
-    }
-    // Sortable columns: 0 commodity, 1 price, 2 average, 3 multiple, 4 quantity, 5 station, 6 distance, 7 age.
-    let mut heads: Heads = vec![("", None), ("Commodity", Some((0, false))), (if sell { "They pay" } else { "They sell for" }, Some((1, sell)))];
-    if wide {
-        heads.extend([("Average", Some((2, true))), ("×", Some((3, true))), (if sell { "Demand" } else { "Stock" }, Some((4, true)))]);
-    } else {
-        heads.push(("×", Some((3, true))));
-    }
-    heads.extend([("Station", Some((5, false))), ("Distance", Some((6, false))), ("Updated", Some((7, true)))]);
-    let table = table
-        .column(crate::widgets::flex_column(140.0))
-        .column(Column::initial(76.0).at_least(50.0).clip(true))
-        .column(Column::initial(76.0).at_least(50.0).clip(true))
-        .header(30.0, |mut h| headings(&mut h, &heads, &mut sort, TABLE));
-    let order = sort.order(deals, |a, b, c| match c {
-        0 => cmp_text(&a.commodity_name, &b.commodity_name),
-        1 => a.price.cmp(&b.price),
-        2 => a.average.cmp(&b.average),
-        3 => a.ratio.total_cmp(&b.ratio),
-        4 => a.quantity.cmp(&b.quantity),
-        5 => cmp_text(&a.station, &b.station),
-        6 => cmp_opt(a.distance_ly, b.distance_ly),
-        _ => a.updated_unix.cmp(&b.updated_unix),
-    });
-    table
-        .body(|body| {
-            // As tall as the commodity lists' rows: a carrier's name line has its docking badge.
-            body.rows(40.0, deals.len(), |mut row| {
-                let d = &deals[order[row.index()]];
-                row.col(|ui| {
-                    if pin_button(ui, p.is_pinned(d.market_id, &d.commodity, sell)) {
-                        pin = Some(Pin {
-                            market_id: d.market_id,
-                            station: d.station.clone(),
-                            system: d.system.clone(),
-                            carrier: d.is_carrier,
-                            symbol: d.commodity.clone(),
-                            name: d.commodity_name.clone(),
-                            sell_here: sell,
-                            price: d.price,
-                            qty: d.quantity,
-                            ..Default::default()
+        let mut table = table
+            .column(Column::exact(24.0).resizable(false))
+            .column(Column::initial(180.0).at_least(80.0).clip(true))
+            .column(Column::initial(118.0).at_least(70.0).clip(true));
+        if wide {
+            table = table.column(Column::initial(100.0).at_least(60.0).clip(true)).column(Column::initial(70.0).at_least(44.0).clip(true)).column(Column::initial(84.0).at_least(44.0).clip(true));
+        } else {
+            table = table.column(Column::initial(64.0).at_least(44.0).clip(true));
+        }
+        // Sortable columns: 0 commodity, 1 price, 2 average, 3 multiple, 4 quantity, 5 station, 6 distance, 7 age.
+        let mut heads: Heads = vec![("", None), ("Commodity", Some((0, false))), (if sell { "They pay" } else { "They sell for" }, Some((1, sell)))];
+        if wide {
+            heads.extend([("Average", Some((2, true))), ("×", Some((3, true))), (if sell { "Demand" } else { "Stock" }, Some((4, true)))]);
+        } else {
+            heads.push(("×", Some((3, true))));
+        }
+        heads.extend([("Station", Some((5, false))), ("Distance", Some((6, false))), ("Updated", Some((7, true)))]);
+        let table = table
+            .column(crate::widgets::flex_column(140.0))
+            .column(Column::initial(76.0).at_least(50.0).clip(true))
+            .column(Column::initial(76.0).at_least(50.0).clip(true))
+            .header(30.0, |mut h| headings(&mut h, &heads, &mut sort, TABLE));
+        let order = sort.order(deals, |a, b, c| match c {
+            0 => cmp_text(&a.commodity_name, &b.commodity_name),
+            1 => a.price.cmp(&b.price),
+            2 => a.average.cmp(&b.average),
+            3 => a.ratio.total_cmp(&b.ratio),
+            4 => a.quantity.cmp(&b.quantity),
+            5 => cmp_text(&a.station, &b.station),
+            6 => cmp_opt(a.distance_ly, b.distance_ly),
+            _ => a.updated_unix.cmp(&b.updated_unix),
+        });
+        table
+            .body(|body| {
+                // As tall as the commodity lists' rows: a carrier's name line has its docking badge.
+                body.rows(40.0, deals.len(), |mut row| {
+                    let d = &deals[order[row.index()]];
+                    row.col(|ui| {
+                        if pin_button(ui, p.is_pinned(d.market_id, &d.commodity, sell)) {
+                            pin = Some(Pin {
+                                market_id: d.market_id,
+                                station: d.station.clone(),
+                                system: d.system.clone(),
+                                carrier: d.is_carrier,
+                                symbol: d.commodity.clone(),
+                                name: d.commodity_name.clone(),
+                                sell_here: sell,
+                                price: d.price,
+                                qty: d.quantity,
+                                ..Default::default()
+                            });
+                        }
+                    });
+                    row.col(|ui| {
+                        let tip = if sell { "Where to buy it, where else to sell it, latest prices" } else { "Where to sell it, where else to buy it, latest prices" };
+                        if nav_label(ui, RichText::new(&d.commodity_name).color(pal::TEXT), tip) {
+                            nav = Some(Nav::Commodity { name: d.commodity.clone(), side: Some(side) });
+                        }
+                    });
+                    row.col(|ui| {
+                        ui.label(RichText::new(cr(d.price)).font(display(size::CALLOUT)).color(if sell { pal::GOOD } else { pal::CYAN }));
+                    });
+                    if wide {
+                        row.col(|ui| {
+                            ui.label(RichText::new(cr(d.average)).color(pal::DIM));
                         });
                     }
-                });
-                row.col(|ui| {
-                    let tip = if sell { "Where to buy it, where else to sell it, latest prices" } else { "Where to sell it, where else to buy it, latest prices" };
-                    if nav_label(ui, RichText::new(&d.commodity_name).color(pal::TEXT), tip) {
-                        nav = Some(Nav::Commodity { name: d.commodity.clone(), side: Some(side) });
+                    row.col(|ui| {
+                        let col = if d.ratio >= 10.0 { pal::PINK } else if d.ratio >= 3.0 { pal::ACCENT } else { pal::GOLD };
+                        ui.label(RichText::new(format!("{:.1}×", d.ratio)).font(display(size::CALLOUT)).color(col))
+                            .on_hover_text(format!("Galactic average {} · {} {}", cr(d.average), nexus_data::names::group_digits(d.quantity), if sell { "wanted" } else { "in stock" }));
+                    });
+                    if wide {
+                        row.col(|ui| {
+                            ui.label(RichText::new(nexus_data::names::group_digits(d.quantity)).color(pal::DIM));
+                        });
                     }
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(cr(d.price)).font(display(size::CALLOUT)).color(if sell { pal::GOOD } else { pal::CYAN }));
-                });
-                if wide {
                     row.col(|ui| {
-                        ui.label(RichText::new(cr(d.average)).color(pal::DIM));
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let name = if d.is_carrier { format!("{} {}", icon::ANCHOR, d.station) } else { d.station.clone() };
+                            let tip = if d.is_carrier { "Fleet carrier: its owner sets these prices and who may dock. Click for its whole market." } else { "Click for the station's whole market" };
+                            let clicked = if d.is_carrier {
+                                named_with_access(ui, RichText::new(name).color(pal::TEXT), d.carrier_access.as_deref(), |ui, text| nav_label(ui, text, tip))
+                            } else {
+                                nav_label(ui, RichText::new(name).color(pal::TEXT), tip)
+                            };
+                            if clicked {
+                                nav = Some(Nav::Station(d.market_id));
+                            }
+                            if ui.add(egui::Label::new(RichText::new(&d.system).size(size::CAPTION).color(pal::DIM)).truncate().sense(egui::Sense::click())).on_hover_text("Click to copy the system").clicked() {
+                                ui.ctx().copy_text(d.system.clone());
+                            }
+                        });
                     });
-                }
-                row.col(|ui| {
-                    let col = if d.ratio >= 10.0 { pal::PINK } else if d.ratio >= 3.0 { pal::ACCENT } else { pal::GOLD };
-                    ui.label(RichText::new(format!("{:.1}×", d.ratio)).font(display(size::CALLOUT)).color(col))
-                        .on_hover_text(format!("Galactic average {} · {} {}", cr(d.average), nexus_data::names::group_digits(d.quantity), if sell { "wanted" } else { "in stock" }));
-                });
-                if wide {
                     row.col(|ui| {
-                        ui.label(RichText::new(nexus_data::names::group_digits(d.quantity)).color(pal::DIM));
+                        ui.label(RichText::new(d.distance_ly.map(|x| format!("{x:.0} ly")).unwrap_or_default()).color(pal::DIM));
                     });
-                }
-                row.col(|ui| {
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        let name = if d.is_carrier { format!("{} {}", icon::ANCHOR, d.station) } else { d.station.clone() };
-                        let tip = if d.is_carrier { "Fleet carrier: its owner sets these prices and who may dock. Click for its whole market." } else { "Click for the station's whole market" };
-                        let clicked = if d.is_carrier {
-                            named_with_access(ui, RichText::new(name).color(pal::TEXT), d.carrier_access.as_deref(), |ui, text| nav_label(ui, text, tip))
-                        } else {
-                            nav_label(ui, RichText::new(name).color(pal::TEXT), tip)
-                        };
-                        if clicked {
-                            nav = Some(Nav::Station(d.market_id));
-                        }
-                        if ui.add(egui::Label::new(RichText::new(&d.system).size(size::CAPTION).color(pal::DIM)).truncate().sense(egui::Sense::click())).on_hover_text("Click to copy the system").clicked() {
-                            ui.ctx().copy_text(d.system.clone());
-                        }
+                    row.col(|ui| {
+                        let (a, col) = age(d.updated_unix);
+                        ui.label(RichText::new(format!("{a} ago")).color(col));
                     });
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(d.distance_ly.map(|x| format!("{x:.0} ly")).unwrap_or_default()).color(pal::DIM));
-                });
-                row.col(|ui| {
-                    let (a, col) = age(d.updated_unix);
-                    ui.label(RichText::new(format!("{a} ago")).color(col));
                 });
             });
-        });
     });
     if let Some(x) = pin {
         st.prefs.toggle_pin(x);
@@ -2515,119 +2515,119 @@ fn pins_panel(ui: &mut Ui, gs: &GameState, st: &mut MarketUi) -> Option<Nav> {
     let mut remove = None;
     let mut flip = None;
     crate::widgets::table(ui, "pins", |table| {
-    table
-        .vscroll(true)
-        .max_scroll_height(30.0 * 5.0)
-        .auto_shrink([false, true])
-        .column(Column::exact(24.0).resizable(false))
-        .column(Column::exact(44.0).resizable(false))
-        .column(Column::initial(150.0).at_least(70.0).clip(true))
-        .column(Column::initial(124.0).at_least(70.0).clip(true))
-        .column(crate::widgets::flex_column(140.0))
-        .column(Column::initial(66.0).at_least(44.0).clip(true))
-        .column(Column::initial(118.0).at_least(60.0).clip(true))
-        .column(Column::exact(26.0).resizable(false))
-        .body(|body| {
-            body.rows(30.0, n, |mut row| {
-                let i = row.index();
-                let p = &st.prefs.pins[i];
-                let now = pin_now(p, live);
-                row.col(|ui| {
-                    let mut on = p.in_plan;
-                    if ui.checkbox(&mut on, "").on_hover_text("Part of the run planner's run").changed() {
-                        flip = Some(i);
-                    }
-                });
-                row.col(|ui| {
-                    let (t, c) = if p.sell_here { ("SELL", pal::GOOD) } else { ("BUY", pal::CYAN) };
-                    ui.label(RichText::new(t).size(size::CAPTION).color(c)).on_hover_text(if p.sell_here { "Pinned buyer: you sell here" } else { "Pinned seller: you buy here" });
-                });
-                row.col(|ui| {
-                    if nav_label(ui, RichText::new(&p.name).color(pal::TEXT), "Its page: where to buy, where to sell, latest prices") {
-                        nav = Some(Nav::Commodity { name: p.symbol.clone(), side: Some(if p.sell_here { Side::Sell } else { Side::Buy }) });
-                    }
-                });
-                row.col(|ui| match &now {
-                    Some(Some(n)) => {
-                        let what = if p.sell_here { "wanted" } else { "in stock" };
-                        let mut tip = format!("{} {what}", nexus_data::names::group_digits(n.qty));
-                        if n.price != p.price {
-                            tip += &format!(" · {} when pinned", cr(p.price));
+        table
+            .vscroll(true)
+            .max_scroll_height(30.0 * 5.0)
+            .auto_shrink([false, true])
+            .column(Column::exact(24.0).resizable(false))
+            .column(Column::exact(44.0).resizable(false))
+            .column(Column::initial(150.0).at_least(70.0).clip(true))
+            .column(Column::initial(124.0).at_least(70.0).clip(true))
+            .column(crate::widgets::flex_column(140.0))
+            .column(Column::initial(66.0).at_least(44.0).clip(true))
+            .column(Column::initial(118.0).at_least(60.0).clip(true))
+            .column(Column::exact(26.0).resizable(false))
+            .body(|body| {
+                body.rows(30.0, n, |mut row| {
+                    let i = row.index();
+                    let p = &st.prefs.pins[i];
+                    let now = pin_now(p, live);
+                    row.col(|ui| {
+                        let mut on = p.in_plan;
+                        if ui.checkbox(&mut on, "").on_hover_text("Part of the run planner's run").changed() {
+                            flip = Some(i);
                         }
-                        ui.label(RichText::new(cr(n.price)).color(if p.sell_here { pal::GOOD } else { pal::CYAN })).on_hover_text(tip);
-                    }
-                    Some(None) => {
-                        ui.label(RichText::new(if p.sell_here { "no longer buys" } else { "sold out" }).color(pal::BAD))
-                            .on_hover_text(format!("Its latest market has no {} {} it. It was {} when pinned.", if p.sell_here { "demand for" } else { "stock of" }, p.name, cr(p.price)));
-                    }
-                    None => {
-                        ui.label(RichText::new(cr(p.price)).color(pal::DIM)).on_hover_text("The price when pinned (loading the latest)");
-                    }
-                });
-                let system = match &now {
-                    Some(Some(n)) => n.system.clone(),
-                    _ => p.system.clone(),
-                };
-                row.col(|ui| {
-                    let name = if p.carrier { format!("{} {}", icon::ANCHOR, p.station) } else { p.station.clone() };
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 6.0;
-                        if nav_label(ui, RichText::new(name).color(pal::TEXT), "Click for the station's whole market") {
-                            nav = Some(Nav::Station(p.market_id));
+                    });
+                    row.col(|ui| {
+                        let (t, c) = if p.sell_here { ("SELL", pal::GOOD) } else { ("BUY", pal::CYAN) };
+                        ui.label(RichText::new(t).size(size::CAPTION).color(c)).on_hover_text(if p.sell_here { "Pinned buyer: you sell here" } else { "Pinned seller: you buy here" });
+                    });
+                    row.col(|ui| {
+                        if nav_label(ui, RichText::new(&p.name).color(pal::TEXT), "Its page: where to buy, where to sell, latest prices") {
+                            nav = Some(Nav::Commodity { name: p.symbol.clone(), side: Some(if p.sell_here { Side::Sell } else { Side::Buy }) });
                         }
-                        // Who may dock, once the pin's market has loaded.
-                        if p.carrier
-                            && let Some(Some(m)) = live.and_then(|l| l.get(&p.market_id))
-                        {
-                            access_badge(ui, m.station.carrier_docking_access.as_deref());
+                    });
+                    row.col(|ui| match &now {
+                        Some(Some(n)) => {
+                            let what = if p.sell_here { "wanted" } else { "in stock" };
+                            let mut tip = format!("{} {what}", nexus_data::names::group_digits(n.qty));
+                            if n.price != p.price {
+                                tip += &format!(" · {} when pinned", cr(p.price));
+                            }
+                            ui.label(RichText::new(cr(n.price)).color(if p.sell_here { pal::GOOD } else { pal::CYAN })).on_hover_text(tip);
                         }
-                        if ui.add(egui::Label::new(RichText::new(&system).size(size::CAPTION).color(pal::DIM)).truncate().sense(egui::Sense::click())).on_hover_text("Click to copy the system").clicked() {
-                            ui.ctx().copy_text(system.clone());
+                        Some(None) => {
+                            ui.label(RichText::new(if p.sell_here { "no longer buys" } else { "sold out" }).color(pal::BAD))
+                                .on_hover_text(format!("Its latest market has no {} {} it. It was {} when pinned.", if p.sell_here { "demand for" } else { "stock of" }, p.name, cr(p.price)));
+                        }
+                        None => {
+                            ui.label(RichText::new(cr(p.price)).color(pal::DIM)).on_hover_text("The price when pinned (loading the latest)");
+                        }
+                    });
+                    let system = match &now {
+                        Some(Some(n)) => n.system.clone(),
+                        _ => p.system.clone(),
+                    };
+                    row.col(|ui| {
+                        let name = if p.carrier { format!("{} {}", icon::ANCHOR, p.station) } else { p.station.clone() };
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 6.0;
+                            if nav_label(ui, RichText::new(name).color(pal::TEXT), "Click for the station's whole market") {
+                                nav = Some(Nav::Station(p.market_id));
+                            }
+                            // Who may dock, once the pin's market has loaded.
+                            if p.carrier
+                                && let Some(Some(m)) = live.and_then(|l| l.get(&p.market_id))
+                            {
+                                access_badge(ui, m.station.carrier_docking_access.as_deref());
+                            }
+                            if ui.add(egui::Label::new(RichText::new(&system).size(size::CAPTION).color(pal::DIM)).truncate().sense(egui::Sense::click())).on_hover_text("Click to copy the system").clicked() {
+                                ui.ctx().copy_text(system.clone());
+                            }
+                        });
+                    });
+                    row.col(|ui| {
+                        let pos = match &now {
+                            Some(Some(n)) => n.pos,
+                            _ => None,
+                        };
+                        let d = here.zip(pos).map(|(a, b)| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt());
+                        ui.label(RichText::new(d.map(|d| format!("{d:.0} ly")).unwrap_or_default()).color(pal::DIM));
+                    });
+                    row.col(|ui| {
+                        let in_system = system.eq_ignore_ascii_case(&gs.location.system);
+                        let seen = p.carrier && presence(&listed, &p.station) == Presence::Here;
+                        if p.carrier && (in_system || seen) {
+                            match presence(&listed, &p.station) {
+                                Presence::Here => {
+                                    let tip = if in_system { "The game listed this carrier in this system since you arrived." } else { "The game listed it here since you arrived: it has moved here since its market was last reported." };
+                                    ui.label(RichText::new(format!("{} here", icon::CHECK_CIRCLE)).color(pal::GOOD)).on_hover_text(tip);
+                                }
+                                Presence::NotHere(k) => {
+                                    ui.label(RichText::new(format!("{} not here", icon::X_CIRCLE)).color(pal::BAD)).on_hover_text(format!(
+                                        "The game listed {k} fleet carriers in {} since you arrived, and not this one: it has probably jumped away. The database still places it here.",
+                                        gs.location.system
+                                    ));
+                                }
+                                Presence::Unknown => {
+                                    ui.label(RichText::new(format!("{} not listed yet", icon::QUESTION)).color(pal::DIM))
+                                        .on_hover_text("The game lists the carriers of a system as they show up in your navigation panel: on arrival, or when you drop out of supercruise. None has been listed since you arrived.");
+                                }
+                            }
+                        } else if in_system {
+                            ui.label(RichText::new("in this system").color(pal::GOOD));
+                        } else if let Some(Some(n)) = &now {
+                            let (a, c) = age(n.updated);
+                            ui.label(RichText::new(format!("{a} ago")).color(c)).on_hover_text("When its market was last reported");
+                        }
+                    });
+                    row.col(|ui| {
+                        if crate::widgets::icon_button(ui, icon::X, "Unpin").clicked() {
+                            remove = Some(i);
                         }
                     });
                 });
-                row.col(|ui| {
-                    let pos = match &now {
-                        Some(Some(n)) => n.pos,
-                        _ => None,
-                    };
-                    let d = here.zip(pos).map(|(a, b)| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt());
-                    ui.label(RichText::new(d.map(|d| format!("{d:.0} ly")).unwrap_or_default()).color(pal::DIM));
-                });
-                row.col(|ui| {
-                    let in_system = system.eq_ignore_ascii_case(&gs.location.system);
-                    let seen = p.carrier && presence(&listed, &p.station) == Presence::Here;
-                    if p.carrier && (in_system || seen) {
-                        match presence(&listed, &p.station) {
-                            Presence::Here => {
-                                let tip = if in_system { "The game listed this carrier in this system since you arrived." } else { "The game listed it here since you arrived: it has moved here since its market was last reported." };
-                                ui.label(RichText::new(format!("{} here", icon::CHECK_CIRCLE)).color(pal::GOOD)).on_hover_text(tip);
-                            }
-                            Presence::NotHere(k) => {
-                                ui.label(RichText::new(format!("{} not here", icon::X_CIRCLE)).color(pal::BAD)).on_hover_text(format!(
-                                    "The game listed {k} fleet carriers in {} since you arrived, and not this one: it has probably jumped away. The database still places it here.",
-                                    gs.location.system
-                                ));
-                            }
-                            Presence::Unknown => {
-                                ui.label(RichText::new(format!("{} not listed yet", icon::QUESTION)).color(pal::DIM))
-                                    .on_hover_text("The game lists the carriers of a system as they show up in your navigation panel: on arrival, or when you drop out of supercruise. None has been listed since you arrived.");
-                            }
-                        }
-                    } else if in_system {
-                        ui.label(RichText::new("in this system").color(pal::GOOD));
-                    } else if let Some(Some(n)) = &now {
-                        let (a, c) = age(n.updated);
-                        ui.label(RichText::new(format!("{a} ago")).color(c)).on_hover_text("When its market was last reported");
-                    }
-                });
-                row.col(|ui| {
-                    if crate::widgets::icon_button(ui, icon::X, "Unpin").clicked() {
-                        remove = Some(i);
-                    }
-                });
             });
-        });
     });
     if let Some(i) = flip {
         st.prefs.pins[i].in_plan = !st.prefs.pins[i].in_plan;
@@ -2933,64 +2933,64 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>)
     const TABLE: &str = "trade-routes";
     let mut sort = TableSort::load(ui, TABLE);
     crate::widgets::table(ui, if here { "trade-routes/here" } else { "trade-routes/around" }, |table| {
-    let table = table
-        .column(Column::initial(170.0).at_least(90.0).clip(true))
-        .column(Column::initial(90.0).at_least(60.0).clip(true))
-        .column(Column::initial(100.0).at_least(60.0).clip(true))
-        .column(Column::initial(if here { 110.0 } else { 260.0 }).at_least(90.0).clip(true))
-        .column(crate::widgets::flex_column(200.0))
-        .column(Column::initial(70.0).at_least(50.0).clip(true))
-        .header(30.0, |mut h| {
-            // Buy at / Sell at sort by how far from you the station is (Buy here by price).
-            let buy = if here { "Buy here" } else { "Buy at" };
-            let heads: Heads = vec![("Commodity", Some((0, false))), ("Profit/t", Some((1, true))), ("Trip profit", Some((2, true))), (buy, Some((3, false))), ("Sell at", Some((4, false))), ("Hop", Some((5, false)))];
-            headings(&mut h, &heads, &mut sort, TABLE);
+        let table = table
+            .column(Column::initial(170.0).at_least(90.0).clip(true))
+            .column(Column::initial(90.0).at_least(60.0).clip(true))
+            .column(Column::initial(100.0).at_least(60.0).clip(true))
+            .column(Column::initial(if here { 110.0 } else { 260.0 }).at_least(90.0).clip(true))
+            .column(crate::widgets::flex_column(200.0))
+            .column(Column::initial(70.0).at_least(50.0).clip(true))
+            .header(30.0, |mut h| {
+                // Buy at / Sell at sort by how far from you the station is (Buy here by price).
+                let buy = if here { "Buy here" } else { "Buy at" };
+                let heads: Heads = vec![("Commodity", Some((0, false))), ("Profit/t", Some((1, true))), ("Trip profit", Some((2, true))), (buy, Some((3, false))), ("Sell at", Some((4, false))), ("Hop", Some((5, false)))];
+                headings(&mut h, &heads, &mut sort, TABLE);
+            });
+        let order = sort.order(routes, |a, b, c| match c {
+            0 => cmp_text(&a.commodity_name, &b.commodity_name),
+            1 => a.profit_per_ton.cmp(&b.profit_per_ton),
+            2 => a.total_profit.cmp(&b.total_profit),
+            3 if here => a.buy_price.cmp(&b.buy_price),
+            3 => a.from.distance_from_origin_ly.total_cmp(&b.from.distance_from_origin_ly),
+            4 => a.to.distance_from_origin_ly.total_cmp(&b.to.distance_from_origin_ly),
+            _ => a.hop_ly.total_cmp(&b.hop_ly),
         });
-    let order = sort.order(routes, |a, b, c| match c {
-        0 => cmp_text(&a.commodity_name, &b.commodity_name),
-        1 => a.profit_per_ton.cmp(&b.profit_per_ton),
-        2 => a.total_profit.cmp(&b.total_profit),
-        3 if here => a.buy_price.cmp(&b.buy_price),
-        3 => a.from.distance_from_origin_ly.total_cmp(&b.from.distance_from_origin_ly),
-        4 => a.to.distance_from_origin_ly.total_cmp(&b.to.distance_from_origin_ly),
-        _ => a.hop_ly.total_cmp(&b.hop_ly),
-    });
-    table
-        .body(|body| {
-            body.rows(44.0, routes.len(), |mut row| {
-                let r = &routes[order[row.index()]];
-                row.col(|ui| {
-                    if nav_label(ui, RichText::new(&r.commodity_name).color(pal::TEXT), "Where to buy and sell it, latest prices") {
-                        nav = Some(Nav::Commodity { name: r.commodity.clone(), side: None });
-                    }
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(nexus_data::names::group_digits(r.profit_per_ton)).font(display(14.0)).color(pal::GOOD));
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(short_credits(r.total_profit)).color(pal::GOLD));
-                });
-                for (end, price, buy) in [(&r.from, r.buy_price, true), (&r.to, r.sell_price, false)] {
+        table
+            .body(|body| {
+                body.rows(44.0, routes.len(), |mut row| {
+                    let r = &routes[order[row.index()]];
                     row.col(|ui| {
-                        ui.vertical(|ui| {
-                            let (a, c) = age(end.market_updated_unix);
-                            if buy && here {
-                                ui.label(format!("{} Cr", nexus_data::names::group_digits(price)));
-                                ui.label(RichText::new(format!("{a} ago")).small().color(c));
-                                return;
-                            }
-                            if nav_label(ui, format!("{} — {} Cr", end.station, nexus_data::names::group_digits(price)), "Click for the station's whole market") {
-                                nav = Some(Nav::Station(end.market_id));
-                            }
-                            ui.label(RichText::new(format!("{} · {:.1} ly · {}", end.system, end.distance_from_origin_ly, a)).small().color(c));
-                        });
+                        if nav_label(ui, RichText::new(&r.commodity_name).color(pal::TEXT), "Where to buy and sell it, latest prices") {
+                            nav = Some(Nav::Commodity { name: r.commodity.clone(), side: None });
+                        }
                     });
-                }
-                row.col(|ui| {
-                    ui.label(RichText::new(format!("{:.1} ly", r.hop_ly)).color(pal::DIM));
+                    row.col(|ui| {
+                        ui.label(RichText::new(nexus_data::names::group_digits(r.profit_per_ton)).font(display(14.0)).color(pal::GOOD));
+                    });
+                    row.col(|ui| {
+                        ui.label(RichText::new(short_credits(r.total_profit)).color(pal::GOLD));
+                    });
+                    for (end, price, buy) in [(&r.from, r.buy_price, true), (&r.to, r.sell_price, false)] {
+                        row.col(|ui| {
+                            ui.vertical(|ui| {
+                                let (a, c) = age(end.market_updated_unix);
+                                if buy && here {
+                                    ui.label(format!("{} Cr", nexus_data::names::group_digits(price)));
+                                    ui.label(RichText::new(format!("{a} ago")).small().color(c));
+                                    return;
+                                }
+                                if nav_label(ui, format!("{} — {} Cr", end.station, nexus_data::names::group_digits(price)), "Click for the station's whole market") {
+                                    nav = Some(Nav::Station(end.market_id));
+                                }
+                                ui.label(RichText::new(format!("{} · {:.1} ly · {}", end.system, end.distance_from_origin_ly, a)).small().color(c));
+                            });
+                        });
+                    }
+                    row.col(|ui| {
+                        ui.label(RichText::new(format!("{:.1} ly", r.hop_ly)).color(pal::DIM));
+                    });
                 });
             });
-        });
     });
     nav
 }
@@ -3059,51 +3059,51 @@ fn results_stations(ui: &mut Ui, slot: &Slot<Res<StationHit>>) {
     const TABLE: &str = "services";
     let mut sort = TableSort::load(ui, TABLE);
     crate::widgets::table(ui, TABLE, |table| {
-    let table = table
-        .column(Column::initial(260.0).at_least(100.0).clip(true))
-        .column(Column::initial(220.0).at_least(100.0).clip(true))
-        .column(Column::initial(80.0).at_least(56.0).clip(true))
-        .column(Column::initial(80.0).at_least(56.0).clip(true))
-        .column(Column::initial(50.0).at_least(32.0).clip(true))
-        .column(Column::remainder().at_least(80.0).clip(true))
-        .header(30.0, |mut h| {
-            let heads: Heads = vec![("Station", Some((0, false))), ("System", Some((1, false))), ("Distance", Some((2, false))), ("From star", Some((3, false))), ("Pad", Some((4, true))), ("Economy", Some((5, false)))];
-            headings(&mut h, &heads, &mut sort, TABLE);
+        let table = table
+            .column(Column::initial(260.0).at_least(100.0).clip(true))
+            .column(Column::initial(220.0).at_least(100.0).clip(true))
+            .column(Column::initial(80.0).at_least(56.0).clip(true))
+            .column(Column::initial(80.0).at_least(56.0).clip(true))
+            .column(Column::initial(50.0).at_least(32.0).clip(true))
+            .column(Column::remainder().at_least(80.0).clip(true))
+            .header(30.0, |mut h| {
+                let heads: Heads = vec![("Station", Some((0, false))), ("System", Some((1, false))), ("Distance", Some((2, false))), ("From star", Some((3, false))), ("Pad", Some((4, true))), ("Economy", Some((5, false)))];
+                headings(&mut h, &heads, &mut sort, TABLE);
+            });
+        let order = sort.order(list, |a, b, c| match c {
+            0 => cmp_text(&a.station.name, &b.station.name),
+            1 => cmp_text(&a.station.system, &b.station.system),
+            2 => a.distance_ly.total_cmp(&b.distance_ly),
+            3 => cmp_opt(a.station.dist_ls, b.station.dist_ls),
+            4 => pad_rank(a.station.max_pad).cmp(&pad_rank(b.station.max_pad)),
+            _ => cmp_text(a.station.economy.as_deref().unwrap_or_default(), b.station.economy.as_deref().unwrap_or_default()),
         });
-    let order = sort.order(list, |a, b, c| match c {
-        0 => cmp_text(&a.station.name, &b.station.name),
-        1 => cmp_text(&a.station.system, &b.station.system),
-        2 => a.distance_ly.total_cmp(&b.distance_ly),
-        3 => cmp_opt(a.station.dist_ls, b.station.dist_ls),
-        4 => pad_rank(a.station.max_pad).cmp(&pad_rank(b.station.max_pad)),
-        _ => cmp_text(a.station.economy.as_deref().unwrap_or_default(), b.station.economy.as_deref().unwrap_or_default()),
-    });
-    table
-        .body(|body| {
-            body.rows(32.0, list.len(), |mut row| {
-                let s = &list[order[row.index()]];
-                row.col(|ui| {
-                    ui.add(egui::Label::new(RichText::new(&s.station.name).color(pal::TEXT)).truncate());
-                });
-                row.col(|ui| {
-                    if ui.link(&s.station.system).on_hover_text("Click to copy").clicked() {
-                        ui.ctx().copy_text(s.station.system.clone());
-                    }
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(format!("{:.1} ly", s.distance_ly)).color(pal::DIM));
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(s.station.dist_ls.map(|d| format!("{d:.0} ls")).unwrap_or_default()).color(pal::DIM));
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(s.station.max_pad.map(String::from).unwrap_or_else(|| "?".into())).color(pal::DIM));
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(s.station.economy.clone().unwrap_or_default()).color(pal::DIM));
+        table
+            .body(|body| {
+                body.rows(32.0, list.len(), |mut row| {
+                    let s = &list[order[row.index()]];
+                    row.col(|ui| {
+                        ui.add(egui::Label::new(RichText::new(&s.station.name).color(pal::TEXT)).truncate());
+                    });
+                    row.col(|ui| {
+                        if ui.link(&s.station.system).on_hover_text("Click to copy").clicked() {
+                            ui.ctx().copy_text(s.station.system.clone());
+                        }
+                    });
+                    row.col(|ui| {
+                        ui.label(RichText::new(format!("{:.1} ly", s.distance_ly)).color(pal::DIM));
+                    });
+                    row.col(|ui| {
+                        ui.label(RichText::new(s.station.dist_ls.map(|d| format!("{d:.0} ls")).unwrap_or_default()).color(pal::DIM));
+                    });
+                    row.col(|ui| {
+                        ui.label(RichText::new(s.station.max_pad.map(String::from).unwrap_or_else(|| "?".into())).color(pal::DIM));
+                    });
+                    row.col(|ui| {
+                        ui.label(RichText::new(s.station.economy.clone().unwrap_or_default()).color(pal::DIM));
+                    });
                 });
             });
-        });
     });
 }
 
@@ -4267,77 +4267,77 @@ fn sell_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Op
         const TABLE: &str = "sell-stops";
         let mut sort = TableSort::load(ui, TABLE);
         crate::widgets::table(ui, TABLE, |table| {
-        let table = table
-            .vscroll(false)
-            .column(Column::initial(250.0).at_least(100.0).clip(true))
-            .column(crate::widgets::flex_column(160.0))
-            .column(Column::initial(70.0).at_least(50.0).clip(true))
-            .column(Column::initial(110.0).at_least(60.0).clip(true))
-            .column(Column::initial(120.0).at_least(70.0).clip(true))
-            .column(Column::initial(60.0).at_least(40.0).clip(true))
-            .header(30.0, |mut h| {
-                let heads: Heads = vec![("Station", Some((0, false))), ("System", Some((1, false))), ("Distance", Some((2, false))), ("Pays", Some((3, true))), ("Buys", Some((4, true))), ("Age", Some((5, false)))];
-                headings(&mut h, &heads, &mut sort, TABLE);
+            let table = table
+                .vscroll(false)
+                .column(Column::initial(250.0).at_least(100.0).clip(true))
+                .column(crate::widgets::flex_column(160.0))
+                .column(Column::initial(70.0).at_least(50.0).clip(true))
+                .column(Column::initial(110.0).at_least(60.0).clip(true))
+                .column(Column::initial(120.0).at_least(70.0).clip(true))
+                .column(Column::initial(60.0).at_least(40.0).clip(true))
+                .header(30.0, |mut h| {
+                    let heads: Heads = vec![("Station", Some((0, false))), ("System", Some((1, false))), ("Distance", Some((2, false))), ("Pays", Some((3, true))), ("Buys", Some((4, true))), ("Age", Some((5, false)))];
+                    headings(&mut h, &heads, &mut sort, TABLE);
+                });
+            // "Buys": how many tonnes of the hold it takes. "Age": newest first.
+            let tonnes = |s: &finder::SellStop| s.lines.iter().map(|l| l.1).sum::<i64>();
+            let order = sort.order(&plan.stops, |a, b, c| match c {
+                0 => cmp_text(&a.hit.station, &b.hit.station),
+                1 => cmp_text(&a.hit.system, &b.hit.system),
+                2 => cmp_opt(a.hit.distance_ly, b.hit.distance_ly),
+                3 => a.total.cmp(&b.total),
+                4 => tonnes(a).cmp(&tonnes(b)),
+                _ => b.hit.updated_unix.cmp(&a.hit.updated_unix),
             });
-        // "Buys": how many tonnes of the hold it takes. "Age": newest first.
-        let tonnes = |s: &finder::SellStop| s.lines.iter().map(|l| l.1).sum::<i64>();
-        let order = sort.order(&plan.stops, |a, b, c| match c {
-            0 => cmp_text(&a.hit.station, &b.hit.station),
-            1 => cmp_text(&a.hit.system, &b.hit.system),
-            2 => cmp_opt(a.hit.distance_ly, b.hit.distance_ly),
-            3 => a.total.cmp(&b.total),
-            4 => tonnes(a).cmp(&tonnes(b)),
-            _ => b.hit.updated_unix.cmp(&a.hit.updated_unix),
-        });
-        table
-            .body(|body| {
-                body.rows(32.0, plan.stops.len(), |mut row| {
-                    let s = &plan.stops[order[row.index()]];
-                    let h = &s.hit;
-                    row.col(|ui| {
-                        ui.horizontal(|ui| {
-                            if h.is_carrier {
-                                ui.label(RichText::new(icon::ANCHOR).color(pal::CYAN)).on_hover_text("Fleet carrier");
-                            } else if h.is_planetary {
-                                ui.label(RichText::new(icon::PLANET).color(pal::DIM)).on_hover_text("Planetary");
+            table
+                .body(|body| {
+                    body.rows(32.0, plan.stops.len(), |mut row| {
+                        let s = &plan.stops[order[row.index()]];
+                        let h = &s.hit;
+                        row.col(|ui| {
+                            ui.horizontal(|ui| {
+                                if h.is_carrier {
+                                    ui.label(RichText::new(icon::ANCHOR).color(pal::CYAN)).on_hover_text("Fleet carrier");
+                                } else if h.is_planetary {
+                                    ui.label(RichText::new(icon::PLANET).color(pal::DIM)).on_hover_text("Planetary");
+                                }
+                                let tip = "Click for the station's whole market";
+                                let clicked = if h.is_carrier {
+                                    named_with_access(ui, RichText::new(&h.station).color(pal::TEXT), h.carrier_access.as_deref(), |ui, text| nav_label(ui, text, tip))
+                                } else {
+                                    nav_label(ui, RichText::new(&h.station).color(pal::TEXT), tip)
+                                };
+                                if clicked {
+                                    nav = Some(Nav::Station(h.market_id));
+                                }
+                            });
+                        });
+                        // The system with the station's distance from the arrival star, as the other lists show it.
+                        row.col(|ui| {
+                            if ui.link(&h.system).on_hover_text("Click to copy").clicked() {
+                                ui.ctx().copy_text(h.system.clone());
                             }
-                            let tip = "Click for the station's whole market";
-                            let clicked = if h.is_carrier {
-                                named_with_access(ui, RichText::new(&h.station).color(pal::TEXT), h.carrier_access.as_deref(), |ui, text| nav_label(ui, text, tip))
-                            } else {
-                                nav_label(ui, RichText::new(&h.station).color(pal::TEXT), tip)
-                            };
-                            if clicked {
-                                nav = Some(Nav::Station(h.market_id));
+                            if let Some(ls) = h.dist_ls {
+                                ui.label(RichText::new(format!("{ls:.0} ls")).small().color(pal::DIM));
                             }
                         });
-                    });
-                    // The system with the station's distance from the arrival star, as the other lists show it.
-                    row.col(|ui| {
-                        if ui.link(&h.system).on_hover_text("Click to copy").clicked() {
-                            ui.ctx().copy_text(h.system.clone());
-                        }
-                        if let Some(ls) = h.dist_ls {
-                            ui.label(RichText::new(format!("{ls:.0} ls")).small().color(pal::DIM));
-                        }
-                    });
-                    row.col(|ui| {
-                        ui.label(RichText::new(h.distance_ly.map(|d| format!("{d:.1} ly")).unwrap_or_default()).color(pal::DIM));
-                    });
-                    row.col(|ui| {
-                        ui.label(RichText::new(short_credits(s.total)).font(display(14.0)).color(pal::GOLD));
-                    });
-                    row.col(|ui| {
-                        let took: i64 = s.lines.iter().map(|l| l.1).sum();
-                        let detail = s.lines.iter().map(|(n, t, p)| format!("{n}: {t} t × {} Cr", nexus_data::names::group_digits(*p))).collect::<Vec<_>>().join("\n");
-                        ui.label(RichText::new(format!("{}/{} items · {} t", s.lines.len(), plan.per_item.len(), took)).color(pal::DIM)).on_hover_text(detail);
-                    });
-                    row.col(|ui| {
-                        let (t, c) = age(h.updated_unix);
-                        ui.label(RichText::new(t).color(c));
+                        row.col(|ui| {
+                            ui.label(RichText::new(h.distance_ly.map(|d| format!("{d:.1} ly")).unwrap_or_default()).color(pal::DIM));
+                        });
+                        row.col(|ui| {
+                            ui.label(RichText::new(short_credits(s.total)).font(display(14.0)).color(pal::GOLD));
+                        });
+                        row.col(|ui| {
+                            let took: i64 = s.lines.iter().map(|l| l.1).sum();
+                            let detail = s.lines.iter().map(|(n, t, p)| format!("{n}: {t} t × {} Cr", nexus_data::names::group_digits(*p))).collect::<Vec<_>>().join("\n");
+                            ui.label(RichText::new(format!("{}/{} items · {} t", s.lines.len(), plan.per_item.len(), took)).color(pal::DIM)).on_hover_text(detail);
+                        });
+                        row.col(|ui| {
+                            let (t, c) = age(h.updated_unix);
+                            ui.label(RichText::new(t).color(c));
+                        });
                     });
                 });
-            });
         });
     });
     ui.add_space(8.0);
