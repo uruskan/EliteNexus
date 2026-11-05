@@ -201,6 +201,10 @@ release time that section becomes the new version and the release workflow publi
 - **Fleet: a ship's name and its buttons no longer overlap.** In a narrow window the Loadout card ran a long ship
   name under its Where to buy, Copy JSON, EDSY and Coriolis buttons. Where the two don't fit side by side, the
   buttons now sit under the name.
+- **Fleet: engineering badges use the game's names.** A blueprint showed as the journal writes it, "G5 FSD Long
+  Range" or "G5 Power Distributor High Frequency", where the game, the Engineering page and Ask say "G5 Increased FSD
+  Range" and "G5 Charge Enhanced". An experimental effect the journal gives only as a code (special_fsd_heavy) now
+  shows its name too (Mass Manager), on the Fleet page and in Ask.
 - **Missions and Statistics say why a wingmate's shared mission isn't counted** (GitHub issue #4). Your own missions,
   wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
   game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The

@@ -26,20 +26,13 @@ fn text(s: &str) -> Option<&str> {
     Some(s.trim()).filter(|s| !s.is_empty())
 }
 
-/// A blueprint by name ("Increased FSD Range"), not by the journal's symbol (`FSD_LongRange`), as the Engineering page
-/// names it.
-fn blueprint_name(item: &str, symbol: &str) -> String {
-    match nexus_data::engineering::blueprint_for(item, symbol) {
-        Some(b) => b.name.clone(),
-        None => nexus_data::names::split_camel(&symbol.replace('_', " ")),
-    }
-}
-
 fn engineered(m: &ShipModule) -> Option<Value> {
     let e = m.engineering.as_ref()?;
+    // A blueprint by name ("Increased FSD Range"), not by the journal's symbol (`FSD_LongRange`), as the Engineering
+    // and Fleet pages name it.
     let mut v = json!({
         "slot": slot_display(&m.slot), "module": display_name(&m.item),
-        "blueprint": blueprint_name(&m.item, &e.blueprint), "grade": e.level, "quality_pct": pct(e.quality),
+        "blueprint": nexus_data::engineering::blueprint_name(&m.item, &e.blueprint), "grade": e.level, "quality_pct": pct(e.quality),
         "engineer": e.engineer, "experimental": e.experimental,
     });
     strip_nulls(&mut v);

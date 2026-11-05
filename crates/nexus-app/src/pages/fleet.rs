@@ -382,7 +382,8 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) -> bool {
     let slots: Vec<String> = modules.iter().map(|m| nexus_data::outfitting::slot_display(&m.slot)).collect();
     let names: Vec<String> = modules.iter().map(|m| nexus_data::outfitting::display_name(&m.item)).collect();
     let values: Vec<String> = modules.iter().map(|m| m.value.map(short_credits).unwrap_or_default()).collect();
-    let blueprints: Vec<Option<String>> = modules.iter().map(|m| m.engineering.as_ref().map(|e| format!("G{} {}", e.level, nexus_data::names::split_camel(&e.blueprint.replace('_', " "))))).collect();
+    // The game's names for blueprints ("G5 Increased FSD Range", not `FSD_LongRange`), as the Engineering page has them.
+    let blueprints: Vec<Option<String>> = modules.iter().map(|m| m.engineering.as_ref().map(|e| format!("G{} {}", e.level, nexus_data::engineering::blueprint_name(&m.item, &e.blueprint)))).collect();
     let font = egui::TextStyle::Body.resolve(ui.style());
     let widest = |texts: &[String]| texts.iter().map(|t| ui.painter().layout_no_wrap(t.clone(), font.clone(), pal::TEXT).size().x + 8.0).fold(0.0, f32::max);
     let gap = ui.spacing().item_spacing.x;

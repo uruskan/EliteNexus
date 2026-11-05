@@ -743,6 +743,16 @@ pub fn blueprint_for(module_symbol_or_type: &str, symbol: &str) -> Option<&'stat
     })
 }
 
+/// A blueprint's name as the game shows it ("Increased FSD Range") for a module's journal `BlueprintName`
+/// (`FSD_LongRange`): the module's own blueprint, else any blueprint of that symbol, else the symbol made readable
+/// (`FSD_SomethingNew` → "FSD Something New", for one this build doesn't know).
+pub fn blueprint_name(module_symbol_or_type: &str, symbol: &str) -> String {
+    match blueprint_for(module_symbol_or_type, symbol).or_else(|| blueprint(symbol)) {
+        Some(b) => b.name.clone(),
+        None => crate::names::split_camel(&symbol.replace('_', " ")),
+    }
+}
+
 fn suffix_of(symbol: &str) -> &str {
     symbol.rsplit('_').next().unwrap_or(symbol)
 }
@@ -954,6 +964,12 @@ mod tests {
             Some("Missile Rack")
         );
         assert!(blueprint("Nonsense_Blueprint").is_none());
+        // Names as the game shows them, for the Fleet page's badges.
+        assert_eq!(blueprint_name("int_hyperdrive_overcharge_size8_class5_overchargebooster_mkii", "FSD_LongRange"), "Increased FSD Range");
+        assert_eq!(blueprint_name("int_powerdistributor_size7_class4", "PowerDistributor_HighFrequency"), "Charge Enhanced");
+        assert_eq!(blueprint_name("hpt_pulselaser_fixed_small", "Weapon_Overcharged"), "Overcharged Weapon");
+        assert_eq!(blueprint_name("int_some_new_module", "Engine_Dirty"), "Dirty Drive Tuning");
+        assert_eq!(blueprint_name("int_engine_size7_class5", "Engine_SomethingNew"), "Engine Something New");
         // Every blueprint's ingredients resolve to known materials.
         for b in blueprints() {
             for g in &b.grades {

@@ -29,11 +29,23 @@ impl Modifier {
 #[derive(Debug, Clone, Default)]
 pub struct ModuleEngineering {
     pub engineer: Option<String>,
+    /// The journal's `BlueprintName` (`FSD_LongRange`); `nexus_data::engineering::blueprint_name` gives its name.
     pub blueprint: String,
     pub level: u32,
     pub quality: f64,
+    /// The experimental effect's name ("Mass Manager"), to show.
     pub experimental: Option<String>,
     pub modifiers: Vec<Modifier>,
+}
+
+/// An experimental effect's name: the journal's own (in the game's language), else the name for its symbol
+/// (`special_fsd_heavy`), else the symbol itself.
+fn experimental_name(e: &ev::ModuleEngineering) -> Option<String> {
+    let text = |s: &Option<String>| s.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    text(&e.experimental_effect_localised).or_else(|| {
+        let symbol = text(&e.experimental_effect)?;
+        Some(nexus_data::engineering::experimental(&symbol).map_or(symbol, |x| x.name.clone()))
+    })
 }
 
 #[derive(Debug, Clone, Default)]
@@ -239,7 +251,7 @@ impl Fleet {
                     blueprint: e.blueprint_name.clone(),
                     level: e.level,
                     quality: e.quality,
-                    experimental: e.experimental_effect_localised.clone().or_else(|| e.experimental_effect.clone()),
+                    experimental: experimental_name(e),
                     modifiers: e
                         .modifiers
                         .iter()
@@ -417,5 +429,23 @@ impl Fleet {
 
     pub fn total_value(&self) -> i64 {
         self.ships.values().map(Ship::total_value).sum()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn experimental_effects_by_name() {
+        let eng = |json: &str| serde_json::from_str::<ev::ModuleEngineering>(json).expect("engineering");
+        let localised = eng(r#"{ "BlueprintName":"FSD_LongRange", "Level":5, "ExperimentalEffect":"special_fsd_heavy", "ExperimentalEffect_Localised":"Mass Manager" }"#);
+        assert_eq!(experimental_name(&localised).as_deref(), Some("Mass Manager"));
+        // Without the journal's own name, the symbol's: never `special_fsd_heavy` on a badge.
+        let symbol_only = eng(r#"{ "BlueprintName":"FSD_LongRange", "Level":5, "ExperimentalEffect":"special_fsd_heavy" }"#);
+        assert_eq!(experimental_name(&symbol_only).as_deref(), Some("Mass Manager"));
+        let unknown = eng(r#"{ "BlueprintName":"FSD_LongRange", "Level":5, "ExperimentalEffect":"special_fsd_new", "ExperimentalEffect_Localised":"" }"#);
+        assert_eq!(experimental_name(&unknown).as_deref(), Some("special_fsd_new"));
+        assert_eq!(experimental_name(&eng(r#"{ "BlueprintName":"FSD_LongRange", "Level":5 }"#)), None);
     }
 }
