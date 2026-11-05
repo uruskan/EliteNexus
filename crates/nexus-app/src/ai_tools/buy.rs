@@ -3,10 +3,8 @@
 //! outfitting search (`crate::shopping`).
 
 use super::{NexusTools, arg_bool, arg_f64, arg_str, fit, r1, strip_nulls};
-use crate::shopping::{self, Group, Need, Offer, Outcome, Search};
-use nexus_data::commodities::name_key;
-use nexus_data::outfitting::{self, Module, ModuleCategory};
-use nexus_data::{ships, sku};
+use crate::shopping::{self, Item, Need, Offer, Outcome, Search, find_item};
+use nexus_data::ships;
 use nexus_journal::Timestamp;
 use nexus_spansh::{Coords, Reference};
 use serde_json::{Value, json};
@@ -17,89 +15,6 @@ use std::time::Duration;
 const BUY_TIMEOUT: Duration = Duration::from_secs(90);
 
 const SOURCE: &str = "Stations, prices and data dates come from Spansh, which players' tools keep up to date through EDDN: a station's list is only as new as the last visit by someone who shares data. Fleet carriers move, and their owners change what they stock. Each station was checked for the exact module, a weapon's mount and a hull's own bulkheads included.";
-
-/// One thing asked for by name.
-#[derive(Debug, Clone, Copy)]
-enum Item {
-    Module(&'static Module),
-    Hull(&'static ships::Ship),
-}
-
-/// "fsd" is how commanders write a frame shift drive.
-fn spelled_out(asked: &str) -> String {
-    asked.split_whitespace().map(|w| if w.eq_ignore_ascii_case("fsd") { "Frame Shift Drive" } else { w }).collect::<Vec<_>>().join(" ")
-}
-
-/// A module or hull asked for: its name as the game shows it ("6A Frame Shift Drive", "2A Gimballed Multi-cannon",
-/// "Mandalay"), its journal symbol, or words only one module's name has.
-fn find_item(asked: &str) -> Result<Item, String> {
-    let asked = spelled_out(asked);
-    let k = name_key(&asked);
-    if let Some(s) = ships::all().iter().find(|s| name_key(&s.name) == k || name_key(&s.fdev_name) == k || s.symbol.eq_ignore_ascii_case(asked.trim())) {
-        return Ok(Item::Hull(s));
-    }
-    if let Some(m) = outfitting::module(&asked) {
-        return Ok(Item::Module(m));
-    }
-    let named = |exact: bool| {
-        let words: Vec<String> = asked.split_whitespace().map(name_key).filter(|w| !w.is_empty()).collect();
-        let mut hits: Vec<&'static Module> = Vec::new();
-        for m in outfitting::all() {
-            let name = name_key(&m.display_name());
-            let hit = if exact { name == k } else { !words.is_empty() && words.iter().all(|w| name.contains(w.as_str())) };
-            // MercGear rows share their module's symbol: the module is what's sold.
-            if hit && !hits.iter().any(|h| h.symbol == m.symbol) {
-                hits.push(outfitting::module(&m.symbol).unwrap_or(m));
-            }
-        }
-        hits
-    };
-    let exact = named(true);
-    let hits = if exact.is_empty() { named(false) } else { exact };
-    match hits.as_slice() {
-        [m] => Ok(Item::Module(m)),
-        [] => Err(format!("No module or ship is called \"{asked}\": name it as the game's outfitting shows it, e.g. 6A Frame Shift Drive, 2A Gimballed Multi-cannon, Mandalay.")),
-        many => {
-            let names: Vec<String> = many.iter().take(12).map(|m| m.display_name()).collect();
-            let more = if many.len() > 12 { format!(" and {} more", many.len() - 12) } else { String::new() };
-            Err(format!("\"{asked}\" could be {}{more}: say which.", names.join(", ")))
-        }
-    }
-}
-
-/// An unlock a module or hull needs first: tech brokers and Powerplay. (ARX early access is read from Spansh's prices.)
-fn unlock(sku: Option<&str>) -> Option<sku::Unlock> {
-    sku.and_then(sku::unlock).filter(|u| *u != sku::Unlock::ArxEarlyAccess)
-}
-
-/// What buying `item` alone needs.
-fn need(item: Item) -> Need {
-    match item {
-        Item::Hull(s) => Need { group: Group::Hull, symbol: s.symbol.clone(), name: s.name.clone(), count: 1, engineering: Vec::new(), buy: true, note: None, unlock: unlock(s.entitlement.as_deref()) },
-        Item::Module(m) => Need {
-            group: match m.category {
-                ModuleCategory::Standard => Group::Core,
-                ModuleCategory::Hardpoint => Group::Hardpoints,
-                ModuleCategory::Utility => Group::Utility,
-                _ => Group::Optional,
-            },
-            symbol: m.symbol.clone(),
-            name: m.display_name(),
-            count: 1,
-            engineering: Vec::new(),
-            buy: true,
-            note: None,
-            unlock: unlock(m.entitlement.as_deref()),
-        },
-    }
-}
-
-fn symbol(item: Item) -> &'static str {
-    match item {
-        Item::Hull(s) => &s.symbol,
-        Item::Module(m) => &m.symbol,
-    }
-}
 
 fn days_ago(unix: i64) -> i64 {
     ((Timestamp::now().0 - unix).max(0) as f64 / 86_400.0).floor() as i64
@@ -232,7 +147,7 @@ fn shape_buy(what: &str, from: &str, needs: &[Need], q: &Search, out: &Outcome, 
             notes.push(format!("Spansh knows no station near {from} that sells {}{}. Try without the data-age limit, with fleet carriers, or from another system.", if n == 1 { q.wanted[0].name.clone() } else { "any of these".into() }, match q.pad { 'L' => " with a large pad", 'M' => " with a medium or large pad", _ => "" }));
         }
         if level > 0 && !skipped.is_empty() {
-            notes.push("What isn't searched for (in storage, or come with the hull) left out to fit.".into());
+            notes.push("What isn't searched for (fitted on their ship, in storage, come with the hull, or not asked for) left out to fit.".into());
         }
         v["notes"] = json!(notes);
         v
@@ -275,8 +190,8 @@ impl NexusTools {
                 (None, None) if !items.is_empty() => {
                     let hull = items.iter().find_map(|i| if let Item::Hull(s) = i { Some(s.symbol.clone()) } else { None });
                     let flying = gs.fleet.current().map(|s| s.ship_type.to_ascii_lowercase()).unwrap_or_default();
-                    let names: Vec<String> = items.iter().map(|i| need(*i).name).collect();
-                    (names.join(", "), hull.unwrap_or(flying), items.iter().map(|i| need(*i)).collect())
+                    let names: Vec<String> = items.iter().map(|i| i.name()).collect();
+                    (names.join(", "), hull.unwrap_or(flying), items.iter().map(|i| i.need()).collect())
                 }
                 (None, None) => {
                     let s = gs.fleet.current().ok_or("No ship is known yet: give ship, build or items.")?;
@@ -286,12 +201,12 @@ impl NexusTools {
             };
             // Items named with a ship or build: only those of it.
             if !items.is_empty() && (a.get("build").is_some() || a.get("ship").is_some()) {
-                let missing: Vec<String> = items.iter().filter(|i| !needs.iter().any(|n| n.symbol == symbol(**i))).map(|i| need(*i).name).collect();
+                let missing: Vec<String> = items.iter().filter(|i| !needs.iter().any(|n| n.symbol == i.symbol())).map(|i| i.name()).collect();
                 if !missing.is_empty() {
                     return Err(format!("Not in that build: {}.", missing.join(", ")));
                 }
                 for n in &mut needs {
-                    if !items.iter().any(|i| symbol(*i) == n.symbol) {
+                    if !items.iter().any(|i| i.symbol() == n.symbol) {
                         n.buy = false;
                         n.note.get_or_insert_with(|| "Not asked for".into());
                     }
@@ -311,7 +226,7 @@ impl NexusTools {
             let mut v = json!({
                 "searched_for": what, "to_buy": [],
                 "not_searched": needs.iter().map(|x| json!({ "item": x.name, "why": x.note })).collect::<Vec<_>>(),
-                "notes": ["Nothing to buy: the commander has all of it (in storage or as their own ship), or it comes with the hull."],
+                "notes": ["Nothing to buy: the commander has all of it (fitted on their own ship of that type, in storage, or the hull itself), or it comes with the hull. To buy modules again (for a second ship like it), name them in items, without ship or build."],
             });
             strip_nulls(&mut v);
             return Ok(v);
@@ -358,7 +273,7 @@ mod tests {
     }
 
     fn two_items() -> (Vec<Need>, Search) {
-        let needs = vec![need(find_item("6A Frame Shift Drive").unwrap()), need(find_item("5A Thrusters").unwrap())];
+        let needs = vec![find_item("6A Frame Shift Drive").unwrap().need(), find_item("5A Thrusters").unwrap().need()];
         let q = Search::new(&needs, "anaconda", Reference::System("Alpha".into()), true, None);
         (needs, q)
     }
