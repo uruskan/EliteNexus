@@ -94,6 +94,9 @@ pub struct MarketPrefs {
     pub hop: f64,
     /// Trade routes, while docked: only the routes that start at that station.
     pub routes_here: bool,
+    /// Trade routes: the cargo space each route fills, set by the commander (a trade ship they're not flying);
+    /// `None` follows the hold of the ship they fly.
+    pub route_cargo: Option<i64>,
     /// Sell my cargo: buyers within.
     pub sell_radius: f64,
     pub hotspot_signal: String,
@@ -150,6 +153,7 @@ impl Default for MarketPrefs {
             radius: 40.0,
             hop: 25.0,
             routes_here: false,
+            route_cargo: None,
             sell_radius: 60.0,
             hotspot_signal: "Low Temperature Diamonds".into(),
             hotspot_min: 2,
@@ -185,6 +189,7 @@ impl MarketPrefs {
         self.min_qty = self.min_qty.clamp(1, 100_000);
         self.radius = clamp(self.radius, 5.0, 1000.0, 40.0);
         self.hop = clamp(self.hop, 1.0, 500.0, 25.0);
+        self.route_cargo = self.route_cargo.map(|t| t.clamp(1, MAX_CARGO));
         self.sell_radius = clamp(self.sell_radius, 5.0, MAX_SEARCH_LY, 60.0);
         self.hotspot_min = self.hotspot_min.clamp(1, 6);
         self.abn_ratio = clamp(self.abn_ratio, 1.5, 10.0, 2.0);
@@ -316,11 +321,13 @@ impl MarketPrefs {
 
 /// The pin toggle at the start of a row.
 fn pin_button(ui: &mut Ui, pinned: bool) -> bool {
-    let (col, tip) = if pinned {
-        (pal::ACCENT, "Pinned: click to unpin")
-    } else {
-        (pal::FAINT, "Pin it: it stays on top of the Market page with its latest price, and the run planner fills it")
-    };
+    let tip = if pinned { "Pinned: click to unpin" } else { "Pin it: it stays on top of the Market page with its latest price, and the run planner fills it" };
+    pin_toggle(ui, pinned, tip)
+}
+
+/// A pin toggle with a tooltip of its own.
+fn pin_toggle(ui: &mut Ui, pinned: bool, tip: &str) -> bool {
+    let col = if pinned { pal::ACCENT } else { pal::FAINT };
     ui.add(egui::Button::new(RichText::new(icon::PUSH_PIN).size(15.0).color(col)).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
 }
 
@@ -834,6 +841,10 @@ const LY: &[f64] = &[
 const HOURS: &[f64] = &[1.0, 2.0, 3.0, 6.0, 12.0, 24.0, 48.0, 72.0, 96.0, 120.0, 168.0, 240.0, 336.0, 504.0, 720.0];
 /// Least stock or demand, tonnes.
 const TONNES: &[f64] = &[1.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0, 25_000.0, 50_000.0, 100_000.0];
+/// Cargo space Trade routes fills, at most, tonnes: more than any ship holds.
+const MAX_CARGO: i64 = 5_000;
+/// Holds the − and + of the cargo space step through, tonnes.
+const HOLDS: &[f64] = &[8.0, 16.0, 32.0, 64.0, 100.0, 128.0, 192.0, 256.0, 320.0, 400.0, 500.0, 600.0, 700.0, 800.0, 1_000.0, 1_500.0, 2_000.0, 5_000.0];
 
 /// What the landing-pad choice means, for its tooltip.
 const PAD_TIP: &str = "The landing pad your ship needs. S fits every station, as Any does; M lists stations with medium or large pads, \
@@ -1067,7 +1078,11 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
         Tab::Commodity => nav = commodity_tab(ui, gs, &db, st).or(nav),
         Tab::Plan => nav = plan_tab(ui, gs, &db, st).or(nav),
         Tab::Routes => {
-            let cargo = gs.fleet.current().map(|s| s.cargo_capacity as i64).unwrap_or(100);
+            // The hold of the ship you fly, unless you set another (a trade ship you're not in).
+            let flown = gs.fleet.current();
+            let ship_cargo = flown.filter(|s| s.cargo_capacity > 0).map(|s| s.cargo_capacity as i64);
+            let ship_type = flown.map(|s| s.type_name.as_str()).filter(|n| !n.is_empty());
+            let ship_name = ship_type.map_or_else(|| "your ship".to_string(), |n| format!("your {n}"));
             // Docked, routes can start at this station: buy here, sell elsewhere.
             let docked = gs.location.station.as_ref().filter(|s| gs.location.docked && s.market_id != 0);
             if docked.is_some() {
@@ -1104,12 +1119,37 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
                 bar.field("Include", "Fleet carriers' markets: their owners set the prices and who may dock, and they move.", |ui| {
                     crate::widgets::chip_toggle(ui, &mut p.carriers, "Fleet carriers");
                 });
-                bar.field("For your ship", "Each route fills this hold, with what these credits buy.", |ui| {
-                    ui.label(RichText::new(format!("{cargo} t · {}", short_credits(gs.cmdr.credits))).font(display(size::CALLOUT)).color(pal::TEXT));
+                let cargo_tip = match (ship_cargo, flown) {
+                    (Some(c), _) => format!(
+                        "The cargo space each route fills. It follows the hold of {ship_name} ({c} t) until you set another: a trade ship you're not flying (set its landing pad too). Up to 5,000 t, more than any ship holds."
+                    ),
+                    (None, Some(_)) => format!(
+                        "The cargo space each route fills. {} has no cargo racks, so the routes fill 100 t until you set your trade ship's (and its landing pad). Up to 5,000 t, more than any ship holds.",
+                        ship_type.map_or_else(|| "Your ship".to_string(), |n| format!("Your {n}"))
+                    ),
+                    (None, None) => "The cargo space each route fills. Elite Nexus doesn't know your ship yet, so the routes fill 100 t until you set your trade ship's (and its landing pad). Up to 5,000 t, more than any ship holds.".to_string(),
+                };
+                bar.field("Cargo space", &cargo_tip, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let mut t = p.route_cargo.or(ship_cargo).unwrap_or(100).clamp(1, MAX_CARGO) as u32;
+                        if crate::widgets::whole(ui, &mut t, 1..=MAX_CARGO as u32, Steps::Through(HOLDS), " t").changed() {
+                            p.route_cargo = Some(i64::from(t));
+                        }
+                        if let (Some(_), Some(c)) = (p.route_cargo, ship_cargo)
+                            && crate::widgets::icon_button(ui, icon::ARROW_COUNTER_CLOCKWISE, &format!("Back to the hold of {ship_name} ({c} t)")).clicked()
+                        {
+                            p.route_cargo = None;
+                        }
+                    });
+                });
+                bar.field("Credits", "Each route buys what these credits pay for, up to the cargo space.", |ui| {
+                    ui.label(RichText::new(short_credits(gs.cmdr.credits)).font(display(size::CALLOUT)).color(pal::TEXT));
                 });
                 bar.field("", "", |ui| find |= crate::widgets::primary_button(ui, "Find routes").clicked());
             });
             ui.add_space(6.0);
+            let cargo = st.prefs.route_cargo.or(ship_cargo).unwrap_or(100);
             if find && let Some(o) = origin {
                 let p = &st.prefs;
                 let q = TradeQuery {
@@ -1138,7 +1178,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
                 let what = if from.is_some() { "how far to sell" } else { "the area" };
                 crate::widgets::footnote(ui, &format!("Set {what} and press Find routes. Every market in the area is loaded, so wide areas take a few seconds: this search waits for you."));
             }
-            nav = results_routes(ui, &st.routes, st.routes_from.as_deref()).or(nav);
+            nav = results_routes(ui, &st.routes, st.routes_from.as_deref(), &mut st.prefs).or(nav);
         }
         Tab::Services => {
             ui.horizontal_wrapped(|ui| {
@@ -2874,8 +2914,46 @@ fn status<T>(ui: &mut Ui, slot: &Slot<Res<T>>) -> bool {
     }
 }
 
+/// How many ends of a route aren't pinned yet (0 to 2): buying at its start, selling at its end.
+fn route_unpinned(prefs: &MarketPrefs, r: &TradeRoute) -> usize {
+    usize::from(!prefs.is_pinned(r.from.market_id, &r.commodity, false)) + usize::from(!prefs.is_pinned(r.to.market_id, &r.commodity, true))
+}
+
+/// No room to pin a route: its unpinned ends would take the pins past [`MAX_PINS`].
+fn route_pins_full(prefs: &MarketPrefs, r: &TradeRoute) -> bool {
+    let missing = route_unpinned(prefs, r);
+    missing > 0 && prefs.pins.len() + missing > MAX_PINS
+}
+
+/// Pins a route for the run planner, as two pinned entries: where to buy (its start, with the stock there) and where to
+/// sell (its end, with the demand). A route pinned already is unpinned; one end pinned on its own gets the other. Both
+/// ends or neither: with no room for them under [`MAX_PINS`], nothing changes.
+fn pin_route(prefs: &mut MarketPrefs, r: &TradeRoute) {
+    if route_pins_full(prefs, r) {
+        return;
+    }
+    let end = |s: &nexus_galaxy::TradeStation, sell_here: bool, price: i64, qty: i64| Pin {
+        market_id: s.market_id,
+        station: s.station.clone(),
+        system: s.system.clone(),
+        carrier: s.is_carrier,
+        symbol: r.commodity.clone(),
+        name: r.commodity_name.clone(),
+        sell_here,
+        price,
+        qty,
+        ..Default::default()
+    };
+    let both = route_unpinned(prefs, r) == 0;
+    for pin in [end(&r.from, false, r.buy_price, r.supply), end(&r.to, true, r.sell_price, r.demand)] {
+        if prefs.is_pinned(pin.market_id, &pin.symbol, pin.sell_here) == both {
+            prefs.toggle_pin(pin);
+        }
+    }
+}
+
 /// `from`: the station the routes start at, when they were searched from one.
-fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>) -> Option<Nav> {
+fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>, prefs: &mut MarketPrefs) -> Option<Nav> {
     if !status(ui, slot) {
         return None;
     }
@@ -2893,20 +2971,34 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>)
     let here = from.is_some();
     const TABLE: &str = "trade-routes";
     let mut sort = TableSort::load(ui, TABLE);
+    let mut pin = None;
     crate::widgets::table(ui, if here { "trade-routes/here" } else { "trade-routes/around" }, |table| {
         // The two stations share what the numbers leave, so the table fits a 1,000-pixel window; from one station,
-        // Buy here is only a price and keeps a narrow column.
+        // Buy here is only a price and keeps a narrow column. Each station's stock or demand sits beside it.
         let table = table
-            .column(Column::initial(160.0).at_least(90.0).clip(true))
-            .column(Column::initial(84.0).at_least(60.0).clip(true))
-            .column(Column::initial(90.0).at_least(60.0).clip(true))
-            .column(if here { Column::initial(110.0).at_least(90.0).clip(true) } else { crate::widgets::flex_column(170.0) })
-            .column(crate::widgets::flex_column(170.0))
-            .column(Column::initial(64.0).at_least(50.0).clip(true))
+            .column(Column::exact(24.0))
+            .column(Column::initial(130.0).at_least(90.0).clip(true))
+            .column(Column::initial(76.0).at_least(60.0).clip(true))
+            .column(Column::initial(80.0).at_least(60.0).clip(true))
+            .column(if here { Column::initial(110.0).at_least(90.0).clip(true) } else { crate::widgets::flex_column(130.0) })
+            .column(Column::initial(80.0).at_least(60.0).clip(true))
+            .column(crate::widgets::flex_column(130.0))
+            .column(Column::initial(80.0).at_least(60.0).clip(true))
+            .column(Column::initial(56.0).at_least(44.0).clip(true))
             .header(30.0, |mut h| {
                 // Buy at / Sell at sort by how far from you the station is (Buy here by price).
                 let buy = if here { "Buy here" } else { "Buy at" };
-                let heads: Heads = vec![("Commodity", Some((0, false))), ("Profit/t", Some((1, true))), ("Trip profit", Some((2, true))), (buy, Some((3, false))), ("Sell at", Some((4, false))), ("Hop", Some((5, false)))];
+                let heads: Heads = vec![
+                    ("", None),
+                    ("Commodity", Some((0, false))),
+                    ("Profit/t", Some((1, true))),
+                    ("Trip profit", Some((2, true))),
+                    (buy, Some((3, false))),
+                    ("Stock", Some((6, true))),
+                    ("Sell at", Some((4, false))),
+                    ("Demand", Some((7, true))),
+                    ("Hop", Some((5, false))),
+                ];
                 headings(&mut h, &heads, &mut sort, TABLE);
             });
         let order = sort.order(routes, |a, b, c| match c {
@@ -2916,12 +3008,30 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>)
             3 if here => a.buy_price.cmp(&b.buy_price),
             3 => a.from.distance_from_origin_ly.total_cmp(&b.from.distance_from_origin_ly),
             4 => a.to.distance_from_origin_ly.total_cmp(&b.to.distance_from_origin_ly),
+            6 => a.supply.cmp(&b.supply),
+            7 => a.demand.cmp(&b.demand),
             _ => a.hop_ly.total_cmp(&b.hop_ly),
         });
         table
             .body(|body| {
                 body.rows(44.0, routes.len(), |mut row| {
                     let r = &routes[order[row.index()]];
+                    row.col(|ui| {
+                        let pinned = route_unpinned(prefs, r) == 0;
+                        let full = route_pins_full(prefs, r);
+                        let full_tip: String;
+                        let tip = if pinned {
+                            "Pinned: buying at its start and selling at its end are in the Run planner. Click to unpin both."
+                        } else if full {
+                            full_tip = format!("No room to pin this route: {MAX_PINS} pins at most, and a route takes one for each end. Unpin some first.");
+                            full_tip.as_str()
+                        } else {
+                            "Pin this route for the Run planner: buying at its start and selling at its end, priced from the latest data"
+                        };
+                        if pin_toggle(ui, pinned, tip) && !full {
+                            pin = Some(r.clone());
+                        }
+                    });
                     row.col(|ui| {
                         if nav_label(ui, RichText::new(&r.commodity_name).color(pal::TEXT), "Where to buy and sell it, latest prices") {
                             nav = Some(Nav::Commodity { name: r.commodity.clone(), side: None });
@@ -2931,9 +3041,10 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>)
                         ui.label(RichText::new(nexus_data::names::group_digits(r.profit_per_ton)).font(display(14.0)).color(pal::GOOD));
                     });
                     row.col(|ui| {
-                        ui.label(RichText::new(short_credits(r.total_profit)).color(pal::GOLD));
+                        // A trip takes what the hold, the credits, the stock and the demand all allow.
+                        ui.label(RichText::new(short_credits(r.total_profit)).color(pal::GOLD)).on_hover_text(format!("{} t a trip", nexus_data::names::group_digits(r.units)));
                     });
-                    for (end, price, buy) in [(&r.from, r.buy_price, true), (&r.to, r.sell_price, false)] {
+                    for (end, price, buy, qty) in [(&r.from, r.buy_price, true, r.supply), (&r.to, r.sell_price, false, r.demand)] {
                         row.col(|ui| {
                             ui.vertical(|ui| {
                                 let (a, c) = age(end.market_updated_unix);
@@ -2942,11 +3053,22 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>)
                                     ui.label(RichText::new(format!("{a} ago")).small().color(c));
                                     return;
                                 }
-                                if nav_label(ui, format!("{} — {} Cr", end.station, nexus_data::names::group_digits(price)), "Click for the station's whole market") {
+                                if nav_label(ui, RichText::new(&end.station).color(pal::TEXT), "Click for the station's whole market") {
                                     nav = Some(Nav::Station(end.market_id));
                                 }
-                                ui.label(RichText::new(format!("{} · {:.1} ly · {}", end.system, end.distance_from_origin_ly, a)).small().color(c));
+                                // The price first, so a narrow column keeps it; then where the station is and how old
+                                // its prices are.
+                                let font = egui::TextStyle::Small.resolve(ui.style());
+                                let format = |color| egui::TextFormat { font_id: font.clone(), color, ..Default::default() };
+                                let mut job = egui::text::LayoutJob::default();
+                                job.append(&format!("{} Cr", nexus_data::names::group_digits(price)), 0.0, format(if buy { pal::CYAN } else { pal::GOOD }));
+                                job.append(&format!("  ·  {} · {:.1} ly · {a}", end.system, end.distance_from_origin_ly), 0.0, format(c));
+                                ui.add(egui::Label::new(job).truncate());
                             });
+                        });
+                        row.col(|ui| {
+                            let what = if buy { "in stock where you buy" } else { "wanted where you sell" };
+                            ui.label(RichText::new(nexus_data::names::group_digits(qty)).color(pal::DIM)).on_hover_text(format!("{} t {what}", nexus_data::names::group_digits(qty)));
                         });
                     }
                     row.col(|ui| {
@@ -2955,6 +3077,9 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>)
                 });
             });
     });
+    if let Some(r) = pin {
+        pin_route(prefs, &r);
+    }
     nav
 }
 
@@ -4798,6 +4923,80 @@ mod tests {
         let p = old.sanitized();
         assert_eq!(p.rare_goods, None);
         assert_eq!(MarketUi::new(p).input, "Gold");
+    }
+
+    /// A route pins as two entries for the run planner: buying at its start (with the stock there) and selling at its
+    /// end (with the demand). Pinned already, both unpin; with one end pinned on its own, the route pins the other. With
+    /// no room for both under the pin limit, neither pins.
+    #[test]
+    fn a_route_pins_both_ends() {
+        let end = |id: u64, name: &str| nexus_galaxy::TradeStation {
+            market_id: id,
+            station: name.into(),
+            system: "Sys".into(),
+            system_id64: None,
+            pos: [0.0; 3],
+            distance_from_origin_ly: 1.0,
+            station_type: None,
+            dist_ls: None,
+            max_pad: Some('L'),
+            is_carrier: false,
+            is_planetary: false,
+            market_updated_unix: 0,
+        };
+        let r = TradeRoute {
+            from: end(1, "Buy Here"),
+            to: end(2, "Sell There"),
+            commodity: "gold".into(),
+            commodity_name: "Gold".into(),
+            buy_price: 9_000,
+            sell_price: 11_000,
+            profit_per_ton: 2_000,
+            supply: 500,
+            demand: 300,
+            units: 300,
+            total_profit: 600_000,
+            hop_ly: 5.0,
+        };
+        let mut p = MarketPrefs::default();
+        pin_route(&mut p, &r);
+        assert_eq!(route_unpinned(&p, &r), 0);
+        let buy = p.pins.iter().find(|x| !x.sell_here).expect("a buy");
+        assert_eq!((buy.market_id, buy.price, buy.qty, buy.symbol.as_str()), (1, 9_000, 500, "gold"), "bought at the start, with its stock");
+        let sell = p.pins.iter().find(|x| x.sell_here).expect("a sale");
+        assert_eq!((sell.market_id, sell.price, sell.qty), (2, 11_000, 300), "sold at the end, with its demand");
+        pin_route(&mut p, &r);
+        assert!(p.pins.is_empty(), "pinned already: both unpin");
+        p.toggle_pin(Pin { market_id: 2, symbol: "gold".into(), name: "Gold".into(), sell_here: true, ..Default::default() });
+        pin_route(&mut p, &r);
+        assert_eq!(route_unpinned(&p, &r), 0, "the other end pinned too");
+        assert_eq!(p.pins.len(), 2);
+
+        // One pin short of the limit: a route needs two, so neither end pins.
+        let mut p = MarketPrefs::default();
+        for id in 0..MAX_PINS as u64 - 1 {
+            p.toggle_pin(Pin { market_id: 100 + id, symbol: "silver".into(), ..Default::default() });
+        }
+        assert!(route_pins_full(&p, &r));
+        pin_route(&mut p, &r);
+        assert_eq!((p.pins.len(), route_unpinned(&p, &r)), (MAX_PINS - 1, 2), "both ends or neither");
+        // With its sale pinned already, the one free pin takes its purchase.
+        p.pins.pop();
+        p.toggle_pin(Pin { market_id: 2, symbol: "gold".into(), sell_here: true, ..Default::default() });
+        assert!(!route_pins_full(&p, &r));
+        pin_route(&mut p, &r);
+        assert_eq!((p.pins.len(), route_unpinned(&p, &r)), (MAX_PINS, 0));
+    }
+
+    /// Trade routes' cargo space follows the ship's hold until the commander sets one; older settings have none.
+    #[test]
+    fn route_cargo_follows_the_ship_until_set() {
+        let old: MarketPrefs = serde_json::from_str(r#"{"radius": 40}"#).unwrap();
+        assert_eq!(old.sanitized().route_cargo, None);
+        let set: MarketPrefs = serde_json::from_str(r#"{"route_cargo": 720}"#).unwrap();
+        assert_eq!(set.sanitized().route_cargo, Some(720));
+        let edited: MarketPrefs = serde_json::from_str(r#"{"route_cargo": 99999}"#).unwrap();
+        assert_eq!(edited.sanitized().route_cargo, Some(MAX_CARGO), "a hand-edited file comes back into range");
     }
 
     #[test]

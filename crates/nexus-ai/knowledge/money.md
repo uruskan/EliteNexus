@@ -13,10 +13,10 @@ There is no single best method; it depends on the ship, the time available and w
 Use the live market database, not guesses:
 1. Price deals: stations paying far above the galactic average for something (or selling far below it) near the commander, ranked by what one hold earns.
 2. Sell my cargo: the best single stop for everything in the hold.
-3. Trade routes: the best buy-here, sell-there pairs within range, sized to the ship's cargo and credits. Docked, Market › Trade routes › From this station lists only the routes that start at that station.
+3. Trade routes: the best buy-here, sell-there pairs within range, sized to the cargo space and credits, with the stock where you buy and the demand where you sell. On the page, Cargo space follows the ship's hold until the commander sets another (a trade ship they're not flying; set its landing pad too), and a route's pin puts both ends in the Run planner. Docked, Market › Trade routes › From this station lists only the routes that start at that station.
 4. Mining hotspots near the commander, with the best nearby sell prices.
 5. Exobiology or Road to Riches routes (Spansh) for exploration income.
-6. Pins and the Run planner (Market): pin the orders worth filling (a carrier buy order, a station paying far above average), and the planner finds where to buy each good, fits the hold and credits, and orders the stops. In the pinned carrier's system, the pin says whether the game has listed that carrier there since arrival (carriers move).
+6. Pins and the Run planner (Market): pin the orders worth filling (a carrier buy order, a station paying far above average, a whole trade route), and the planner finds where to buy each good, fits the hold and credits, and orders the stops. In the pinned carrier's system, the pin says whether the game has listed that carrier there since arrival (carriers move).
 Data comes from EDDN in real time; Market > Database & feed in Elite Nexus offers a one-click import of every station from Spansh when the database is still empty.
 
 ## Billion-credit goals
