@@ -24,6 +24,16 @@ release time that section becomes the new version and the release workflow publi
   sell, as Find commodity does (the trip profit's tooltip says how many tonnes a trip takes), and its pin puts both
   ends in the **Run planner**: buying at its start and selling at its end (a second click unpins both). Ask's trade
   routes carry the stock and demand too. Thanks to nhok0169 for the ideas.
+- **Market › Shopping trip**: one trip for several goods, a mission's or a build's. Add up to eight (several at once
+  with commas between), with the tonnes if you like, and it plans the shortest trip it finds that buys them all: the
+  nearest seller of one, then the nearest seller of the next from there, or a shorter order when there is one, with
+  a station that sells several of them as one stop. It uses Find commodity's landing pad, price age, fleet carrier
+  and planetary filters, counts what's already aboard, says why a good has no seller, warns when the goods won't fit
+  your hold or your credits, and **Follow this trip** sends the stops to Navigation. It plans from each good's 200
+  sellers nearest you in the database, and says so. Thanks to nhok0169 for the idea.
+- **Ask** plans a shopping trip too: "where do I buy 20 t of Cobalt and some Micro Controllers?" chains the stops
+  from one to the next, as Market › Shopping trip does, instead of finding each good near you. Its trade routes take
+  another ship's cargo space when you name one.
 - **Statistics › Ships**: the period you pick, ship by ship. Everything your journals hold counts for the ship you
   were in at the time: time in the game, jumps and distance, what it earned (trade profit, bounties and bonds at the
   kill, data, mined cargo, missions), kills, deaths and what it cost (fuel, repairs, restocking, rebuys), with when you

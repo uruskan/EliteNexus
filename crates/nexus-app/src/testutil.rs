@@ -36,13 +36,19 @@ fn eddn(schema: &str, message: Value) -> Value {
 
 /// A populated system at (x, 0, 0) with one large-pad station and its market.
 pub fn station(db: &GalaxyDb, sys: (&str, u64, f64), name: &str, market_id: u64, goods: Value) {
-    let ts = nexus_journal::Timestamp::now().to_iso();
     let (system, id, x) = sys;
-    db.ingest_eddn(&eddn("journal/1", json!({ "timestamp": ts, "event": "FSDJump", "StarSystem": system, "SystemAddress": id, "StarPos": [x, 0.0, 0.0], "Population": 1000 })));
+    station_at(db, (system, id, [x, 0.0, 0.0]), name, market_id, goods);
+}
+
+/// [`station`] anywhere: a populated system at `pos`.
+pub fn station_at(db: &GalaxyDb, sys: (&str, u64, [f64; 3]), name: &str, market_id: u64, goods: Value) {
+    let ts = nexus_journal::Timestamp::now().to_iso();
+    let (system, id, pos) = sys;
+    db.ingest_eddn(&eddn("journal/1", json!({ "timestamp": ts, "event": "FSDJump", "StarSystem": system, "SystemAddress": id, "StarPos": pos, "Population": 1000 })));
     db.ingest_eddn(&eddn(
         "journal/1",
         json!({ "timestamp": ts, "event": "Docked", "StationName": name, "StationType": "Coriolis", "StarSystem": system, "SystemAddress": id,
-                "MarketID": market_id, "StarPos": [x, 0.0, 0.0], "StationServices": ["dock", "commodities"], "DistFromStarLS": 100.0,
+                "MarketID": market_id, "StarPos": pos, "StationServices": ["dock", "commodities"], "DistFromStarLS": 100.0,
                 "LandingPads": { "Small": 4, "Medium": 4, "Large": 2 } }),
     ));
     db.ingest_eddn(&eddn("commodity/3", json!({ "systemName": system, "stationName": name, "marketId": market_id, "timestamp": ts, "commodities": goods })));

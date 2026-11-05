@@ -82,7 +82,8 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   level and used only if the user owns it; off Windows a Unix socket in /run/user/<euid> or ~/.elite-nexus, found
   without the environment an MCP client may drop, both ends checking the other's uid: `mcp/unix.rs`); `McpService` answers with the read-only tools offered to agents, on one worker
   thread, within a deadline and a calls-a-minute limit, with a Spansh client of its own. `finder.rs` holds market lookups shared by pages and tools (sell plan,
-  colonisation suppliers). `shopping.rs` is Fleet › Where to buy: it finds one ship or module by name (`find_item`,
+  colonisation suppliers, `shopping_trip`: the shortest trip it finds that buys several goods, with `trip_route` for
+  Navigation; Market › Shopping trip runs it, and a page with a list of goods can too). `shopping.rs` is Fleet › Where to buy: it finds one ship or module by name (`find_item`,
   `suggest`, shared with Ask's tool) or reads a build (SLEF, journal `Loadout`, EDSY or Coriolis import link), lists
   what to buy against what the commander has (their ship of that type, their storage), and asks Spansh's outfitting search for
   stations that sell all of it, checking each result's exact module symbols (Spansh filters on name, class and rating

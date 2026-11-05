@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 pub enum Tab {
     #[default]
     Commodity,
+    /// Shopping trip: several goods, and the shortest trip that buys them all.
+    Trip,
     Abnormal,
     Plan,
     Sell,
@@ -36,11 +38,12 @@ pub enum Tab {
 }
 
 impl Tab {
-    /// For `--tab` (screenshots): `commodity` (or `browse`: its search field's whole list open), `abnormal`, `sell`,
-    /// `routes`, `services`, `hotspots`, `alerts`, `station` (or `docked`), `database`.
+    /// For `--tab` (screenshots): `commodity` (or `browse`: its search field's whole list open), `trip`, `abnormal`,
+    /// `sell`, `routes`, `services`, `hotspots`, `alerts`, `station` (or `docked`), `database`.
     pub fn from_name(name: &str) -> Option<Tab> {
         Some(match name.to_ascii_lowercase().as_str() {
             "commodity" | "browse" => Tab::Commodity,
+            "trip" => Tab::Trip,
             "abnormal" => Tab::Abnormal,
             "plan" => Tab::Plan,
             "sell" => Tab::Sell,
@@ -97,6 +100,8 @@ pub struct MarketPrefs {
     /// Trade routes: the cargo space each route fills, set by the commander (a trade ship they're not flying);
     /// `None` follows the hold of the ship they fly.
     pub route_cargo: Option<i64>,
+    /// Shopping trip: the goods to buy, in the order added (at most [`finder::TRIP_GOODS`]).
+    pub trip: Vec<TripGood>,
     /// Sell my cargo: buyers within.
     pub sell_radius: f64,
     pub hotspot_signal: String,
@@ -154,6 +159,7 @@ impl Default for MarketPrefs {
             hop: 25.0,
             routes_here: false,
             route_cargo: None,
+            trip: Vec::new(),
             sell_radius: 60.0,
             hotspot_signal: "Low Temperature Diamonds".into(),
             hotspot_min: 2,
@@ -190,6 +196,12 @@ impl MarketPrefs {
         self.radius = clamp(self.radius, 5.0, 1000.0, 40.0);
         self.hop = clamp(self.hop, 1.0, 500.0, 25.0);
         self.route_cargo = self.route_cargo.map(|t| t.clamp(1, MAX_CARGO));
+        let mut seen = rustc_hash::FxHashSet::default();
+        self.trip.retain(|g| !g.symbol.trim().is_empty() && seen.insert(g.symbol.to_ascii_lowercase()));
+        self.trip.truncate(finder::TRIP_GOODS);
+        for g in &mut self.trip {
+            g.tonnes = g.tonnes.clamp(1, MAX_CARGO);
+        }
         self.sell_radius = clamp(self.sell_radius, 5.0, MAX_SEARCH_LY, 60.0);
         self.hotspot_min = self.hotspot_min.clamp(1, 6);
         self.abn_ratio = clamp(self.abn_ratio, 1.5, 10.0, 2.0);
@@ -255,6 +267,24 @@ pub struct RecentMarket {
     pub name: String,
     pub system: String,
     pub carrier: bool,
+}
+
+/// A good on the Shopping trip's list.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TripGood {
+    /// The commodity's symbol (`microcontrollers`) and display name (Micro Controllers).
+    pub symbol: String,
+    pub name: String,
+    /// Tonnes needed: the trip stops only where at least this many are in stock, and what's aboard counts towards
+    /// it. 1 takes any seller.
+    pub tonnes: i64,
+}
+
+impl Default for TripGood {
+    fn default() -> Self {
+        TripGood { symbol: String::new(), name: String::new(), tonnes: 1 }
+    }
 }
 
 /// A market entry the commander pinned: it stays on top of the Market page, priced from the latest
@@ -418,6 +448,14 @@ pub struct MarketUi {
     routes: Slot<Res<TradeRoute>>,
     /// The station the shown routes start at (`None`: routes around you).
     routes_from: Option<String>,
+    /// Shopping trip: what's typed in its field, text that matched no commodity, the trip, what the plan asked for
+    /// last (any change plans it again: the goods, what's aboard, the filters, where you are; `None`: plan again), and
+    /// what the trip shown was planned for.
+    trip_input: String,
+    trip_unknown: Option<String>,
+    trip: Slot<Result<finder::Trip, String>>,
+    trip_key: Option<String>,
+    trip_for: Option<String>,
     /// Search on the next frame: Trade routes (screenshot runs: `--tab routes`), or Mining hotspots (opened from a
     /// "where to get it" panel).
     pub autorun: bool,
@@ -496,6 +534,11 @@ impl MarketUi {
             docked_market: None,
             routes: Slot::default(),
             routes_from: None,
+            trip_input: String::new(),
+            trip_unknown: None,
+            trip: Slot::default(),
+            trip_key: None,
+            trip_for: None,
             autorun: false,
             browse: false,
             service: 0,
@@ -627,6 +670,24 @@ impl MarketUi {
     fn set_tab(&mut self, t: Tab) {
         self.tab = t;
         self.prefs.tab = t;
+    }
+
+    /// Puts a good on the Shopping trip's list (any spelling the suggestions understand); one on it already stays
+    /// once. Text that matches no commodity is kept to say so.
+    fn add_trip_good(&mut self, db: &GalaxyDb, text: &str) {
+        if self.commodities.is_empty() {
+            self.commodities = db.commodities();
+        }
+        let name = resolve_commodity(db, &self.commodities, text);
+        let Some(c) = name.and_then(|n| self.commodities.iter().find(|c| c.name == n)).filter(|c| listed(c)) else {
+            self.trip_unknown = Some(text.trim().to_string());
+            return;
+        };
+        if !self.prefs.trip.iter().any(|g| g.symbol.eq_ignore_ascii_case(&c.symbol)) && self.prefs.trip.len() < finder::TRIP_GOODS {
+            self.prefs.trip.push(TripGood { symbol: c.symbol.clone(), name: c.name.clone(), tonnes: 1 });
+        }
+        self.trip_input.clear();
+        self.trip_unknown = None;
     }
 
     /// Opens what a "where to get it" panel (Engineering, Missions) asked for: the material traders of a kind, where
@@ -832,6 +893,27 @@ fn commodity_rows(all: &[CommodityInfo], recent: &[String], typed: &str) -> Vec<
     out
 }
 
+/// The Shopping trip's field: Find commodity's list without the Rare Goods page (a trip buys goods one by one; typing
+/// finds a rare good by name) and without the goods on the list already (`have`, by name). A heading left with nothing
+/// under it goes too.
+fn trip_rows(all: &[CommodityInfo], recent: &[String], have: &[String], typed: &str) -> Vec<ListRow> {
+    let mut out: Vec<ListRow> = Vec::new();
+    for r in commodity_rows(all, recent, typed) {
+        match &r {
+            ListRow::Item(s) if s.text == RARE_GOODS || have.contains(&s.text) => continue,
+            ListRow::Heading(_) if matches!(out.last(), Some(ListRow::Heading(_))) => {
+                out.pop();
+            }
+            _ => {}
+        }
+        out.push(r);
+    }
+    if matches!(out.last(), Some(ListRow::Heading(_))) {
+        out.pop();
+    }
+    out
+}
+
 /// Distances the − and + of a distance step through, ly.
 const LY: &[f64] = &[
     5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0, 250.0, 300.0, 400.0, 500.0, 750.0, 1_000.0, 1_500.0, 2_000.0, 2_500.0, 5_000.0, 10_000.0, 25_000.0,
@@ -855,6 +937,17 @@ fn pad_picker(ui: &mut Ui, pad: &mut Option<char>) -> bool {
     crate::widgets::segmented(ui, pad, &[(None, "Any"), (Some('S'), "S"), (Some('M'), "M"), (Some('L'), "L")])
 }
 
+/// The landing-pad field of a search that follows the ship you fly until you pick a pad (Find commodity, Shopping trip).
+fn pad_field(bar: &mut crate::widgets::SettingsBar<'_>, p: &mut MarketPrefs) {
+    let (caption, tip) = if p.pad_auto { ("Landing pad · your ship's", format!("{PAD_TIP}\n\nIt follows the ship you fly until you pick one.")) } else { ("Landing pad", PAD_TIP.to_string()) };
+    bar.field(caption, &tip, |ui| {
+        if pad_picker(ui, &mut p.min_pad) {
+            // Picked by hand: it no longer follows the ship.
+            p.pad_auto = false;
+        }
+    });
+}
+
 /// Find commodity's filters, all in view: how far, which pad, how old a price may be, how much stock or demand, which
 /// kinds of market, and the order. A reset shows once any of them differs from the defaults.
 fn search_filters(ui: &mut Ui, p: &mut MarketPrefs, gs: &GameState) {
@@ -864,13 +957,7 @@ fn search_filters(ui: &mut Ui, p: &mut MarketPrefs, gs: &GameState) {
         bar.field("Within", "How far from you to look. The local database has no limit of its own: up to the whole galaxy, 100,000 ly.", |ui| {
             crate::widgets::number(ui, &mut p.max_dist, 1.0..=MAX_SEARCH_LY, Steps::Through(LY), 0, " ly");
         });
-        let (pad_caption, pad_tip) = if p.pad_auto { ("Landing pad · your ship's", format!("{PAD_TIP}\n\nIt follows the ship you fly until you pick one.")) } else { ("Landing pad", PAD_TIP.to_string()) };
-        bar.field(pad_caption, &pad_tip, |ui| {
-            if pad_picker(ui, &mut p.min_pad) {
-                // Picked by hand: it no longer follows the ship.
-                p.pad_auto = false;
-            }
-        });
+        pad_field(bar, p);
         bar.field("Prices no older than", "Leaves out prices reported longer ago than this, up to 30 days.", |ui| {
             crate::widgets::number(ui, &mut p.max_age_h, 1.0..=720.0, Steps::Through(HOURS), 0, " h");
         });
@@ -1014,6 +1101,9 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
     st.pins_live.tick();
     st.alert_ref.tick();
     st.plan.tick();
+    if st.trip.tick() {
+        st.trip_for.clone_from(&st.trip_key);
+    }
     // An answer is for the question asked last: no new one is asked while one runs.
     if st.here.tick() {
         st.here_for.clone_from(&st.here_key);
@@ -1034,6 +1124,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
         st.tab,
         &[
             (Tab::Commodity, "Find commodity"),
+            (Tab::Trip, "Shopping trip"),
             (Tab::Abnormal, "Abnormal prices"),
             (Tab::Plan, "Run planner"),
             (Tab::Sell, "Sell my cargo"),
@@ -1067,8 +1158,8 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
     let origin = gs.location.star_pos;
     let ctx = ui.ctx().clone();
     let mut changed = false;
-    // How many stations the database knows, for what Services says about its reach.
-    let known_stations = svc.db_stats().map(|s| s.stations);
+    // How many stations (and markets) the database knows, for what Services and Shopping trip say about its reach.
+    let (known_stations, known_markets) = svc.db_stats().map_or((None, None), |s| (Some(s.stations), Some(s.stations_with_market)));
     refresh_pins(&ctx, gs, &db, st);
     let mut nav = None;
     if !st.prefs.pins.is_empty() && !matches!(st.tab, Tab::Database | Tab::Alerts) {
@@ -1076,6 +1167,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
     }
     match st.tab {
         Tab::Commodity => nav = commodity_tab(ui, gs, &db, st).or(nav),
+        Tab::Trip => nav = trip_tab(ui, gs, &db, st, known_markets).or(nav),
         Tab::Plan => nav = plan_tab(ui, gs, &db, st).or(nav),
         Tab::Routes => {
             // The hold of the ship you fly, unless you set another (a trade ship you're not in).
@@ -2820,6 +2912,297 @@ fn run_route(plan: &RunPlan) -> crate::pages::navigation::PlannedRoute {
     }
     let summary = format!("{} stops, {} profit, about {:.0} ly", plan.stops.len(), short_credits(plan.profit()), plan.distance_ly);
     PlannedRoute::new("Trade run", summary, String::new(), points)
+}
+
+/// What a Shopping trip good's tonnes mean, for its tooltip.
+const TRIP_TONNES_TIP: &str = "How many tonnes you need, up to 5,000: the trip stops only where at least this many are in stock, and what's in \
+                               your hold already counts towards it (not mission cargo or stolen goods). 1 takes any seller.";
+
+/// Tonnes of a commodity in the hold that count towards a shopping trip: not mission cargo, not stolen goods.
+fn trip_aboard(gs: &GameState, symbol: &str) -> i64 {
+    gs.inventory.cargo.items.iter().filter(|c| c.mission_id.is_none() && c.symbol.eq_ignore_ascii_case(symbol)).map(|c| (c.count - c.stolen).max(0)).sum()
+}
+
+/// What's still to buy for each good on the list: the tonnes set, less what's aboard (goods that are all aboard drop
+/// out). As the planner takes them: (symbol, name, tonnes).
+fn trip_lines(goods: &[TripGood], aboard: impl Fn(&str) -> i64) -> Vec<finder::Line> {
+    goods
+        .iter()
+        .filter_map(|g| {
+            let left = g.tonnes - aboard(&g.symbol);
+            (left > 0).then(|| (g.symbol.clone(), g.name.clone(), left))
+        })
+        .collect()
+}
+
+/// Shopping trip: several goods (a mission's, a build's), and the shortest trip from where you are that buys them all.
+fn trip_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi, markets: Option<u64>) -> Option<Nav> {
+    // The landing pad the current ship needs, until the commander picks one (as on Find commodity).
+    if st.prefs.pad_auto {
+        st.prefs.min_pad = finder::ship_pad(gs);
+    }
+    if st.commodities.is_empty() {
+        st.commodities = db.commodities();
+    }
+    let aboard = |symbol: &str| trip_aboard(gs, symbol);
+    // The goods, each with its tonnes, then the field that adds one.
+    let (mut add, mut remove) = (None, None);
+    let (p, input, all) = (&mut st.prefs, &mut st.trip_input, &st.commodities);
+    crate::widgets::settings_bar(ui, |bar| {
+        for (i, g) in p.trip.iter_mut().enumerate() {
+            let have = aboard(&g.symbol);
+            let caption = if have > 0 { format!("{} · {} t aboard", g.name, nexus_data::names::group_digits(have)) } else { g.name.clone() };
+            bar.field(&caption, TRIP_TONNES_TIP, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    let mut t = g.tonnes.clamp(1, MAX_CARGO) as u32;
+                    if crate::widgets::whole(ui, &mut t, 1..=MAX_CARGO as u32, Steps::Through(TONNES), " t").changed() {
+                        g.tonnes = i64::from(t);
+                    }
+                    if crate::widgets::icon_button(ui, icon::X, &format!("Take {} off the list", g.name)).clicked() {
+                        remove = Some(i);
+                    }
+                });
+            });
+        }
+        let have: Vec<String> = p.trip.iter().map(|g| g.name.clone()).collect();
+        let recent = &p.recent;
+        let full = p.trip.len() >= finder::TRIP_GOODS;
+        let tip = format!(
+            "Type a commodity (or several, with commas between), or open the whole list with ▾. Up to {} goods: the plan weighs every set of them at each station, so more would make it slow.",
+            finder::TRIP_GOODS
+        );
+        bar.field("Add a good", &tip, |ui| {
+            if full {
+                ui.label(RichText::new(format!("{} goods at most, so planning stays quick: take one off to add another.", finder::TRIP_GOODS)).size(size::FOOTNOTE).color(pal::DIM));
+                return;
+            }
+            // The field and its ▾ side by side (a bar's field stacks what it holds), close together.
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                let c = crate::widgets::combobox_grouped(ui, "trip-add", input, "A commodity: Cobalt…", 260.0, |t| trip_rows(all, recent, &have, t));
+                if let Some(x) = c.picked {
+                    add = Some(x);
+                } else if c.submitted {
+                    add = Some(input.clone());
+                }
+            });
+        });
+    });
+    if let Some(i) = remove {
+        st.prefs.trip.remove(i);
+    }
+    // Several at once, with commas between ("Cobalt, Micro Controllers").
+    if let Some(text) = add {
+        let parts: Vec<&str> = text.split(',').map(str::trim).filter(|t| !t.is_empty()).collect();
+        let mut unknown = Vec::new();
+        for part in parts {
+            st.add_trip_good(db, part);
+            unknown.extend(st.trip_unknown.take());
+        }
+        // What matched nothing stays in the field, to put right.
+        st.trip_input = unknown.join(", ");
+        st.trip_unknown = (!unknown.is_empty()).then(|| unknown.join("\", \""));
+    }
+    // Find commodity's filters, shared with it.
+    let p = &mut st.prefs;
+    let mut again = false;
+    crate::widgets::settings_bar(ui, |bar| {
+        pad_field(bar, p);
+        bar.field("Prices no older than", "Leaves out sellers whose prices were reported longer ago than this, up to 30 days.", |ui| {
+            crate::widgets::number(ui, &mut p.max_age_h, 1.0..=720.0, Steps::Through(HOURS), 0, " h");
+        });
+        bar.field("Include", "Fleet carriers' markets (their owners set the prices and who may dock, and they move) and ports on planets' surfaces.", |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                crate::widgets::chip_toggle(ui, &mut p.carriers, "Fleet carriers");
+                crate::widgets::chip_toggle(ui, &mut p.planetary, "Planetary");
+            });
+        });
+        bar.field("", "", |ui| again = crate::widgets::button(ui, &format!("{} Plan again", icon::ARROWS_CLOCKWISE)).on_hover_text("With the latest prices and stock").clicked());
+    });
+    // Asked again: planned once the run under way (if any) is done.
+    if again {
+        st.trip_key = None;
+    }
+    if let Some(t) = &st.trip_unknown {
+        ui.add_space(6.0);
+        ui.label(RichText::new(format!("{} No commodity called \"{t}\". Pick one from the suggestions as you type.", icon::WARNING)).color(pal::WARN));
+    }
+    ui.add_space(8.0);
+    if st.prefs.trip.is_empty() {
+        empty(
+            ui,
+            icon::SHOPPING_CART,
+            "Plan a trip for several goods",
+            "Add the goods you need, a mission's or a build's, with the tonnes if you like. The trip goes to the nearest seller of one, then the nearest seller of the next from there, or a shorter order when there is one; a station that sells several of them is one stop.",
+        );
+        return None;
+    }
+    let Some(origin) = gs.location.star_pos else {
+        empty(ui, icon::MAP_PIN, "Position unknown", "Jump or relog once so Elite Nexus knows where you are.");
+        return None;
+    };
+    let p = &st.prefs;
+    let lines = trip_lines(&p.trip, aboard);
+    if lines.is_empty() {
+        empty(ui, icon::CHECK_CIRCLE, "It's all aboard", "Your hold has every good on the list, in the tonnes set for it.");
+        return None;
+    }
+    // Planned again when anything it depends on changes: the goods, what's aboard, the filters, where you are.
+    let filters = finder::TripFilters { min_pad: p.min_pad, max_age_hours: Some(p.max_age_h), include_carriers: p.carriers, include_planetary: p.planetary };
+    let key = format!("{:?}", (&lines, origin, filters));
+    let all_aboard: Vec<(&str, i64)> = p.trip.iter().map(|g| (g.name.as_str(), aboard(&g.symbol))).filter(|(n, have)| *have > 0 && !lines.iter().any(|l| l.1 == *n)).collect();
+    // A good set to an amount (more than 1 t); 1 t is any amount, whatever is still to buy.
+    let amount = |symbol: &str| p.trip.iter().any(|g| g.tonnes > 1 && g.symbol.eq_ignore_ascii_case(symbol));
+    let to_buy: i64 = lines.iter().filter(|l| amount(&l.0)).map(|l| l.2).sum();
+    if st.trip_key.as_deref() != Some(key.as_str()) && !st.trip.busy() {
+        st.trip_key = Some(key.clone());
+        let db = db.clone();
+        st.trip.run(ui.ctx(), move || finder::shopping_trip(&db, origin, &lines, &filters));
+    }
+    // The trip shown is for what's set now, or else for what was set before it changed.
+    let fresh = st.trip_for.as_deref() == Some(key.as_str());
+    let busy = st.trip.busy();
+    let trip = match &st.trip.last {
+        None => {
+            ui.spinner();
+            return None;
+        }
+        Some(Err(e)) => {
+            ui.label(RichText::new(e).color(pal::BAD));
+            return None;
+        }
+        Some(Ok(trip)) => trip,
+    };
+    let mut nav = None;
+    // Everything under the filters scrolls: the page doesn't.
+    egui::ScrollArea::vertical().id_salt("trip-stops").auto_shrink([false, false]).show(ui, |ui| {
+        if !fresh || busy {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label(RichText::new("Planning again; the trip below is the one before.").color(pal::DIM));
+            });
+            ui.add_space(4.0);
+        }
+        let spend: i64 = trip.stops.iter().flat_map(|s| &s.buys).filter(|b| amount(&b.symbol)).map(|b| b.tonnes * b.price).sum();
+        if !trip.stops.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(32.0, 8.0);
+                crate::widgets::stat(ui, "Stops", trip.stops.len().to_string(), pal::TEXT);
+                crate::widgets::stat(ui, "Straight-line distance", format!("{:.0} ly", trip.total_ly), pal::TEXT)
+                    .on_hover_text("From you through every stop, in straight lines; the jumps you fly add a little.");
+                if spend > 0 {
+                    crate::widgets::stat(ui, "Spend", short_credits(spend), pal::CYAN)
+                        .on_hover_text("What's still to buy of the goods you set an amount for, at each stop's latest price. Goods left at 1 t, any amount, aren't counted.");
+                }
+            });
+        }
+        for (name, have) in &all_aboard {
+            ui.label(RichText::new(format!("{} {name}: aboard already ({} t)", icon::CHECK, nexus_data::names::group_digits(*have))).color(pal::GOOD));
+        }
+        for m in &trip.missing {
+            ui.add(egui::Label::new(RichText::new(format!("{} {}: {}.", icon::WARNING, m.name, m.why)).color(pal::WARN)).wrap());
+        }
+        // What the hold and the credits allow.
+        let ship = gs.fleet.current().map(|s| i64::from(s.cargo_capacity)).filter(|c| *c > 0);
+        if let Some(capacity) = ship {
+            let free = (capacity - gs.inventory.cargo.items.iter().map(|c| c.count).sum::<i64>()).max(0);
+            if to_buy > free {
+                let to_buy = nexus_data::names::group_digits(to_buy);
+                let free = nexus_data::names::group_digits(free);
+                ui.add(egui::Label::new(RichText::new(format!("{} Still to buy of the amounts set: {to_buy} t, more than the {free} t free in your hold.", icon::WARNING)).color(pal::WARN)).wrap());
+            }
+        }
+        if spend > gs.cmdr.credits.max(0) {
+            ui.add(egui::Label::new(RichText::new(format!("{} They cost about {}, more than your {}.", icon::WARNING, short_credits(spend), short_credits(gs.cmdr.credits))).color(pal::WARN)).wrap());
+        }
+        if trip.stops.is_empty() {
+            empty(ui, icon::PATH, "No trip to fly", "No good on the list has a seller the trip can use; the notes above say why.");
+            trip_coverage(ui, markets, true);
+            return;
+        }
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let follow = ui.add_enabled_ui(fresh, |ui| crate::widgets::primary_button(ui, &format!("{} Follow this trip", icon::PATH))).inner;
+            let tip = if fresh { "Shows the stops on the Navigation page; after each jump the next stop's system goes to the clipboard (if that's on there)" } else { "Wait for the trip planned for what's set now" };
+            if follow.on_hover_text(tip).on_disabled_hover_text(tip).clicked() {
+                st.follow = Some(finder::trip_route(trip));
+            }
+            if let Some(first) = trip.stops.first()
+                && crate::widgets::button(ui, &format!("{} Copy {}", icon::COPY, first.hit.system)).clicked()
+            {
+                ui.ctx().copy_text(first.hit.system.clone());
+            }
+        });
+        ui.add_space(6.0);
+        for (i, s) in trip.stops.iter().enumerate() {
+            crate::widgets::card(ui, "", |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new(format!("{}", i + 1)).font(display(size::TITLE3)).color(pal::ACCENT));
+                    let name = if s.hit.is_carrier { format!("{} {}", icon::ANCHOR, s.hit.station) } else { s.hit.station.clone() };
+                    if nav_label(ui, RichText::new(name).font(display(size::HEADLINE)).color(pal::TEXT), "Click for the station's whole market") {
+                        nav = Some(Nav::Station(s.hit.market_id));
+                    }
+                    if ui.link(&s.hit.system).on_hover_text("Click to copy the system").clicked() {
+                        ui.ctx().copy_text(s.hit.system.clone());
+                    }
+                    ui.label(RichText::new(stop_facts(i, s)).color(pal::DIM));
+                });
+                for b in &s.buys {
+                    let what = if amount(&b.symbol) { format!("{} t {}", nexus_data::names::group_digits(b.tonnes), b.name) } else { b.name.clone() };
+                    ui.label(RichText::new(format!("Buy {what} at {} · {} t in stock", cr(b.price), nexus_data::names::group_digits(b.stock))).color(pal::CYAN));
+                }
+            });
+            ui.add_space(6.0);
+        }
+        trip_coverage(ui, markets, trip.exact);
+    });
+    nav
+}
+
+/// A shopping-trip stop's facts: how far (from you, or from the stop before it, by its number), its pad, how far from
+/// the star, how old its prices are.
+fn stop_facts(i: usize, s: &finder::TripStop) -> String {
+    let mut facts = vec![match (i, s.leg_ly < 0.05) {
+        (0, true) => "in this system".to_string(),
+        (_, true) => format!("in the same system as stop {i}"),
+        (0, false) => format!("{:.1} ly from you", s.leg_ly),
+        _ => format!("{:.1} ly from stop {i}", s.leg_ly),
+    }];
+    if let Some(pad) = s.hit.max_pad {
+        facts.push(format!("{pad} pad"));
+    }
+    if let Some(ls) = s.hit.dist_ls {
+        facts.push(format!("{} ls from the star", nexus_data::names::group_digits(ls.round() as i64)));
+    }
+    if s.hit.updated_unix > 0 {
+        facts.push(format!("prices {} old", age(s.hit.updated_unix).0));
+    }
+    facts.join(" · ")
+}
+
+/// What a shopping trip can and can't know, under its stops. `exact`: no shorter trip among the sellers weighed.
+fn trip_coverage(ui: &mut Ui, markets: Option<u64>, exact: bool) {
+    let known = match markets {
+        Some(n) => format!("the {} markets Elite Nexus knows", nexus_data::names::group_digits(n as i64)),
+        None => "the markets Elite Nexus knows".to_string(),
+    };
+    let shortest = if exact {
+        "Among those, no trip is shorter."
+    } else {
+        "So many of them are near enough to matter that it weighed the nearest stations only (a limit that keeps planning quick), so a shorter trip may exist."
+    };
+    crate::widgets::footnote(
+        ui,
+        &format!(
+            "Planned from {known}: what the live feed, your journal and the Spansh import if you ran it (Database & feed) brought in, so a seller it \
+             doesn't know can't be on the trip. It weighs each good's {} sellers nearest you, a limit that keeps planning quick, so a station farther out \
+             that sells everything at once can be missed. {shortest} Stock and prices are each market's latest report and may have changed. Distances \
+             are straight lines between systems: Navigation plots the jumps, and supercruise to each station comes on top.",
+            finder::TRIP_SELLERS
+        ),
+    );
 }
 
 fn service_query(kind: &str, origin: [f64; 3], pad: Option<char>) -> StationQuery {
@@ -4828,6 +5211,63 @@ mod tests {
         assert_eq!(entry(&rare, "Rare Goods").0, "all 2 rare goods");
         assert!(commodity_rows(&all, &[], "unknown").is_empty(), "nothing untradeable");
         assert!(commodity_rows(&all, &[], "travel").is_empty(), "nothing retired");
+    }
+
+    /// The Shopping trip's field lists what Find commodity's does, less the Rare Goods page and the goods on the list
+    /// already; a heading left with nothing under it goes too.
+    #[test]
+    fn the_trip_field_leaves_out_rare_goods_as_one_and_goods_listed() {
+        let all = vec![
+            info("Silver", "silver", "Metals", false),
+            info("Gold", "gold", "Metals", false),
+            info("Rusani Old Smokey", "rusanioldsmokey", "Legal Drugs", true),
+            info("Tobacco", "tobacco", "Legal Drugs", false),
+        ];
+        let lines = |rows: &[ListRow]| {
+            rows.iter()
+                .map(|r| match r {
+                    ListRow::Heading(h) => format!("# {h}"),
+                    ListRow::Item(s) => s.text.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(lines(&trip_rows(&all, &[], &[], "")), ["# Legal Drugs", "Tobacco", "# Metals", "Gold", "Silver"]);
+        let listed = ["Tobacco".to_string(), "Gold".to_string()];
+        assert_eq!(lines(&trip_rows(&all, &["Tobacco".into()], &listed, "")), ["# Metals", "Silver"], "no empty Recent or Legal Drugs heading");
+        assert_eq!(lines(&trip_rows(&all, &[], &[], "smokey")), ["Rusani Old Smokey"], "a rare good by its name");
+        assert!(trip_rows(&all, &[], &[], "rare").is_empty(), "no Rare Goods page");
+    }
+
+    /// The Shopping trip's goods load from settings saved before it (none), and a hand-edited list comes back into
+    /// shape: no blank or repeated goods, at most eight, tonnes in range (1, any amount, when the file has none).
+    #[test]
+    fn trip_goods_load_and_heal() {
+        let old: MarketPrefs = serde_json::from_str(r#"{"radius": 40}"#).unwrap();
+        assert!(old.sanitized().trip.is_empty());
+        let edited: MarketPrefs = serde_json::from_str(
+            r#"{"trip": [{"symbol": "cobalt", "name": "Cobalt", "tonnes": 20}, {"symbol": "", "name": "Nothing"}, {"symbol": "Cobalt", "name": "Cobalt", "tonnes": 5},
+                {"symbol": "gold", "name": "Gold", "tonnes": -3}, {"symbol": "silver", "name": "Silver", "tonnes": 99999}, {"symbol": "bauxite", "name": "Bauxite"}]}"#,
+        )
+        .unwrap();
+        let trip = edited.sanitized().trip;
+        assert_eq!(trip.iter().map(|g| (g.symbol.as_str(), g.tonnes)).collect::<Vec<_>>(), [("cobalt", 20), ("gold", 1), ("silver", MAX_CARGO), ("bauxite", 1)]);
+        let goods: Vec<String> = (0..12).map(|i| format!(r#"{{"symbol": "g{i}", "name": "G{i}"}}"#)).collect();
+        let many: MarketPrefs = serde_json::from_str(&format!(r#"{{"trip": [{}]}}"#, goods.join(","))).unwrap();
+        assert_eq!(many.sanitized().trip.len(), finder::TRIP_GOODS);
+    }
+
+    /// What's aboard counts towards a good's tonnes (not mission cargo or stolen goods); a good that's all aboard drops
+    /// out of the trip.
+    #[test]
+    fn what_is_aboard_counts_towards_the_trip() {
+        let mut gs = GameState::default();
+        let entry = |symbol: &str, count: i64, stolen: i64, mission_id: Option<u64>| nexus_model::inventory::CargoEntry { symbol: symbol.into(), name: String::new(), count, stolen, mission_id };
+        gs.inventory.cargo.items = vec![entry("cobalt", 5, 0, None), entry("Cobalt", 4, 4, None), entry("cobalt", 30, 0, Some(77)), entry("gold", 2, 0, None)];
+        assert_eq!(trip_aboard(&gs, "cobalt"), 5, "stolen and mission cargo don't count");
+        let good = |symbol: &str, name: &str, tonnes: i64| TripGood { symbol: symbol.into(), name: name.into(), tonnes };
+        let goods = [good("cobalt", "Cobalt", 20), good("gold", "Gold", 1), good("silver", "Silver", 10)];
+        let lines = trip_lines(&goods, |s| trip_aboard(&gs, s));
+        assert_eq!(lines, [("cobalt".to_string(), "Cobalt".to_string(), 15), ("silver".to_string(), "Silver".to_string(), 10)], "Gold is aboard");
     }
 
     /// A carrier's docking access as its badge says it, in the journal's spelling or Spansh's.
