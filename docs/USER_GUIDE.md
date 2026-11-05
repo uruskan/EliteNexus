@@ -6,6 +6,15 @@ the game live. Run it before or after the game — order doesn't matter. On Linu
 journals in the game's Proton prefix (see [Linux](#linux)). On a Mac, open `Elite Nexus.app`: it finds them in the
 game's NotProton, CrossOver or Whisky prefix (see [macOS](#macos)).
 
+While Elite Nexus is in beta, each start shows a small **support card** in the middle of the window: the GitHub
+Sponsors and Buy Me a Coffee buttons (each opens its page in your browser), why support matters and what it pays
+for, such as early-access ships to test in the game, and a thank-you to the supporters and contributors named in the
+README (the release notes thank the same people). Elite Nexus is free, with no ads, and nothing in it depends on
+support. After a 10-second countdown, **Close** appears; until then the card stays (Esc and clicks outside it don't
+close it). It's only in the main window: never on the overlay or in VR, and it doesn't take focus from the game. On
+a first start it comes after the welcome. In the stable release, supporters and everyone who bought a coffee won't
+see it. Settings › About links GitHub Sponsors too.
+
 ## The window
 
 The **sidebar** on the left lists every page; on narrow windows it shrinks to icons (hover for names). At its foot
