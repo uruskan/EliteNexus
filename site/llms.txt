@@ -47,12 +47,17 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   and two stops when no one station has it all. What the commander has (fitted on their ship of that type, in
   storage) isn't searched for. Station data from Spansh.
 - Plan a loadout (Fleet page): start from a new hull, one of your ships or a pasted build, swap modules (each slot
-  lists only what the game lets you fit there) and see jump range, speed and boost, shields and armour with their
-  resistances, power retracted and deployed, mass, cargo, fuel, cost and rebuy change, compared with the ship as it is.
-  Engineering already on a ship counts with the game's values; engineering you plan adds up its materials against
-  what you hold but doesn't change the figures yet, and EDSY and Coriolis get only the engineering already on a ship.
-  What's new (for a new hull: the hull at a shipyard's price, then what changes) goes to Where to buy. Hull and module
-  figures from EDCD's coriolis-data.
+  lists only what the game lets you fit there) and plan engineering (blueprint, grade, how far it's rolled,
+  experimental effect; the bulkheads too): the figures follow, worked out from each grade's range as the game applies
+  it, and the materials it takes are added up against what you hold. Panels: Overview (jump range, speed, shields,
+  armour, power, mass, firepower, cost and rebuy, each compared with the ship as it is), Defence (shields and armour
+  against each damage type, regeneration, recharge and recovery times by systems pips), Weapons (sustained and raw
+  DPS, damage types, weapons capacitor drain by weapon pips, heat, range and falloff, ammunition, what gets through a
+  target ship's hardness), Power & heat (priority groups 1-5 and what switches off first, each module's group and
+  switch, power plant and weapon heat), Travel (jump range with the cargo and fuel set, fuel a jump, speed by engine
+  pips, boost interval, turn rates). What's new goes to Where to buy; EDSY and Coriolis open the plan with the
+  engineering already on its modules. Hull, module and engineering figures from EDCD's coriolis-data; how fast a hull
+  sheds heat isn't in it, so the heat level over time isn't worked out.
 - Combat: the nearest wars and civil wars (the fights with conflict zones), from the local database the live EDDN feed
   and the commander's journal fill: distance, active or pending, the two factions with the days each has won and what
   each stands to lose, the system's government, the report's age and a route button; elections on request. A guide in

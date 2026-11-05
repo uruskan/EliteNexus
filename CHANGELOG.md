@@ -100,12 +100,19 @@ release time that section becomes the new version and the release workflow publi
   booster, surface scanner or hangar of each kind per ship. **What's new** (for a new hull, **What to buy**: the hull
   at a shipyard's price, then what you change) adds up what you'd buy at list prices and takes it to Where to buy,
   which searches at once and leaves out what you have; a slot's **Where to buy it** finds one module. Plan
-  engineering for a module (a blueprint, the grade to reach, an experimental effect), and **Materials for the
-  engineering** adds up what it takes against the materials you hold; planned engineering doesn't change the figures
-  yet. **EDSY**, **Coriolis** and **Copy build** take the plan out with the engineering already on its modules. The
-  figures come from EDCD's coriolis-data: an unengineered Kestrel Mk II comes to the unladen mass and jump range its
-  journal reports, and engineering on your ship counts with the game's own values. On a ship's Loadout card, **Plan
-  changes** replaces Where to buy (a ship you own has nothing to buy), and **Copy JSON** is now **Copy build**.
+  engineering for a module or the bulkheads (a blueprint, the grade to reach, how far its rolls get, an experimental
+  effect) and the figures follow, worked out from each grade's range as the game applies it; **Materials for the
+  engineering** adds up what it takes against the materials you hold. Beside the Overview's tiles, **Defence** shows
+  shields and armour against each damage type, regeneration, and how long shields take to recharge and to come back
+  from broken; **Weapons** each weapon's damage a second (with reloads), damage type, draw on the weapons capacitor,
+  heat, range and ammunition, how long the capacitor lasts, and what gets through a target ship's armour; **Power &
+  heat** the five priority groups (what switches off first), each module's group and switch, and heat; **Travel**
+  jump range with the cargo and fuel you set, fuel a jump, speed by pips, boost interval and turn rates. The game's
+  pip buttons set the pips these use. **EDSY**, **Coriolis** and **Copy build** take the plan out with the
+  engineering already on its modules. The figures come from EDCD's coriolis-data: an unengineered Kestrel Mk II comes
+  to the unladen mass and jump range its journal reports, and engineering on your ship counts with the game's own
+  values. On a ship's Loadout card, **Plan changes** replaces Where to buy (a ship you own has nothing to buy), and
+  **Copy JSON** is now **Copy build**.
 - **Fleet › Where to buy: one ship or module.** Type a ship or a module ("Anaconda", "6A FSD", "gimballed
   multi-cannon"), pick it from the suggestions, and Elite Nexus finds the nearest stations that sell it, with its
   price there and how old the station's list is. A module is searched where the ship you fly can land; a hull, where

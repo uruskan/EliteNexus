@@ -23,7 +23,8 @@
 #        plan opens Plan a loadout with the current ship, plan-fsd with its frame shift
 #        drive's module list open and engineering planned for it (its materials show),
 #        plan-new at its start (a hull, one of your ships or a pasted build), plan-hull
-#        with a new Python as a shipyard sells it.
+#        with a new Python as a shipyard sells it; plan-defence, plan-weapons, plan-power and
+#        plan-travel open that panel for the current ship.
 #        With -Page Statistics: career, activity, ships or all opens that tab.
 # -JournalDir: read a test journal folder instead of the real one (test runs never upload).
 # -Overlay: an overlay moment with sample content, compact and expanded (jump, hyperspace, arrival, approach,

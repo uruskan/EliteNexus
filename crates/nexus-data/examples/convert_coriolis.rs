@@ -1,7 +1,7 @@
-//! Gathers EDCD coriolis-data (ship hulls and their slots, module figures) into the three files Elite Nexus embeds
-//! for Fleet › Plan a loadout: `data/coriolis/ships.json`, `ship-slots.json` and `modules.json`. The figures are
-//! coriolis-data's own, unchanged: this only puts its per-hull and per-module-group files into one file each, one
-//! entry per line, so an update shows as a readable diff.
+//! Gathers EDCD coriolis-data (ship hulls and their slots, module figures, engineering) into the files Elite Nexus
+//! embeds for Fleet › Plan a loadout: `data/coriolis/ships.json`, `ship-slots.json`, `modules.json`,
+//! `blueprints.json`, `modifications.json` and `modifier-actions.json`. The figures are coriolis-data's own,
+//! unchanged: this only puts its files into one file each, one entry per line, so an update shows as a readable diff.
 //!
 //! ```text
 //! git clone --depth 1 --branch develop https://github.com/EDCD/coriolis-data <dir>
@@ -49,6 +49,30 @@ fn main() {
     write_lines(&out.join("ship-slots.json"), slots.as_object().cloned().unwrap_or_default().into_iter().map(|(k, v)| format!("{}: {}", Value::from(k), v)), '{', '}');
     let count = modules.len();
     write_lines(&out.join("modules.json"), modules.into_iter().map(|m| m.to_string()), '[', ']');
+
+    // modifications/: each blueprint's feature ranges per grade (the name and features only: the materials come from
+    // the Engineering page's data), how each figure changes, and what each experimental effect does.
+    let mods = src.join("modifications");
+    let blueprints = read(&mods.join("blueprints.json")).as_object().cloned().unwrap_or_default();
+    write_lines(
+        &out.join("blueprints.json"),
+        blueprints.into_iter().map(|(k, v)| {
+            let grades: Map<String, Value> = v
+                .get("grades")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+                .map(|(g, x)| (g.clone(), serde_json::json!({ "features": x.get("features").cloned().unwrap_or(Value::Null) })))
+                .collect();
+            format!("{}: {}", Value::from(k), serde_json::json!({ "fdname": v.get("fdname"), "name": v.get("name"), "grades": grades }))
+        }),
+        '{',
+        '}',
+    );
+    for (from, to) in [("modifications.json", "modifications.json"), ("modifierActions.json", "modifier-actions.json")] {
+        let v = read(&mods.join(from));
+        write_lines(&out.join(to), v.as_object().cloned().unwrap_or_default().into_iter().map(|(k, v)| format!("{}: {}", Value::from(k), v)), '{', '}');
+    }
     if let Err(e) = std::fs::copy(src.join("LICENSE.md"), out.join("LICENSE.md")) {
         eprintln!("LICENSE.md not copied: {e}");
     }

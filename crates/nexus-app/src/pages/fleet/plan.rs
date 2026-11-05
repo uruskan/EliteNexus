@@ -5,10 +5,13 @@ use crate::theme::{display, pal, size};
 use crate::widgets::{self, badge, card, card_with, footnote, short_credits};
 use egui::{Color32, Label, RichText, Sense, Ui};
 use egui_phosphor::regular as icon;
-use nexus_data::fitting::{self, Figures, Fitted, Goal, Hull, ModuleData, Plan, SlotDef};
+use nexus_data::fitting::{self, Figures, Fitted, Goal, Hull, Live, ModuleData, Plan, Setup, SlotDef};
 use nexus_data::outfitting::{self, SlotKind};
 use nexus_model::fleet::Ship;
 use nexus_model::GameState;
+use panels::{Panel, PowerEdit, Reported};
+
+mod panels;
 
 /// The planner's state.
 #[derive(Default)]
@@ -23,21 +26,16 @@ pub struct PlanUi {
     source: String,
     /// What the game reported for the ship it started from, to show beside the sums.
     game: Option<Reported>,
-    /// The slot whose module list is open.
+    /// The slot whose module list is open; "Armour" for the bulkheads' engineering.
     open: Option<String>,
     filter: String,
     hull_text: String,
     paste: String,
     error: Option<String>,
-}
-
-/// The game's own figures for a ship of the commander's, from its last recorded build (0: not reported).
-#[derive(Clone, Copy)]
-struct Reported {
-    mass: f64,
-    range: f64,
-    value: i64,
-    rebuy: i64,
+    /// The right side's panel, the pips and what's carried, and the ship whose hull the weapons are tried against.
+    panel: Panel,
+    setup: Setup,
+    target: String,
 }
 
 /// What a click in the planner asks the Fleet page to do.
@@ -74,9 +72,20 @@ impl PlanUi {
     pub fn demo_fsd(&mut self) {
         let Some(plan) = self.plan.as_mut() else { return };
         if let Some(f) = plan.fitted.iter_mut().find(|f| f.slot == "FrameShiftDrive") {
-            f.goal = Some(Goal { blueprint: "FSD_LongRange".into(), grade: 5, experimental: Some("special_fsd_heavy".into()) });
+            f.goal = Some(Goal { experimental: Some("special_fsd_heavy".into()), ..Goal::new("FSD_LongRange", 5) });
             self.open = Some(f.slot.clone());
         }
+    }
+
+    /// For a screenshot run: one of the right side's panels.
+    pub fn show_panel(&mut self, name: &str) {
+        self.panel = match name {
+            "defence" => Panel::Defence,
+            "weapons" => Panel::Weapons,
+            "power" => Panel::Power,
+            "travel" => Panel::Travel,
+            _ => Panel::Overview,
+        };
     }
 
     /// Starts from a new hull by its journal symbol (a screenshot run's new Python).
@@ -141,9 +150,9 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut PlanUi) -> Option<PlanOut> {
         st.plan = None;
         return None;
     };
-    let figures = fitting::figures(&plan).unwrap_or_default();
+    let figures = fitting::figures_with(&plan, &st.setup).unwrap_or_default();
     let reference = st.reference(hull);
-    let before = reference.as_ref().and_then(fitting::figures);
+    let before = reference.as_ref().and_then(|r| fitting::figures_with(r, &st.setup));
     let mut out = None;
     egui::ScrollArea::vertical().id_salt("plan").auto_shrink([false, false]).show(ui, |ui| {
         out = header(ui, st, hull, &plan, &figures);
@@ -155,28 +164,48 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut PlanUi) -> Option<PlanOut> {
         }
         ui.add_space(widgets::GAP);
         let (start, owned, source, game) = (st.start.clone(), st.owned, st.source.clone(), st.game);
-        let (mut changed, mut from_slots, mut from_list) = (None, None, None);
+        // The right side's settings change here and go back to the state after the frame.
+        let (mut panel, mut setup, mut target) = (st.panel, st.setup, std::mem::take(&mut st.target));
+        let (mut changed, mut from_slots, mut from_list, mut power_edit) = (None, None, None, None);
         widgets::split(
             ui,
-            0.56,
+            0.5,
             420.0,
             |ui| changed = slots(ui, st, hull, &plan, reference.as_ref(), &mut from_slots),
             |ui| {
-                // The game's own figures beside the sums, while the plan's modules are still the ship's (planned
-                // engineering doesn't change the figures).
-                let modules_as_now = owned
-                    && start.as_ref().is_some_and(|b| {
-                        let mut p = plan.clone();
-                        p.fitted.iter_mut().for_each(|f| f.goal = None);
-                        &p == b
-                    });
-                let game = game.filter(|_| modules_as_now);
-                figures_cards(ui, hull, &plan, &figures, before.as_ref(), owned, game);
+                panels::tabs(ui, &mut panel);
                 ui.add_space(widgets::GAP);
-                from_list = whats_new(ui, hull, reference.as_ref(), owned, &source, &plan);
-                materials_card(ui, gs, &plan);
+                if panel.uses_setup() {
+                    panels::setup_bar(ui, &mut setup, &figures, panel == Panel::Travel);
+                    ui.add_space(widgets::GAP);
+                }
+                match panel {
+                    Panel::Overview => {
+                        // The game's own figures beside the sums, while the plan is still the ship as it is.
+                        let as_now = owned && start.as_ref() == Some(&plan);
+                        panels::overview(ui, hull, &plan, &figures, before.as_ref(), owned, game.filter(|_| as_now));
+                        ui.add_space(widgets::GAP);
+                        from_list = whats_new(ui, hull, reference.as_ref(), owned, &source, &plan);
+                        materials_card(ui, gs, &plan);
+                    }
+                    Panel::Defence => panels::defence(ui, &figures),
+                    Panel::Weapons => panels::weapons(ui, &figures, &mut target),
+                    Panel::Power => power_edit = panels::power(ui, &plan, &figures),
+                    Panel::Travel => panels::travel(ui, &figures),
+                }
             },
         );
+        (st.panel, st.setup, st.target) = (panel, setup, target);
+        if let Some(e) = power_edit {
+            let mut p = changed.take().unwrap_or_else(|| plan.clone());
+            match e {
+                PowerEdit::Priority(slot, g) => p.fitted.iter_mut().filter(|f| f.slot == slot).for_each(|f| f.priority = g),
+                PowerEdit::On(slot, on) => p.fitted.iter_mut().filter(|f| f.slot == slot).for_each(|f| f.on = on),
+                PowerEdit::HatchPriority(g) => p.hatch_priority = g,
+                PowerEdit::Hatch(on) => p.hatch = on,
+            }
+            changed = Some(p);
+        }
         if let Some(p) = changed {
             st.plan = Some(p);
         }
@@ -184,7 +213,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut PlanUi) -> Option<PlanOut> {
         ui.add_space(8.0);
         footnote(
             ui,
-            "Hull and module figures come from EDCD's coriolis-data (October 2026), summed the way the game sums them: an unengineered Kestrel Mk II comes to the unladen mass and jump range its journal reports. Engineering read from your ship keeps the game's own engineered values; engineering you plan here adds up its materials but doesn't change the figures yet, and power priorities, heat and weapon figures aren't worked out. Prices are list prices: a station may sell for less, and the game may have changed a price since.",
+            "Hull, module and engineering figures come from EDCD's coriolis-data (October 2026), summed the way the game sums them: an unengineered Kestrel Mk II comes to the unladen mass and jump range its journal reports. Engineering read from your ship keeps the game's own engineered values; engineering you plan here is worked out from each grade's range at the roll you pick. Prices are list prices: a station may sell for less, and the game may have changed a price since.",
         );
     });
     out
@@ -332,6 +361,28 @@ fn slots(ui: &mut Ui, st: &mut PlanUi, hull: &Hull, plan: &Plan, reference: Opti
                 }
             }
         });
+        // Their engineering, behind a row like a slot's.
+        let current = hull.bulkheads.iter().find(|b| b.symbol == plan.bulkheads).or_else(|| hull.bulkheads.first());
+        if let Some(b) = current
+            && !nexus_data::engineering::blueprints_for_module(&b.symbol).is_empty()
+        {
+            ui.add_space(8.0);
+            let open = st.open.as_deref() == Some("Armour");
+            let done = plan.bulkheads_done();
+            let now = match (&plan.bulkheads_goal, &done) {
+                (Some(g), _) => format!("Planned: G{} {}", g.grade, nexus_data::engineering::blueprint_name(&b.symbol, &g.blueprint)),
+                (None, Some((bp, grade))) => format!("G{grade} {}, as the game reported it", nexus_data::engineering::blueprint_name(&b.symbol, bp)),
+                (None, None) => "None".into(),
+            };
+            if disclosure_row(ui, "Engineering", &now, open).clicked() {
+                st.open = if open { None } else { Some("Armour".into()) };
+            }
+            if open && let Some(goal) = goal_picker(ui, &b.symbol, plan.bulkheads_goal.as_ref(), done.as_ref(), plan.bulkheads_experimental()) {
+                let mut p = plan.clone();
+                p.bulkheads_goal = goal;
+                changed = Some(p);
+            }
+        }
     });
     for (kinds, title) in [(&[SlotKind::Core][..], "Core internals"), (&[SlotKind::Optional, SlotKind::Military][..], "Optional internals"), (&[SlotKind::Hardpoint][..], "Hardpoints"), (&[SlotKind::Utility][..], "Utility mounts")] {
         let in_group: Vec<&SlotDef> = hull.slots.iter().filter(|s| kinds.contains(&s.kind)).collect();
@@ -373,6 +424,30 @@ fn slots(ui: &mut Ui, st: &mut PlanUi, hull: &Hull, plan: &Plan, reference: Opti
     changed
 }
 
+/// A row that opens what's under it: a caption over a value, and a caret.
+fn disclosure_row(ui: &mut Ui, caption: &str, value: &str, open: bool) -> egui::Response {
+    egui::Frame::new()
+        .fill(if open { pal::CARD_HI } else { Color32::TRANSPARENT })
+        .corner_radius(10)
+        .inner_margin(egui::Margin::symmetric(10, 7))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.label(RichText::new(if open { icon::CARET_DOWN } else { icon::CARET_RIGHT }).color(pal::DIM));
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.label(RichText::new(caption).size(size::CAPTION).color(pal::DIM));
+                        ui.add(Label::new(value).truncate());
+                    });
+                })
+            });
+        })
+        .response
+        .interact(Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// "Optional 3 · size 6" for an optional slot, the game's name otherwise.
 fn slot_label(s: &SlotDef) -> String {
     match s.kind {
@@ -408,15 +483,22 @@ fn slot_row(ui: &mut Ui, s: &SlotDef, fitted: Option<&Fitted>, before: Option<&F
                                 if new {
                                     badge(ui, "New", pal::ACCENT);
                                 }
-                                if let Some((bp, grade)) = &f.blueprint {
-                                    badge(ui, &format!("G{grade} {}", nexus_data::engineering::blueprint_name(&f.item, bp)), pal::PURPLE).on_hover_text("Engineered, as the game reported it: the figures use its engineered values. A different module here would be plain.");
+                                match (&f.goal, &f.blueprint) {
+                                    (Some(g), _) => {
+                                        let tip = if fitting::has_figures(&f.item, &g.blueprint, g.grade) { "Planned engineering: the figures include it, rolled as set" } else { "Planned engineering: this version's data has no figures for it, so it adds up its materials but doesn't change the figures" };
+                                        badge(ui, &format!("Plan: G{} {}", g.grade, nexus_data::engineering::blueprint_name(&f.item, &g.blueprint)), pal::ACCENT).on_hover_text(tip);
+                                    }
+                                    (None, Some((bp, grade))) => {
+                                        badge(ui, &format!("G{grade} {}", nexus_data::engineering::blueprint_name(&f.item, bp)), pal::PURPLE).on_hover_text("Engineered, as the game reported it: the figures use its engineered values. A different module here would be plain.");
+                                    }
+                                    (None, None) => {}
                                 }
                                 if data.is_none() {
                                     badge(ui, "No figures", pal::WARN).on_hover_text("This module is newer than the figures in this version of Elite Nexus: its mass, power and the rest aren't counted.");
                                 }
                             });
                             if let Some(m) = data {
-                                ui.add(Label::new(RichText::new(figure_line(m, Some(f))).size(size::CAPTION).color(pal::DIM)).truncate());
+                                ui.add(Label::new(RichText::new(figure_line(&Live::new(f, m))).size(size::CAPTION).color(pal::DIM)).truncate());
                             }
                         }
                         None => {
@@ -431,9 +513,11 @@ fn slot_row(ui: &mut Ui, s: &SlotDef, fitted: Option<&Fitted>, before: Option<&F
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// The module's main figure, then its mass and power: "optimal mass 1,800 t · 12.8 t a jump · 40 t · 0.75 MW".
-fn figure_line(m: &ModuleData, f: Option<&Fitted>) -> String {
-    let g = |k: &str| f.map_or_else(|| m.get(k), |f| f.get(m, k));
+/// The module's main figure, then its mass and power: "optimal mass 1,800 t · 12.8 t a jump · 40 t · 0.75 MW", as fitted
+/// (engineering included).
+fn figure_line(live: &Live) -> String {
+    let m = live.m;
+    let g = |k: &str| live.get(k);
     let main = match m.grp.as_str() {
         "fsd" => format!("optimal mass {:.0} t, {:.1} t of fuel a jump", g("optmass"), g("maxfuel")),
         "pp" => format!("{:.1} MW", g("pgen")),
@@ -441,14 +525,15 @@ fn figure_line(m: &ModuleData, f: Option<&Fitted>) -> String {
         "sg" | "bsg" | "psg" => format!("optimal mass {:.0} t", g("optmass")),
         "pd" => format!("weapons {:.0} MJ, {:.1} MW", g("wepcap"), g("weprate")),
         "ft" => format!("{:.0} t of fuel", g("fuel")),
-        "sb" => format!("+{:.0} % shields", g("shieldboost") * 100.0),
+        "sb" => format!("+{:.1} % shields", g("shieldboost") * 100.0),
         "hr" | "ghrp" | "mahr" => format!("+{:.0} armour", g("hullreinforcement")),
         "gfsb" => format!("+{:.2} ly a jump", g("jumpboost")),
         "gsrp" => format!("+{:.0} MJ shields", g("shieldaddition")),
         _ if m.figures.contains_key("cargo") => format!("{:.0} t of cargo", g("cargo")),
         _ if m.figures.contains_key("fuel") => format!("{:.0} t of fuel", g("fuel")),
         _ if m.figures.contains_key("passengers") => format!("{:.0} passengers", g("passengers")),
-        _ if m.figures.contains_key("damage") => format!("{:.1} damage a shot", g("damage")),
+        // A weapon: damage a second over time, as the Weapons panel counts it.
+        _ if m.figures.contains_key("damage") => fitting::weapon(live).map(|w| format!("{:.1} damage a second", w.sustained_dps)).unwrap_or_default(),
         _ => String::new(),
     };
     // Mass and power only where there are any (a power plant draws none, a fuel tank weighs nothing).
@@ -465,24 +550,33 @@ enum SlotEdit {
     Goal(Option<Goal>),
 }
 
-/// Engineering to plan for the slot's module: a blueprint, the grade to reach, an experimental effect.
-fn goal_picker(ui: &mut Ui, f: &Fitted) -> Option<SlotEdit> {
-    let blueprints: Vec<_> = nexus_data::engineering::blueprints_for_module(&f.item).into_iter().filter(|b| b.merc_module.is_none()).collect();
+/// Engineering to plan for a module (`item`, the bulkheads' too): a blueprint, the grade to reach, how far its rolls
+/// get, and an experimental effect. `done` and `done_experimental`: the engineering the game reported on it, which
+/// a goal of the same blueprint keeps. Returns the goal picked (None in it: none).
+fn goal_picker(ui: &mut Ui, item: &str, goal: Option<&Goal>, done: Option<&(String, u8)>, done_experimental: Option<&str>) -> Option<Option<Goal>> {
+    let blueprints: Vec<_> = nexus_data::engineering::blueprints_for_module(item).into_iter().filter(|b| b.merc_module.is_none()).collect();
     if blueprints.is_empty() {
         return None;
     }
     let mut edit = None;
     widgets::section(ui, "Engineering to plan");
-    let goal = f.goal.as_ref();
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
         if widgets::pill(ui, goal.is_none(), "None").clicked() && goal.is_some() {
-            edit = Some(SlotEdit::Goal(None));
+            edit = Some(None);
         }
         for bp in &blueprints {
             let on = goal.is_some_and(|g| bp.is(&g.blueprint));
             if widgets::pill(ui, on, &bp.name).clicked() && !on {
-                edit = Some(SlotEdit::Goal(Some(Goal { blueprint: bp.symbol.clone(), grade: bp.max_grade(), experimental: None })));
+                // To the top grade, rolled all the way, as most engineering aims. More of the blueprint a module has
+                // keeps its experimental effect, as the game does; another blueprint starts it afresh.
+                let same = done.is_some_and(|(d, _)| bp.is(d));
+                let grade = match done {
+                    Some((_, g)) if same && *g >= bp.max_grade() => *g,
+                    _ => bp.max_grade(),
+                };
+                let experimental = if same { done_experimental.map(str::to_string) } else { None };
+                edit = Some(Some(Goal { experimental, ..Goal::new(&bp.symbol, grade) }));
             }
         }
     });
@@ -496,25 +590,39 @@ fn goal_picker(ui: &mut Ui, f: &Fitted) -> Option<SlotEdit> {
         let options: Vec<(u8, &str)> = (bp.min_grade()..=bp.max_grade()).zip(labels.iter().map(String::as_str)).collect();
         let mut grade = g.grade;
         if widgets::segmented(ui, &mut grade, &options) {
-            edit = Some(SlotEdit::Goal(Some(Goal { grade, ..g.clone() })));
+            edit = Some(Some(Goal { grade, ..g.clone() }));
+        }
+        ui.add_space(8.0);
+        ui.label(RichText::new("Rolled").color(pal::DIM)).on_hover_text("How far through the grade's range its rolls get: 100 % is a full roll, the most the grade gives");
+        let mut pct = (g.roll * 100.0).round();
+        if widgets::number(ui, &mut pct, 0.0..=100.0, widgets::Steps::Through(&[0.0, 25.0, 50.0, 75.0, 100.0]), 0, " %").changed() {
+            edit = Some(Some(Goal { roll: (pct / 100.0).clamp(0.0, 1.0), ..g.clone() }));
         }
     });
-    let experimentals = nexus_data::engineering::experimentals_for(&f.item);
+    let experimentals = nexus_data::engineering::experimentals_for(item);
     if !experimentals.is_empty() {
         ui.add_space(4.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
             ui.label(RichText::new("Experimental").color(pal::DIM));
             if widgets::pill(ui, g.experimental.is_none(), "None").clicked() && g.experimental.is_some() {
-                edit = Some(SlotEdit::Goal(Some(Goal { experimental: None, ..g.clone() })));
+                edit = Some(Some(Goal { experimental: None, ..g.clone() }));
             }
             for x in experimentals {
                 let on = g.experimental.as_deref() == Some(x.symbol.as_str());
                 if widgets::pill(ui, on, &x.name).clicked() && !on {
-                    edit = Some(SlotEdit::Goal(Some(Goal { experimental: Some(x.symbol.clone()), ..g.clone() })));
+                    edit = Some(Some(Goal { experimental: Some(x.symbol.clone()), ..g.clone() }));
                 }
             }
         });
+    }
+    if !fitting::has_figures(item, &g.blueprint, g.grade) {
+        ui.add_space(4.0);
+        ui.add(Label::new(RichText::new(format!("{} This version's data has no figures for this blueprint at this grade: it adds up its materials, but the figures stay as they are.", icon::INFO)).size(size::FOOTNOTE).color(pal::WARN)).wrap());
+    } else if let Some(x) = g.experimental.as_deref().filter(|x| !fitting::effect_has_figures(x)) {
+        let name = nexus_data::engineering::experimental(x).map_or_else(|| x.to_string(), |e| e.name.clone());
+        ui.add_space(4.0);
+        ui.add(Label::new(RichText::new(format!("{} {name} changes what the figures here don't show (how the weapon behaves), so it adds up its materials only.", icon::INFO)).size(size::FOOTNOTE).color(pal::DIM)).wrap());
     }
     edit
 }
@@ -525,9 +633,9 @@ fn module_list(ui: &mut Ui, st: &mut PlanUi, hull: &Hull, plan: &Plan, s: &SlotD
     egui::Frame::new().fill(pal::FIELD).corner_radius(10).inner_margin(10).show(ui, |ui| {
         ui.set_width(ui.available_width());
         if let Some(f) = fitted
-            && let Some(e) = goal_picker(ui, f)
+            && let Some(goal) = goal_picker(ui, &f.item, f.goal.as_ref(), f.blueprint.as_ref(), f.experimental.as_deref())
         {
-            pick = Some(e);
+            pick = Some(SlotEdit::Goal(goal));
         }
         ui.add_space(6.0);
         ui.horizontal_wrapped(|ui| {
@@ -582,7 +690,8 @@ fn module_list(ui: &mut Ui, st: &mut PlanUi, hull: &Hull, plan: &Plan, s: &SlotD
                                 });
                             });
                         });
-                        ui.add(Label::new(RichText::new(figure_line(m, None)).size(size::CAPTION).color(pal::DIM)).truncate());
+                        let plain = Fitted::new(&s.name, &m.symbol);
+                        ui.add(Label::new(RichText::new(figure_line(&Live::new(&plain, m))).size(size::CAPTION).color(pal::DIM)).truncate());
                     })
                     .response
                     .interact(Sense::click())
@@ -603,113 +712,6 @@ fn module_list(ui: &mut Ui, st: &mut PlanUi, hull: &Hull, plan: &Plan, s: &SlotD
 /// What kind of module it is, for the list's headings: FDevIDs' name without size or mount ("Pulse Laser").
 fn kind_name(m: &ModuleData) -> String {
     outfitting::module(&m.symbol).map(|x| x.name.clone()).or_else(|| m.name.clone()).unwrap_or_else(|| m.grp.clone())
-}
-
-/// The figures the plan comes to, as tiles: how each changed against `before` (the commander's ship when `owned`, else
-/// the hull as a shipyard sells it), and the game's own figures for their ship (`game`) while it's unchanged.
-fn figures_cards(ui: &mut Ui, hull: &Hull, plan: &Plan, f: &Figures, before: Option<&Figures>, owned: bool, game: Option<Reported>) {
-    let says = |what: f64, unit: &str, decimals: usize| if what > 0.0 { format!("The game reports {what:.decimals$}{unit} for this ship") } else { String::new() };
-    let diff = |now: f64, was: Option<f64>, decimals: usize, more_is_better: bool, unit: &str| -> Option<(String, Color32)> {
-        let was = was?;
-        let d = now - was;
-        if d.abs() < 0.5 * 10f64.powi(-(decimals as i32)) {
-            return None;
-        }
-        let good = (d > 0.0) == more_is_better;
-        Some((format!("{}{d:.prec$}{unit}", if d > 0.0 { "+" } else { "" }, prec = decimals), if good { pal::GOOD } else { pal::BAD }))
-    };
-    // A drive or thrusters this data has no figures for give no range or speed, not a range or speed of 0.
-    let missing = |slot: &str, none: &str, newer: &str| match plan.module_in(slot) {
-        None => Some(none.to_string()),
-        Some(m) if fitting::module(&m.item).is_none() => Some(newer.to_string()),
-        Some(_) => None,
-    };
-    let compared = if owned { "Compared with the ship as it is" } else { "Compared with the hull as a shipyard sells it" };
-    widgets::cards(ui, 2, 200.0, |c| {
-        c.add(|ui| match missing("FrameShiftDrive", "No frame shift drive fitted", "This frame shift drive is newer than this version's data") {
-            Some(why) => tile(ui, icon::ARROW_FAT_RIGHT, "Jump range", pal::ACCENT, "No figures", None, compared, &[why]),
-            None => tile(ui, icon::ARROW_FAT_RIGHT, "Jump range", pal::ACCENT, &format!("{:.2} ly", f.max_range), diff(f.max_range, before.map(|b| b.max_range), 2, true, " ly"), compared, &[
-                format!("Full tank {:.2} ly · laden {:.2} ly", f.full_tank_range, f.laden_range),
-                format!("{:.0} ly on one tank", f.total_range),
-                game.map(|g| says(g.range, " ly", 2)).unwrap_or_default(),
-            ]),
-        });
-        c.add(|ui| match missing("MainEngines", "No thrusters fitted", "These thrusters are newer than this version's data") {
-            Some(why) => tile(ui, icon::GAUGE, "Speed", pal::CYAN, "No figures", None, compared, &[why]),
-            None => {
-                let speed = if f.speed > 0.0 { format!("{:.0} m/s", f.speed) } else { "Too heavy".into() };
-                let boost = if f.speed <= 0.0 {
-                    "More than these thrusters can move".to_string()
-                } else if f.boost > 0.0 {
-                    format!("Boost {:.0} m/s", f.boost)
-                } else {
-                    format!("Can't boost: the power distributor's engines capacitor holds {:.0} MJ, a boost takes {:.0} MJ", f.engines_capacity, f.boost_energy)
-                };
-                tile(ui, icon::GAUGE, "Speed", pal::CYAN, &speed, diff(f.speed, before.map(|b| b.speed), 0, true, " m/s"), compared, &[boost, "Four pips to engines, full tank, empty hold".into()]);
-            }
-        });
-        c.add(|ui| match f.shield {
-            Some(s) => tile(ui, icon::SHIELD, "Shields", pal::BLUE, &format!("{:.0} MJ", s.strength), diff(s.strength, before.and_then(|b| b.shield).map(|b| b.strength), 0, true, " MJ"), compared, &[
-                format!("Kinetic {:.0} % · thermal {:.0} % · explosive {:.0} %", s.res.kinetic * 100.0, s.res.thermal * 100.0, s.res.explosive * 100.0),
-                if s.cells > 0.0 { format!("Shield cells add {:.0} MJ", s.cells) } else { String::new() },
-            ]),
-            None => tile(ui, icon::SHIELD, "Shields", pal::BLUE, "None", None, compared, &["No shield generator fitted".into()]),
-        });
-        c.add(|ui| {
-            tile(ui, icon::SHIELD_CHEVRON, "Armour", pal::GRAY, &format!("{:.0}", f.armour), diff(f.armour, before.map(|b| b.armour), 0, true, ""), compared, &[
-                format!("Kinetic {:.0} % · thermal {:.0} % · explosive {:.0} %", f.hull_res.kinetic * 100.0, f.hull_res.thermal * 100.0, f.hull_res.explosive * 100.0),
-                if f.module_protection > 0.0 { format!("Modules protected {:.0} %", f.module_protection * 100.0) } else { format!("Hardness {:.0}", hull.hardness) },
-            ]);
-        });
-        c.add(|ui| power_tile(ui, f));
-        c.add(|ui| {
-            tile(ui, icon::SCALES, "Mass", pal::MINT, &format!("{:.1} t", f.unladen_mass), diff(f.unladen_mass, before.map(|b| b.unladen_mass), 1, false, " t"), compared, &[
-                format!("Laden {:.1} t", f.unladen_mass + f.fuel + f.cargo),
-                format!("Cargo {:.0} t · fuel {:.0} t{}", f.cargo, f.fuel, if f.passengers > 0.0 { format!(" · {:.0} passengers", f.passengers) } else { String::new() }),
-                game.map(|g| says(g.mass, " t", 1)).unwrap_or_default(),
-            ]);
-        });
-        c.add(|ui| {
-            tile(ui, icon::COINS, "Cost", pal::GOLD, &short_credits(f.total_cost() as i64), diff(f.total_cost() / 1e6, before.map(|b| b.total_cost() / 1e6), 1, false, " M"), compared, &[
-                format!("Hull {} · modules {}", short_credits(f.hull_cost as i64), short_credits(f.modules_cost as i64)),
-                format!("Rebuy {}", short_credits(f.rebuy() as i64)),
-                // What the commander paid can differ from list prices.
-                game.filter(|g| g.value > 0).map(|g| format!("The game values this ship at {}, rebuy {}", short_credits(g.value), short_credits(g.rebuy))).unwrap_or_default(),
-            ]);
-        });
-    });
-}
-
-/// A figure tile: icon and name in its colour, the figure big, how it changed (`compared`: against what), and a few
-/// lines under it.
-#[allow(clippy::too_many_arguments)]
-fn tile(ui: &mut Ui, glyph: &str, title: &str, tint: Color32, value: &str, change: Option<(String, Color32)>, compared: &str, lines: &[String]) {
-    widgets::card_tinted(ui, glyph, title, tint, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(value).font(display(24.0)).color(pal::TEXT));
-            if let Some((text, col)) = change {
-                ui.label(RichText::new(text).font(display(size::CALLOUT)).color(col)).on_hover_text(compared);
-            }
-        });
-        for l in lines.iter().filter(|l| !l.is_empty()) {
-            ui.add(Label::new(RichText::new(l).size(size::FOOTNOTE).color(pal::DIM)).wrap());
-        }
-    });
-}
-
-/// Power: what's drawn against what the power plant makes, retracted and deployed.
-fn power_tile(ui: &mut Ui, f: &Figures) {
-    widgets::card_tinted(ui, icon::LIGHTNING, "Power", pal::WARN, |ui| {
-        let plant = f.power_generated.max(0.01);
-        let over = f.power_deployed > f.power_generated + 1e-9;
-        ui.label(RichText::new(format!("{:.1} / {:.1} MW", f.power_deployed, f.power_generated)).font(display(24.0)).color(if over { pal::BAD } else { pal::TEXT }));
-        let col = if over { pal::BAD } else if f.power_deployed / plant > 0.9 { pal::WARN } else { pal::GOOD };
-        widgets::bar(ui, (f.power_deployed / plant) as f32, col, 8.0, None);
-        ui.add(Label::new(RichText::new(format!("Deployed {:.0} % · retracted {:.0} %", f.power_deployed / plant * 100.0, f.power_retracted / plant * 100.0)).size(size::FOOTNOTE).color(pal::DIM)).wrap());
-        if over {
-            ui.add(Label::new(RichText::new("More than the power plant makes: modules switch off when you deploy hardpoints. Fit a bigger power plant, or switch something off.").size(size::FOOTNOTE).color(pal::BAD)).wrap());
-        }
-    });
 }
 
 /// The materials the plan's engineering goals take, against what the commander holds.
@@ -743,7 +745,7 @@ fn materials_card(ui: &mut Ui, gs: &GameState, plan: &Plan) {
         ui.add_space(4.0);
         footnote(
             ui,
-            &format!("Each planned blueprint from the grade above the one the module has of it, {} rolls a grade as the Engineering page plans, and each new experimental effect. Planned engineering doesn't change the figures above, and EDSY, Coriolis and Copy build don't carry it: they take the engineering already on the modules. Materials as your journal last listed them.", fitting::ROLLS_PER_GRADE),
+            &format!("Each planned blueprint from the grade above the one the module has of it, {} rolls a grade as the Engineering page plans, and each new experimental effect. The figures include planned engineering at the roll set; EDSY, Coriolis and Copy build don't carry it, as the game hasn't rolled it: they take the engineering already on the modules. Materials as your journal last listed them.", fitting::ROLLS_PER_GRADE),
         );
     });
 }
