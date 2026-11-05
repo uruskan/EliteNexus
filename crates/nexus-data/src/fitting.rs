@@ -1,0 +1,991 @@
+//! Ship hulls and modules with their figures, for planning a loadout (Fleet › Plan a loadout), and what a loadout
+//! comes to: mass, jump range, speed, power, shields, armour and cost.
+//!
+//! Data: EDCD coriolis-data (`data/coriolis`, gathered by `examples/convert_coriolis.rs`), tied to the game's own
+//! symbols through FDevIDs ids, with the game's slot names from its `ship-slots.json`. The sums follow the game: an
+//! unengineered Kestrel Mk II comes to the unladen mass (323.1 t) and jump range (19.64 ly) its journal Loadout
+//! reports. Engineering read from a journal Loadout uses the game's own engineered values.
+
+use crate::outfitting::{self, SlotKind};
+use rustc_hash::FxHashMap;
+use serde_json::Value;
+use std::sync::LazyLock;
+
+const SHIPS_JSON: &str = include_str!("../../../data/coriolis/ships.json");
+const SLOTS_JSON: &str = include_str!("../../../data/coriolis/ship-slots.json");
+const MODULES_JSON: &str = include_str!("../../../data/coriolis/modules.json");
+
+/// The cargo hatch's power draw, MW (every hull has one).
+const HATCH_POWER: f64 = 0.6;
+
+// ---------------------------------------------------------------------------------------------
+// Data
+
+/// A module's figures, as coriolis-data has them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleData {
+    /// Lower-case journal symbol.
+    pub symbol: String,
+    /// coriolis-data's group: "fsd", "pp", "t", "sg", "sb", "hr", "pl", "mc", …
+    pub grp: String,
+    pub class: u8,
+    pub rating: char,
+    /// The module's own name in coriolis-data ("Bi-Weave", "MkII Agile Boost Thrusters"), if it has one.
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// Weapon mount: 'F', 'G' or 'T'.
+    pub mount: Option<char>,
+    /// List price, Cr.
+    pub cost: f64,
+    pub mass: f64,
+    /// Power draw, MW.
+    pub power: f64,
+    /// A utility that draws power with the hardpoints retracted (shield boosters, scanners).
+    pub passive: bool,
+    /// The hulls it fits (journal symbols); empty: any.
+    pub hulls: Vec<String>,
+    /// Sold already engineered (Guardian weapons, pre-engineered drives, Merc gear).
+    pub pre_engineered: bool,
+    /// Every figure by coriolis-data's name: `optmass`, `maxfuel`, `fuelmul`, `shieldboost`, …
+    pub figures: FxHashMap<String, f64>,
+    coriolis_id: String,
+}
+
+impl ModuleData {
+    /// A figure, 0 when the module has none.
+    pub fn get(&self, key: &str) -> f64 {
+        self.figures.get(key).copied().unwrap_or(0.0)
+    }
+
+    /// What players call it: "5A Frame Shift Drive (SCO)", "3C Gimballed Multi-cannon".
+    pub fn display_name(&self) -> String {
+        outfitting::display_name(&self.symbol)
+    }
+}
+
+/// One of a hull's bulkheads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bulkhead {
+    /// Lower-case journal symbol (`anaconda_armour_grade3`).
+    pub symbol: String,
+    pub name: String,
+    pub cost: f64,
+    pub mass: f64,
+    /// Armour as a share of the hull's base armour, added to it (2.5: +250 %).
+    pub hullboost: f64,
+    pub res: Resistances,
+}
+
+/// Resistances as shares (0.4 = 40 %).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Resistances {
+    pub kinetic: f64,
+    pub thermal: f64,
+    pub explosive: f64,
+    pub caustic: f64,
+}
+
+/// A slot of a hull.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SlotDef {
+    /// The game's name for it (`Slot03_Size6`, `LargeHardpoint1`, `FrameShiftDrive`).
+    pub name: String,
+    pub kind: SlotKind,
+    /// Its class: 0 for utility mounts, 1–4 small to huge for hardpoints, 1–8 for internals.
+    pub size: u8,
+    /// The groups it takes when it takes only some (military slots, the Type-11's limpet slot); empty: any of its
+    /// kind.
+    pub only: Vec<String>,
+    /// What a new hull comes with there.
+    pub default: Option<String>,
+}
+
+/// A hull, with its slots.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Hull {
+    /// Lower-case journal symbol.
+    pub symbol: String,
+    pub name: String,
+    pub manufacturer: String,
+    /// Landing pad: 'S', 'M' or 'L'.
+    pub pad: char,
+    /// The hull's price with no modules, Cr.
+    pub hull_cost: f64,
+    pub hull_mass: f64,
+    /// Top speed and boost at four pips to engines, m/s, before the thrusters' mass curve.
+    pub speed: f64,
+    pub boost: f64,
+    /// Engine capacitor a boost takes, MJ.
+    pub boost_energy: f64,
+    /// Thrust with no pips to engines, as a share of four pips'.
+    pub minthrust: f64,
+    pub base_shield: f64,
+    pub base_armour: f64,
+    pub hardness: f64,
+    pub heat_capacity: f64,
+    pub masslock: f64,
+    pub crew: u8,
+    /// The reserve tank, t: life support's fuel, not the FSD's.
+    pub reserve_fuel: f64,
+    pub bulkheads: Vec<Bulkhead>,
+    pub slots: Vec<SlotDef>,
+}
+
+impl Hull {
+    pub fn slot(&self, name: &str) -> Option<&SlotDef> {
+        self.slots.iter().find(|s| s.name.eq_ignore_ascii_case(name))
+    }
+
+    /// The modules that fit `slot`: its kind of module, its size or smaller (a core slot: the group it takes), as the
+    /// slot's and the module's own restrictions allow. Biggest first, then rating A to E.
+    pub fn fits(&self, slot: &SlotDef) -> Vec<&'static ModuleData> {
+        let mut out: Vec<&'static ModuleData> = table()
+            .list
+            .iter()
+            // Pre-engineered and Merc variants share their module's symbol: the plain one is the one to pick.
+            .filter(|m| module(&m.symbol).is_some_and(|r| std::ptr::eq(r, *m)))
+            .filter(|m| m.hulls.is_empty() || m.hulls.iter().any(|h| *h == self.symbol))
+            .filter(|m| fits_slot(m, slot))
+            .collect();
+        out.sort_by(|a, b| b.class.cmp(&a.class).then(a.rating.cmp(&b.rating)).then(a.symbol.cmp(&b.symbol)));
+        out
+    }
+}
+
+/// Groups that never go in an ordinary optional slot: core modules (fuel tanks do: coriolis-data files the optional
+/// ones under the core tank's group), the planetary approach suite and coriolis-data's placeholders.
+const NOT_OPTIONAL: [&str; 8] = ["pp", "t", "fsd", "ls", "pd", "s", "pas", "mm"];
+
+/// A utility mount's module: class 0 hardpoint symbols (`hpt_…_tiny`, `…_size0_…`).
+fn is_utility(m: &ModuleData) -> bool {
+    m.symbol.starts_with("hpt_") && m.class == 0
+}
+
+fn fits_slot(m: &ModuleData, slot: &SlotDef) -> bool {
+    let weapon_mount = matches!(slot.kind, SlotKind::Hardpoint | SlotKind::Utility);
+    // coriolis-data's placeholders for a module it doesn't know (`int_missing_hyperdrive`) aren't modules to fit.
+    if m.symbol.starts_with("hpt_") != weapon_mount || m.class > slot.size || m.grp == "mh" || m.grp == "mm" || m.symbol.contains("missing") {
+        return false;
+    }
+    // A slot that takes only some groups (core slots, military slots, the Type-11's mining, limpet and hangar slots).
+    if !slot.only.is_empty() {
+        return slot.only.iter().any(|g| *g == m.grp);
+    }
+    match slot.kind {
+        SlotKind::Hardpoint => !is_utility(m),
+        SlotKind::Utility => is_utility(m),
+        SlotKind::Optional | SlotKind::Military => !NOT_OPTIONAL.contains(&m.grp.as_str()),
+        _ => false,
+    }
+}
+
+struct Table {
+    list: Vec<ModuleData>,
+    by_symbol: FxHashMap<String, usize>,
+    hulls: Vec<Hull>,
+}
+
+static TABLE: LazyLock<Table> = LazyLock::new(load);
+
+fn table() -> &'static Table {
+    &TABLE
+}
+
+/// Every module coriolis-data lists, pre-engineered and Merc variants included.
+pub fn modules() -> &'static [ModuleData] {
+    &table().list
+}
+
+/// A module by journal symbol (any case). The plain module wins over pre-engineered or Merc variants sharing its
+/// symbol.
+pub fn module(symbol: &str) -> Option<&'static ModuleData> {
+    let t = table();
+    t.by_symbol.get(&symbol.trim().to_ascii_lowercase()).map(|&i| &t.list[i])
+}
+
+/// Every hull, by name.
+pub fn hulls() -> &'static [Hull] {
+    &table().hulls
+}
+
+/// A hull by journal symbol (any case).
+pub fn hull(symbol: &str) -> Option<&'static Hull> {
+    let s = symbol.trim().to_ascii_lowercase();
+    table().hulls.iter().find(|h| h.symbol == s)
+}
+
+fn num(v: &Value, key: &str) -> f64 {
+    v.get(key).and_then(Value::as_f64).filter(|x| x.is_finite()).unwrap_or(0.0)
+}
+
+fn text(v: &Value, key: &str) -> Option<String> {
+    v.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+}
+
+/// coriolis-data's id for a module: a string ("4o") or a number (17).
+fn id_text(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// The journal's symbol for a coriolis-data hull (`cid` is its id there): by its FDevIDs id, else by its name
+/// (coriolis-data has the Corsair's and the Caspian Explorer's ids one off), else its id when that's the symbol.
+fn journal_symbol(cid: &str, v: &Value) -> Option<String> {
+    let by_id = v.get("edID").and_then(Value::as_u64).and_then(crate::ships::ship_by_id);
+    let name = v.pointer("/properties/name").and_then(Value::as_str).unwrap_or_default();
+    let by_name = || crate::ships::all().iter().find(|s| s.name.eq_ignore_ascii_case(name.trim()));
+    by_id.or_else(by_name).or_else(|| crate::ships::ship(cid)).map(|s| s.symbol.clone())
+}
+
+fn load() -> Table {
+    let raw: Vec<Value> = serde_json::from_str(MODULES_JSON).unwrap_or_default();
+    let ships: serde_json::Map<String, Value> = serde_json::from_str(SHIPS_JSON).unwrap_or_default();
+    // A module's hull restriction names hulls by coriolis-data's own ids ("kestrel", "explorer_nx").
+    let journal_of = |cid: &str| -> Option<String> { journal_symbol(cid, ships.get(cid)?) };
+    let mut list = Vec::with_capacity(raw.len());
+    for m in &raw {
+        let Some(symbol) = text(m, "symbol").map(|s| s.to_ascii_lowercase()) else { continue };
+        let mut figures = FxHashMap::default();
+        for (k, v) in m.as_object().into_iter().flatten() {
+            if let Some(x) = v.as_f64().filter(|x| x.is_finite()) {
+                figures.insert(k.clone(), x);
+            }
+        }
+        let hulls: Vec<String> = match m.get("ship") {
+            Some(Value::String(s)) => journal_of(s).into_iter().collect(),
+            Some(Value::Array(a)) => a.iter().filter_map(Value::as_str).filter_map(journal_of).collect(),
+            _ => Vec::new(),
+        };
+        list.push(ModuleData {
+            grp: text(m, "grp").unwrap_or_default(),
+            class: num(m, "class") as u8,
+            rating: text(m, "rating").and_then(|r| r.chars().next()).unwrap_or('?'),
+            name: text(m, "name"),
+            description: text(m, "ukDiscript"),
+            mount: text(m, "mount").and_then(|r| r.chars().next()),
+            cost: num(m, "cost"),
+            mass: num(m, "mass"),
+            power: num(m, "power"),
+            passive: m.get("passive").is_some_and(|p| p.as_bool() == Some(true) || p.as_f64().is_some_and(|x| x != 0.0)),
+            hulls,
+            pre_engineered: m.get("preEngineered").is_some() || m.get("mercModule").is_some_and(|v| v.as_bool() != Some(false)),
+            figures,
+            coriolis_id: m.get("id").and_then(id_text).unwrap_or_default(),
+            symbol,
+        });
+    }
+    let mut by_symbol: FxHashMap<String, usize> = FxHashMap::default();
+    for (i, m) in list.iter().enumerate() {
+        match by_symbol.get(&m.symbol) {
+            Some(&j) if !list[j].pre_engineered || m.pre_engineered => {}
+            _ => {
+                by_symbol.insert(m.symbol.clone(), i);
+            }
+        }
+    }
+    let slots: serde_json::Map<String, Value> = serde_json::from_str(SLOTS_JSON).unwrap_or_default();
+    let mut hulls: Vec<Hull> = ships.iter().filter_map(|(cid, v)| hull_from(&journal_symbol(cid, v)?, cid, v, &slots, &list)).collect();
+    hulls.sort_by(|a, b| a.name.cmp(&b.name));
+    Table { list, by_symbol, hulls }
+}
+
+fn hull_from(symbol: &str, cid: &str, v: &Value, slot_table: &serde_json::Map<String, Value>, modules: &[ModuleData]) -> Option<Hull> {
+    let symbol = symbol.to_string();
+    let p = v.get("properties")?;
+    // ship-slots.json goes by the journal's symbol, the Corsair's by coriolis-data's id.
+    let names = slot_table.get(&symbol).or_else(|| slot_table.get(cid)).and_then(|s| s.get("slots"));
+    let pad = match num(p, "class") as u8 {
+        3 => 'L',
+        2 => 'M',
+        _ => 'S',
+    };
+    const GRADES: [&str; 5] = ["grade1", "grade2", "grade3", "mirrored", "reactive"];
+    let bulkheads = v
+        .get("bulkheads")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .map(|(i, b)| Bulkhead {
+            symbol: text(b, "symbol")
+                .or_else(|| b.get("edID").and_then(Value::as_u64).and_then(outfitting::module_by_id).map(|m| m.symbol.clone()))
+                .unwrap_or_else(|| format!("{symbol}_armour_{}", GRADES.get(i).copied().unwrap_or("grade1")))
+                .to_ascii_lowercase(),
+            name: text(b, "name").unwrap_or_default(),
+            cost: num(b, "cost"),
+            mass: num(b, "mass"),
+            hullboost: num(b, "hullboost"),
+            res: Resistances { kinetic: num(b, "kinres"), thermal: num(b, "thermres"), explosive: num(b, "explres"), caustic: num(b, "causres") },
+        })
+        .collect();
+    let mut slots = Vec::new();
+    // Core: coriolis-data's seven core slots in the game's order, with their defaults ("5A" or a module id).
+    const CORE: [(&str, &str); 7] = [("PowerPlant", "pp"), ("MainEngines", "t"), ("FrameShiftDrive", "fsd"), ("LifeSupport", "ls"), ("PowerDistributor", "pd"), ("Radar", "s"), ("FuelTank", "ft")];
+    let sizes = v.pointer("/slots/standard").and_then(Value::as_array).cloned().unwrap_or_default();
+    let defaults = v.pointer("/defaults/standard").and_then(Value::as_array).cloned().unwrap_or_default();
+    for (i, (name, grp)) in CORE.iter().enumerate() {
+        let size = sizes.get(i).and_then(slot_class).unwrap_or(0);
+        let default = defaults.get(i).and_then(id_text).and_then(|d| {
+            let mut cr = d.chars();
+            let (class, rating) = (cr.next().and_then(|c| c.to_digit(10)), cr.next());
+            modules
+                .iter()
+                .find(|m| m.grp == *grp && m.coriolis_id == d)
+                .or_else(|| modules.iter().find(|m| m.grp == *grp && !m.pre_engineered && Some(u32::from(m.class)) == class && Some(m.rating) == rating && d.len() == 2))
+                .map(|m| m.symbol.clone())
+        });
+        slots.push(SlotDef { name: (*name).to_string(), kind: SlotKind::Core, size, only: vec![(*grp).to_string()], default });
+    }
+    // Hardpoints, utility mounts and optional internals: the game's names from ship-slots.json, in coriolis-data's
+    // order (its sizes, restrictions and defaults line up with them).
+    for group in ["hardpoints", "internal"] {
+        let sizes = v.pointer(&format!("/slots/{group}")).and_then(Value::as_array).cloned().unwrap_or_default();
+        let defaults = v.pointer(&format!("/defaults/{group}")).and_then(Value::as_array).cloned().unwrap_or_default();
+        let named = names.and_then(|n| n.get(group)).and_then(Value::as_array).cloned().unwrap_or_default();
+        for (i, s) in sizes.iter().enumerate() {
+            let Some(name) = named.get(i).and_then(|n| text(n, "name")) else { continue };
+            let kind = outfitting::slot_kind(&name);
+            if !matches!(kind, SlotKind::Hardpoint | SlotKind::Utility | SlotKind::Optional | SlotKind::Military) {
+                // The planetary approach suite and the like: built in, nothing to plan.
+                continue;
+            }
+            let only: Vec<String> = s.get("eligible").and_then(Value::as_object).map(|e| e.keys().cloned().collect()).unwrap_or_default();
+            let hardpoint = group == "hardpoints";
+            let mut slot = SlotDef { name, kind, size: slot_class(s).unwrap_or(0), only, default: None };
+            // A stock module only where it fits (coriolis-data's Corsair has one default too few, so the rest shift).
+            slot.default = defaults
+                .get(i)
+                .and_then(id_text)
+                .filter(|d| d != "0")
+                .and_then(|id| modules.iter().find(|m| m.coriolis_id == id && m.symbol.starts_with("hpt_") == hardpoint))
+                .filter(|m| fits_slot(m, &slot))
+                .map(|m| m.symbol.clone());
+            slots.push(slot);
+        }
+    }
+    Some(Hull {
+        name: crate::ships::ship_name(&symbol),
+        manufacturer: text(p, "manufacturer").unwrap_or_default(),
+        pad,
+        hull_cost: num(p, "hullCost"),
+        hull_mass: num(p, "hullMass"),
+        speed: num(p, "speed"),
+        boost: num(p, "boost"),
+        boost_energy: num(p, "boostEnergy"),
+        minthrust: num(p, "minthrust") / 100.0,
+        base_shield: num(p, "baseShieldStrength"),
+        base_armour: num(p, "baseArmour"),
+        hardness: num(p, "hardness"),
+        heat_capacity: num(p, "heatCapacity"),
+        masslock: num(p, "masslock"),
+        crew: num(p, "crew") as u8,
+        reserve_fuel: num(p, "reserveFuelCapacity"),
+        bulkheads,
+        slots,
+        symbol,
+    })
+}
+
+/// A slot's class: a number, or `{ "class": n, … }`.
+fn slot_class(v: &Value) -> Option<u8> {
+    v.as_u64().or_else(|| v.get("class").and_then(Value::as_u64)).map(|c| c as u8)
+}
+
+// ---------------------------------------------------------------------------------------------
+// A plan
+
+/// A planned loadout: a hull, its bulkheads and what's in each slot.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Plan {
+    /// Lower-case journal symbol of the hull.
+    pub hull: String,
+    /// The bulkheads' symbol; empty: the hull's first (lightweight).
+    pub bulkheads: String,
+    /// The bulkheads' engineered figures (`mass`, `hullboost`, resistances), as the game reported them.
+    pub bulkheads_engineered: FxHashMap<String, f64>,
+    pub fitted: Vec<Fitted>,
+    /// The cargo hatch is on.
+    pub hatch: bool,
+}
+
+/// A module in a slot.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Fitted {
+    pub slot: String,
+    /// Lower-case journal symbol.
+    pub item: String,
+    pub on: bool,
+    /// Power priority, 0–4 (the game shows 1–5).
+    pub priority: u8,
+    /// Engineered figures by coriolis-data's name (`optmass`, `mass`, `power`), as the game reported them.
+    pub engineered: FxHashMap<String, f64>,
+    /// The journal's blueprint symbol and grade.
+    pub blueprint: Option<(String, u8)>,
+    /// The experimental effect's symbol (`special_fsd_heavy`).
+    pub experimental: Option<String>,
+    /// Engineering planned for it.
+    pub goal: Option<Goal>,
+}
+
+/// Engineering planned for a module: a blueprint to a grade, and an experimental effect.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Goal {
+    /// The journal's blueprint symbol (`FSD_LongRange`).
+    pub blueprint: String,
+    pub grade: u8,
+    /// The experimental effect's symbol.
+    pub experimental: Option<String>,
+}
+
+/// Rolls planned per grade, as the Engineering page plans them by default.
+pub const ROLLS_PER_GRADE: u32 = 3;
+
+/// The materials a plan's engineering goals take, by journal symbol: each blueprint from the grade above the one the
+/// module has of it (else grade 1) to its goal, [`ROLLS_PER_GRADE`] rolls a grade, and each experimental effect not on
+/// it yet. Engineering already done isn't counted again.
+pub fn goal_materials(plan: &Plan) -> Vec<(String, u32)> {
+    let mut out: Vec<(String, u32)> = Vec::new();
+    let mut add = |symbol: &str, n: u32| match out.iter_mut().find(|(s, _)| s == symbol) {
+        Some((_, c)) => *c = c.saturating_add(n),
+        None => out.push((symbol.to_string(), n)),
+    };
+    for f in &plan.fitted {
+        let Some(goal) = &f.goal else { continue };
+        if let Some(bp) = crate::engineering::blueprint_for(&f.item, &goal.blueprint) {
+            let from = match &f.blueprint {
+                Some((done, grade)) if bp.is(done) => grade.saturating_add(1),
+                _ => 1,
+            };
+            if from <= goal.grade {
+                for (s, n) in crate::trader::blueprint_shopping(bp, from, goal.grade, ROLLS_PER_GRADE) {
+                    add(&s, n);
+                }
+            }
+        }
+        if let Some(x) = goal.experimental.as_deref().filter(|x| f.experimental.as_deref() != Some(*x))
+            && let Some(e) = crate::engineering::experimental(x)
+        {
+            for i in &e.cost {
+                add(&i.symbol, i.count);
+            }
+        }
+    }
+    out
+}
+
+impl Fitted {
+    pub fn new(slot: &str, item: &str) -> Fitted {
+        Fitted { slot: slot.to_string(), item: item.trim().to_ascii_lowercase(), on: true, priority: 0, engineered: FxHashMap::default(), blueprint: None, experimental: None, goal: None }
+    }
+
+    /// A figure of this module as fitted: engineered, or its own.
+    pub fn get(&self, data: &ModuleData, key: &str) -> f64 {
+        self.engineered.get(key).copied().unwrap_or_else(|| match key {
+            "mass" => data.mass,
+            "power" => data.power,
+            "cost" => data.cost,
+            _ => data.get(key),
+        })
+    }
+}
+
+impl Plan {
+    /// A new hull as the shipyard sells it, with its standard modules.
+    pub fn stock(hull: &Hull) -> Plan {
+        let fitted = hull.slots.iter().filter_map(|s| s.default.as_ref().map(|d| Fitted::new(&s.name, d))).collect();
+        Plan { hull: hull.symbol.clone(), bulkheads: hull.bulkheads.first().map(|b| b.symbol.clone()).unwrap_or_default(), fitted, hatch: true, ..Plan::default() }
+    }
+
+    /// From a journal `Loadout` or a SLEF export's build, with the game's engineered values.
+    pub fn from_loadout(l: &Value) -> Option<Plan> {
+        let hull = l.get("Ship")?.as_str()?.trim().to_ascii_lowercase();
+        let mut plan = Plan { hull, hatch: true, ..Plan::default() };
+        for m in l.get("Modules").and_then(Value::as_array).into_iter().flatten() {
+            let (Some(slot), Some(item)) = (m.get("Slot").and_then(Value::as_str), m.get("Item").and_then(Value::as_str)) else { continue };
+            let on = m.get("On").and_then(Value::as_bool).unwrap_or(true);
+            let item = item.trim().to_ascii_lowercase();
+            if slot.eq_ignore_ascii_case("Armour") {
+                let base = hull_ref(&plan.hull).and_then(|h| h.bulkheads.iter().find(|b| b.symbol == item));
+                if let (Some(e), Some(b)) = (m.get("Engineering"), base) {
+                    plan.bulkheads_engineered = engineered(&|k| bulkhead_figure(b, k), e);
+                }
+                plan.bulkheads = item;
+                continue;
+            }
+            if slot.eq_ignore_ascii_case("CargoHatch") {
+                plan.hatch = on;
+                continue;
+            }
+            if matches!(outfitting::slot_kind(slot), SlotKind::Cosmetic | SlotKind::Other) {
+                continue;
+            }
+            let mut f = Fitted::new(slot, &item);
+            f.on = on;
+            f.priority = m.get("Priority").and_then(Value::as_u64).unwrap_or(0).min(4) as u8;
+            if let Some(e) = m.get("Engineering") {
+                f.blueprint = e.get("BlueprintName").and_then(Value::as_str).map(|b| (b.to_string(), e.get("Level").and_then(Value::as_u64).unwrap_or(0).min(5) as u8));
+                f.experimental = e.get("ExperimentalEffect").and_then(Value::as_str).map(str::to_string);
+                if let Some(data) = module(&f.item) {
+                    f.engineered = engineered(&|k| data.figures.get(k).copied().or(match k {
+                        "mass" => Some(data.mass),
+                        "power" => Some(data.power),
+                        _ => None,
+                    }), e);
+                }
+            }
+            plan.fitted.push(f);
+        }
+        Some(plan)
+    }
+
+    pub fn module_in(&self, slot: &str) -> Option<&Fitted> {
+        self.fitted.iter().find(|f| f.slot.eq_ignore_ascii_case(slot))
+    }
+
+    /// Puts `item` in `slot`, plain (none: empties it).
+    pub fn set(&mut self, slot: &str, item: Option<&str>) {
+        self.fitted.retain(|f| !f.slot.eq_ignore_ascii_case(slot));
+        if let Some(item) = item {
+            self.fitted.push(Fitted::new(slot, item));
+        }
+    }
+
+    /// The build as a journal `Loadout` event, for EDSY, Coriolis and Where to buy.
+    pub fn to_loadout(&self) -> Value {
+        let mut modules = Vec::new();
+        if !self.bulkheads.is_empty() {
+            modules.push(serde_json::json!({ "Slot": "Armour", "Item": self.bulkheads, "On": true, "Priority": 1 }));
+        }
+        modules.push(serde_json::json!({ "Slot": "CargoHatch", "Item": "modularcargobaydoor", "On": self.hatch, "Priority": 2 }));
+        for f in &self.fitted {
+            modules.push(serde_json::json!({ "Slot": f.slot, "Item": f.item, "On": f.on, "Priority": f.priority }));
+        }
+        serde_json::json!({ "event": "Loadout", "Ship": self.hull, "Modules": modules })
+    }
+}
+
+fn hull_ref(symbol: &str) -> Option<&'static Hull> {
+    hull(symbol)
+}
+
+fn bulkhead_figure(b: &Bulkhead, key: &str) -> Option<f64> {
+    Some(match key {
+        "mass" => b.mass,
+        "hullboost" => b.hullboost,
+        "kinres" => b.res.kinetic,
+        "thermres" => b.res.thermal,
+        "explres" => b.res.explosive,
+        "causres" => b.res.caustic,
+        _ => return None,
+    })
+}
+
+/// The game's engineered values for the figures the sums use, by coriolis-data's names. `base` gives a figure's
+/// unengineered value (None: the module has no such figure). A mass curve's masses or multipliers move together,
+/// as the game moves the whole curve.
+fn engineered(base: &dyn Fn(&str) -> Option<f64>, e: &Value) -> FxHashMap<String, f64> {
+    let mut out = FxHashMap::default();
+    for md in e.get("Modifiers").and_then(Value::as_array).into_iter().flatten() {
+        let Some(label) = md.get("Label").and_then(Value::as_str) else { continue };
+        let Some(value) = md.get("Value").and_then(Value::as_f64).filter(|v| v.is_finite()) else { continue };
+        let original = md.get("OriginalValue").and_then(Value::as_f64).filter(|v| v.is_finite() && *v != 0.0);
+        // A curve's figures, each by the share the game moved the one it reports.
+        let scaled = |keys: &[&'static str]| -> Vec<(&'static str, f64)> {
+            let Some(o) = original else { return Vec::new() };
+            keys.iter().filter_map(|k| base(k).map(|b| (*k, b * value / o))).collect()
+        };
+        let (key, v) = match label {
+            "Mass" => ("mass", value),
+            "PowerDraw" => ("power", value),
+            "PowerCapacity" => ("pgen", value),
+            "Integrity" => ("integrity", value),
+            "FSDOptimalMass" => ("optmass", value),
+            "MaxFuelPerJump" => ("maxfuel", value),
+            "EngineOptimalMass" | "ShieldGenOptimalMass" | "EngineOptPerformance" | "ShieldGenStrength" => {
+                let keys: &[&'static str] = match label {
+                    "EngineOptPerformance" => &["minmul", "optmul", "maxmul", "minmulspeed", "optmulspeed", "maxmulspeed"],
+                    "ShieldGenStrength" => &["minmul", "optmul", "maxmul"],
+                    _ => &["minmass", "optmass", "maxmass"],
+                };
+                for (k, x) in scaled(keys) {
+                    out.insert(k.to_string(), x);
+                }
+                continue;
+            }
+            "KineticResistance" => ("kinres", value / 100.0),
+            "ThermicResistance" => ("thermres", value / 100.0),
+            "ExplosiveResistance" => ("explres", value / 100.0),
+            "CausticResistance" => ("causres", value / 100.0),
+            "DefenceModifierShieldMultiplier" => ("shieldboost", value / 100.0),
+            "DefenceModifierShieldAddition" => ("shieldaddition", value),
+            "DefenceModifierHealthAddition" => ("hullreinforcement", value),
+            "DefenceModifierHealthMultiplier" => ("hullboost", value / 100.0),
+            "ShieldBankReinforcement" => ("shieldreinforcement", value),
+            "FuelCapacity" => ("fuel", value),
+            "CargoCapacity" => ("cargo", value),
+            _ => continue,
+        };
+        out.insert(key.to_string(), v);
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------------------------
+// What a plan comes to
+
+/// What a plan comes to.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Figures {
+    /// Hull and modules, no fuel or cargo: the game's "unladen mass", t.
+    pub unladen_mass: f64,
+    /// Main tank and any internal tanks, t.
+    pub fuel: f64,
+    pub cargo: f64,
+    pub passengers: f64,
+    /// No cargo and fuel for one jump: the game's "max jump range", ly.
+    pub max_range: f64,
+    /// With a full tank and an empty hold.
+    pub full_tank_range: f64,
+    /// With a full tank and a full hold.
+    pub laden_range: f64,
+    /// Jumping on one full tank until it runs dry, empty hold.
+    pub total_range: f64,
+    /// Four pips to engines, full tank, empty hold, m/s. 0: the thrusters can't move this mass.
+    pub speed: f64,
+    pub boost: f64,
+    /// MW.
+    pub power_generated: f64,
+    /// Drawn with the hardpoints retracted, and deployed.
+    pub power_retracted: f64,
+    pub power_deployed: f64,
+    pub shield: Option<Shield>,
+    /// Hull points.
+    pub armour: f64,
+    pub hull_res: Resistances,
+    /// The share of damage to modules that module reinforcement packages take.
+    pub module_protection: f64,
+    /// The hull with its bulkheads, list price, Cr.
+    pub hull_cost: f64,
+    pub modules_cost: f64,
+    /// Modules this data has no figures for (newer than it): not counted.
+    pub unknown: Vec<String>,
+}
+
+impl Figures {
+    pub fn total_cost(&self) -> f64 {
+        self.hull_cost + self.modules_cost
+    }
+
+    /// The insurance excess: 5 % of the ship's value.
+    pub fn rebuy(&self) -> f64 {
+        (self.total_cost() * 0.05).ceil()
+    }
+}
+
+/// Shields, MJ.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Shield {
+    /// The generator and boosters together.
+    pub strength: f64,
+    /// What every shield cell bank's charges add, all fired.
+    pub cells: f64,
+    pub res: Resistances,
+}
+
+/// The mass curve thrusters and shield generators share: a multiplier for `mass` between the module's minimum and
+/// maximum mass, as the game computes it.
+fn mass_curve(min_mass: f64, opt_mass: f64, max_mass: f64, min_mul: f64, opt_mul: f64, max_mul: f64, mass: f64) -> f64 {
+    if max_mass <= min_mass || max_mul <= min_mul || opt_mul <= min_mul {
+        return opt_mul;
+    }
+    let xnorm = ((max_mass - mass) / (max_mass - min_mass)).min(1.0).max(0.0);
+    let exponent = ((opt_mul - min_mul) / (max_mul - min_mul)).ln() / ((max_mass - opt_mass) / (max_mass - min_mass)).min(1.0).ln();
+    min_mul + xnorm.powf(exponent) * (max_mul - min_mul)
+}
+
+/// Shield resistance with boosters: past 30 % below the generator's own damage, each further share counts half.
+fn shield_res(generator: f64, boosters_damage: f64) -> f64 {
+    let gen_dmg = 1.0 - generator;
+    let combined = gen_dmg * boosters_damage;
+    let max = gen_dmg * 0.7;
+    let dmg = if combined < max { max / 2.0 + max / 2.0 * (combined / max) } else { combined };
+    1.0 - dmg
+}
+
+/// Hull resistance: the bulkheads', then each hull reinforcement package from the weakest up, with diminishing
+/// returns past 30 %, capped at 75 %.
+fn hull_res(base: f64, mut packages: Vec<f64>) -> f64 {
+    packages.sort_by(f64::total_cmp);
+    let mut r = base;
+    for p in packages {
+        let p = if p > 0.3 { p * 2.0 - 0.3 } else { p };
+        let lower = r.max(0.3);
+        let stacked = 1.0 - (1.0 - r) * (1.0 - p);
+        let capped = lower + (stacked - lower) / (1.0 - lower) * (0.65 - lower);
+        r = if capped >= 0.3 { capped } else { stacked };
+    }
+    r.min(0.75)
+}
+
+fn is_hardpoint_slot(slot: &str) -> bool {
+    matches!(outfitting::slot_kind(slot), SlotKind::Hardpoint | SlotKind::Utility)
+}
+
+/// What `plan` comes to; `None` for a hull this data doesn't have.
+pub fn figures(plan: &Plan) -> Option<Figures> {
+    let hull = hull(&plan.hull)?;
+    let bulkheads = hull.bulkheads.iter().find(|b| b.symbol == plan.bulkheads).or_else(|| hull.bulkheads.first());
+    let fitted: Vec<(&Fitted, &ModuleData)> = plan.fitted.iter().filter_map(|f| module(&f.item).map(|m| (f, m))).collect();
+    let in_slot = |slot: &str| fitted.iter().find(|(f, _)| f.slot.eq_ignore_ascii_case(slot)).copied();
+    let on = || fitted.iter().filter(|(f, _)| f.on);
+    let sum = |key: &str| fitted.iter().map(|(f, m)| f.get(m, key)).sum::<f64>();
+    let bh = |key: &str, base: f64| plan.bulkheads_engineered.get(key).copied().unwrap_or(base);
+
+    let mut out = Figures { unknown: plan.fitted.iter().filter(|f| module(&f.item).is_none()).map(|f| f.item.clone()).collect(), ..Figures::default() };
+    out.unladen_mass = hull.hull_mass + bulkheads.map_or(0.0, |b| bh("mass", b.mass)) + sum("mass");
+    out.fuel = sum("fuel");
+    out.cargo = fitted.iter().map(|(f, m)| f.get(m, "cargo").round()).sum();
+    out.passengers = sum("passengers");
+
+    // Jump range: one jump's fuel moves optmass × (fuel / fuelmul)^(1 / fuelpower) / mass light years; a Guardian FSD
+    // booster adds its own distance. The game's own "max jump range" leaves the reserve tank out.
+    if let Some((f, m)) = in_slot("FrameShiftDrive") {
+        let (opt, maxfuel, mul, power) = (f.get(m, "optmass"), f.get(m, "maxfuel"), f.get(m, "fuelmul"), f.get(m, "fuelpower"));
+        let booster: f64 = on().filter(|(_, m)| m.grp == "gfsb").map(|(f, m)| f.get(m, "jumpboost")).sum();
+        if opt > 0.0 && mul > 0.0 && power > 0.0 && maxfuel > 0.0 {
+            let range = |mass: f64, fuel: f64| (fuel.min(maxfuel) / mul).powf(1.0 / power) * opt / mass + booster;
+            let one = maxfuel.min(out.fuel);
+            out.max_range = range(out.unladen_mass + one, one);
+            out.full_tank_range = range(out.unladen_mass + out.fuel, one);
+            out.laden_range = range(out.unladen_mass + out.fuel + out.cargo, one);
+            let (mut left, mut mass) = (out.fuel, out.unladen_mass + out.fuel);
+            while left > 1e-9 {
+                let burn = left.min(maxfuel);
+                out.total_range += range(mass, burn);
+                mass -= burn;
+                left -= burn;
+            }
+        }
+    }
+
+    // Speed: the hull's speed through the thrusters' mass curve, with a full tank and the reserve.
+    if let Some((f, m)) = in_slot("MainEngines") {
+        let mass = out.unladen_mass + out.fuel + hull.reserve_fuel;
+        let pick = |a: &str, b: &str| if m.figures.contains_key(a) { f.get(m, a) } else { f.get(m, b) };
+        if mass <= f.get(m, "maxmass") {
+            let mul = mass_curve(f.get(m, "minmass"), f.get(m, "optmass"), f.get(m, "maxmass"), pick("minmulspeed", "minmul"), pick("optmulspeed", "optmul"), pick("maxmulspeed", "maxmul"), mass);
+            out.speed = mul * hull.speed;
+            out.boost = mul * hull.boost;
+        }
+    }
+
+    // Power: the power plant's output against what's switched on; hardpoints draw only when deployed, except the
+    // utilities that run all the time.
+    out.power_generated = in_slot("PowerPlant").map_or(0.0, |(f, m)| f.get(m, "pgen"));
+    let hatch = if plan.hatch { HATCH_POWER } else { 0.0 };
+    out.power_retracted = hatch + on().filter(|(f, m)| !is_hardpoint_slot(&f.slot) || m.passive).map(|(f, m)| f.get(m, "power")).sum::<f64>();
+    out.power_deployed = hatch + on().map(|(f, m)| f.get(m, "power")).sum::<f64>();
+
+    // Shields: the generator's strength for the hull's own mass, boosters adding shares of it, Guardian shield
+    // reinforcement packages their own.
+    if let Some((f, m)) = on().find(|(_, m)| matches!(m.grp.as_str(), "sg" | "bsg" | "psg")).copied() {
+        let generator = hull.base_shield * mass_curve(f.get(m, "minmass"), f.get(m, "optmass"), f.get(m, "maxmass"), f.get(m, "minmul"), f.get(m, "optmul"), f.get(m, "maxmul"), hull.hull_mass);
+        let boosters: Vec<(&Fitted, &ModuleData)> = on().filter(|(_, m)| m.grp == "sb").copied().collect();
+        let boost: f64 = boosters.iter().map(|(f, m)| f.get(m, "shieldboost")).sum();
+        let addition: f64 = on().filter(|(_, m)| m.grp == "gsrp").map(|(f, m)| f.get(m, "shieldaddition")).sum();
+        let damage = |key: &str| boosters.iter().map(|(f, m)| 1.0 - f.get(m, key)).product::<f64>();
+        let cells = fitted.iter().filter(|(_, m)| m.grp == "scb").map(|(f, m)| f.get(m, "shieldreinforcement") * f.get(m, "duration") * (f.get(m, "ammo") + 1.0)).sum();
+        out.shield = Some(Shield {
+            strength: generator * (1.0 + boost) + addition,
+            cells,
+            res: Resistances {
+                kinetic: shield_res(f.get(m, "kinres"), damage("kinres")),
+                thermal: shield_res(f.get(m, "thermres"), damage("thermres")),
+                explosive: shield_res(f.get(m, "explres"), damage("explres")),
+                caustic: 0.0,
+            },
+        });
+    }
+
+    // Armour: the hull's base armour with its bulkheads' boost, plus hull reinforcement packages.
+    let packages: Vec<(&Fitted, &ModuleData)> = on().filter(|(_, m)| matches!(m.grp.as_str(), "hr" | "ghrp" | "mahr")).copied().collect();
+    let base = hull.base_armour;
+    out.armour = base * (1.0 + bulkheads.map_or(0.0, |b| bh("hullboost", b.hullboost)))
+        + packages.iter().map(|(f, m)| f.get(m, "hullreinforcement") + base * f.engineered.get("hullboost").copied().unwrap_or(0.0)).sum::<f64>();
+    let res = |key: &str, from: f64| hull_res(from, packages.iter().map(|(f, m)| f.get(m, key)).collect());
+    let b = bulkheads.map(|b| b.res).unwrap_or_default();
+    out.hull_res = Resistances {
+        kinetic: res("kinres", bh("kinres", b.kinetic)),
+        thermal: res("thermres", bh("thermres", b.thermal)),
+        explosive: res("explres", bh("explres", b.explosive)),
+        caustic: res("causres", bh("causres", b.caustic)),
+    };
+    out.module_protection = 1.0 - on().filter(|(_, m)| matches!(m.grp.as_str(), "mrp" | "gmrp")).map(|(f, m)| 1.0 - f.get(m, "protection")).product::<f64>();
+
+    out.hull_cost = hull.hull_cost + bulkheads.map_or(0.0, |b| b.cost);
+    out.modules_cost = fitted.iter().map(|(_, m)| m.cost).sum();
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An unengineered Kestrel Mk II, as a commander's journal Loadout had it on 2026-11-04, with the game's own
+    /// figures for it: UnladenMass 323.100006, MaxJumpRange 19.642370, FuelCapacity 16 (+0.61 reserve), CargoCapacity 4.
+    const KESTREL: &str = r#"{ "event":"Loadout", "Ship":"smallcombat01_nx", "Modules":[
+        { "Slot":"LargeHardpoint1", "Item":"hpt_pulselaser_gimbal_large", "On":true, "Priority":0 },
+        { "Slot":"LargeHardpoint2", "Item":"hpt_multicannon_gimbal_large", "On":true, "Priority":0 },
+        { "Slot":"LargeHardpoint3", "Item":"hpt_multicannon_gimbal_large", "On":true, "Priority":0 },
+        { "Slot":"SmallHardpoint1", "Item":"hpt_pulselaser_gimbal_small", "On":true, "Priority":0 },
+        { "Slot":"SmallHardpoint2", "Item":"hpt_pulselaser_gimbal_small", "On":true, "Priority":0 },
+        { "Slot":"TinyHardpoint1", "Item":"hpt_shieldbooster_size0_class5", "On":true, "Priority":0 },
+        { "Slot":"TinyHardpoint2", "Item":"hpt_shieldbooster_size0_class5", "On":true, "Priority":0 },
+        { "Slot":"TinyHardpoint3", "Item":"hpt_chafflauncher_tiny", "On":true, "Priority":0 },
+        { "Slot":"TinyHardpoint4", "Item":"hpt_crimescanner_size0_class3", "On":true, "Priority":0 },
+        { "Slot":"Armour", "Item":"smallcombat01_nx_armour_grade1", "On":true, "Priority":1 },
+        { "Slot":"PowerPlant", "Item":"int_powerplant_size5_class5", "On":true, "Priority":1 },
+        { "Slot":"MainEngines", "Item":"int_mkiiagileboost_engine_size5_class5", "On":true, "Priority":0 },
+        { "Slot":"FrameShiftDrive", "Item":"int_hyperdrive_overcharge_size4_class5", "On":true, "Priority":0 },
+        { "Slot":"LifeSupport", "Item":"int_lifesupport_size1_class2", "On":true, "Priority":0 },
+        { "Slot":"PowerDistributor", "Item":"int_powerdistributor_size5_class5", "On":true, "Priority":0 },
+        { "Slot":"Radar", "Item":"int_sensors_size2_class2", "On":true, "Priority":0 },
+        { "Slot":"FuelTank", "Item":"int_fueltank_size4_class3", "On":true, "Priority":1 },
+        { "Slot":"Slot01_Size5", "Item":"int_shieldgenerator_size4_class5", "On":true, "Priority":0 },
+        { "Slot":"Slot02_Size4", "Item":"int_hullreinforcement_size4_class2", "On":true, "Priority":1 },
+        { "Slot":"Slot03_Size3", "Item":"int_modulereinforcement_size3_class2", "On":true, "Priority":1 },
+        { "Slot":"Slot04_Size2", "Item":"int_modulereinforcement_size2_class2", "On":true, "Priority":1 },
+        { "Slot":"Slot05_Size2", "Item":"int_dronecontrol_collection_size1_class5", "On":true, "Priority":0 },
+        { "Slot":"Slot06_Size2", "Item":"int_cargorack_size2_class1", "On":true, "Priority":1 },
+        { "Slot":"Slot07_Size1", "Item":"int_supercruiseassist", "On":true, "Priority":0 },
+        { "Slot":"Military01", "Item":"int_hullreinforcement_size4_class2", "On":true, "Priority":1 },
+        { "Slot":"PlanetaryApproachSuite", "Item":"int_planetapproachsuite_advanced", "On":true, "Priority":1 },
+        { "Slot":"VesselVoice", "Item":"voicepack_verity", "On":true, "Priority":1 },
+        { "Slot":"ShipCockpit", "Item":"smallcombat01_nx_cockpit", "On":true, "Priority":1 },
+        { "Slot":"CargoHatch", "Item":"modularcargobaydoor", "On":true, "Priority":2 } ] }"#;
+
+    #[test]
+    fn the_sums_come_to_the_games_own_figures() {
+        let plan = Plan::from_loadout(&serde_json::from_str(KESTREL).expect("json")).expect("plan");
+        assert_eq!(plan.fitted.len(), 24, "cosmetics, the hatch, bulkheads and the approach suite aren't slots to plan");
+        let f = figures(&plan).expect("figures");
+        assert!(f.unknown.is_empty(), "{:?}", f.unknown);
+        assert!((f.unladen_mass - 323.1).abs() < 0.01, "unladen mass {}", f.unladen_mass);
+        assert!((f.max_range - 19.64237).abs() < 0.0005, "max jump range {}", f.max_range);
+        assert_eq!((f.fuel, f.cargo), (16.0, 4.0));
+        // Ranges shrink with load; the whole tank goes further than one jump.
+        assert!(f.max_range > f.full_tank_range && f.full_tank_range > f.laden_range && f.total_range > 4.0 * f.max_range, "{f:?}");
+        // Figures there's no game value to check against are at least in their ranges.
+        assert!(f.speed > 200.0 && f.boost > f.speed, "{f:?}");
+        assert!(f.power_generated > 0.0 && f.power_deployed > f.power_retracted, "{f:?}");
+        let s = f.shield.expect("a shield generator");
+        assert!(s.strength > 100.0 && (0.0..0.75).contains(&s.res.kinetic), "{s:?}");
+        assert!(f.armour > hull("smallcombat01_nx").expect("hull").base_armour, "{f:?}");
+        // Lightweight alloy takes 20 % more kinetic damage: a resistance can be below 0, never above 75 %.
+        assert!((-1.0..=0.75).contains(&f.hull_res.kinetic) && f.hull_res.kinetic > -0.2, "{f:?}");
+        assert!(f.module_protection > 0.0 && f.rebuy() > 0.0);
+        // The plan goes back out as a Loadout with the same modules.
+        let back = Plan::from_loadout(&plan.to_loadout()).expect("again");
+        assert_eq!((back.hull.as_str(), back.fitted.len(), back.bulkheads.as_str()), ("smallcombat01_nx", 24, "smallcombat01_nx_armour_grade1"));
+    }
+
+    #[test]
+    fn engineering_uses_the_games_values() {
+        let plain = r#"{"Ship":"smallcombat01_nx","Modules":[{"Slot":"FrameShiftDrive","Item":"int_hyperdrive_overcharge_size4_class5"},{"Slot":"FuelTank","Item":"int_fueltank_size4_class3"}]}"#;
+        let tuned = r#"{"Ship":"smallcombat01_nx","Modules":[{"Slot":"FrameShiftDrive","Item":"int_hyperdrive_overcharge_size4_class5","Engineering":{"BlueprintName":"FSD_LongRange","Level":5,"Modifiers":[
+            {"Label":"Mass","Value":13.0,"OriginalValue":10.0,"LessIsGood":1},{"Label":"FSDOptimalMass","Value":1000.0,"OriginalValue":585.0,"LessIsGood":0}]}},
+            {"Slot":"FuelTank","Item":"int_fueltank_size4_class3"}]}"#;
+        let figures_of = |text: &str| figures(&Plan::from_loadout(&serde_json::from_str(text).expect("json")).expect("plan")).expect("figures");
+        let (a, b) = (figures_of(plain), figures_of(tuned));
+        let fsd = module("int_hyperdrive_overcharge_size4_class5").expect("fsd");
+        assert!((b.unladen_mass - a.unladen_mass - (13.0 - fsd.mass)).abs() < 1e-9);
+        // Range scales with optimal mass over total mass.
+        let expected = a.max_range * (1000.0 / fsd.get("optmass")) * (a.unladen_mass + 3.2) / (b.unladen_mass + 3.2);
+        assert!((b.max_range - expected).abs() < 1e-6, "{} vs {expected}", b.max_range);
+        let plan = Plan::from_loadout(&serde_json::from_str(tuned).expect("json")).expect("plan");
+        assert_eq!(plan.fitted[0].blueprint, Some(("FSD_LongRange".to_string(), 5)));
+    }
+
+    /// Play-test finding 14/15: "Total Materials Needed For This Build".
+    #[test]
+    fn engineering_goals_add_up_their_materials() {
+        let mut plan = Plan::from_loadout(&serde_json::from_str(KESTREL).expect("json")).expect("plan");
+        let item = "int_hyperdrive_overcharge_size4_class5";
+        let bp = crate::engineering::blueprint_for(item, "FSD_LongRange").expect("Increased FSD Range for an SCO drive");
+        let x = crate::engineering::experimental("special_fsd_heavy").expect("Mass Manager");
+        let rolls = |from: u8| (from..=5).flat_map(|g| bp.grade(g).unwrap_or_default().iter().map(|i| i.count * ROLLS_PER_GRADE)).sum::<u32>();
+        let total = |p: &Plan| goal_materials(p).iter().map(|(_, n)| *n).sum::<u32>();
+        assert_eq!(total(&plan), 0, "no goals, nothing to gather");
+        let f = plan.fitted.iter_mut().find(|f| f.slot == "FrameShiftDrive").expect("fsd");
+        f.goal = Some(Goal { blueprint: "FSD_LongRange".into(), grade: 5, experimental: Some("special_fsd_heavy".into()) });
+        let experimental: u32 = x.cost.iter().map(|i| i.count).sum();
+        assert_eq!(total(&plan), rolls(1) + experimental, "grades 1 to 5, three rolls each, and the experimental");
+        // What the module has done already isn't gathered again.
+        let f = plan.fitted.iter_mut().find(|f| f.slot == "FrameShiftDrive").expect("fsd");
+        f.blueprint = Some(("FSD_LongRange".into(), 3));
+        f.experimental = Some("special_fsd_heavy".into());
+        assert_eq!(total(&plan), rolls(4));
+    }
+
+    #[test]
+    fn every_hull_has_slots_named_as_the_game_names_them() {
+        // Every hull a shipyard sells has figures.
+        let missing: Vec<&str> = crate::ships::all().iter().filter(|s| hull(&s.symbol).is_none()).map(|s| s.name.as_str()).collect();
+        assert!(missing.is_empty(), "no figures for {missing:?}");
+        for h in hulls() {
+            assert_eq!(h.slots.iter().filter(|s| s.kind == SlotKind::Core).count(), 7, "{}", h.name);
+            assert!(h.slots.iter().any(|s| s.kind == SlotKind::Optional), "{}", h.name);
+            assert!(h.bulkheads.len() >= 5, "{}", h.name);
+            assert!(h.hull_mass > 0.0 && h.speed > 0.0 && h.base_armour > 0.0, "{}", h.name);
+            // A new hull's standard modules fit where they are.
+            for s in &h.slots {
+                if let Some(d) = &s.default {
+                    let m = module(d).unwrap_or_else(|| panic!("{}: default {d} has no figures", h.name));
+                    assert!(fits_slot(m, s), "{}: {d} doesn't fit {}", h.name, s.name);
+                }
+            }
+            let stock = figures(&Plan::stock(h)).expect("stock figures");
+            assert!(stock.max_range > 0.0 && stock.speed > 0.0, "{}: {stock:?}", h.name);
+        }
+        // The Type-11's slots for one kind of module, by the game's names.
+        let t11 = hull("lakonminer").expect("Type-11");
+        let limpets = t11.slot("LimpetController01").expect("limpet slot");
+        assert!(!limpets.only.is_empty() && t11.fits(limpets).iter().all(|m| limpets.only.contains(&m.grp)));
+        assert!(t11.slot("LargeMiningHardpoint1").is_some());
+        // The Anaconda's optional slots skip numbers, as the game's do.
+        let anaconda = hull("anaconda").expect("Anaconda");
+        assert!(anaconda.slot("Slot13_Size2").is_some() && anaconda.slot("Slot11_Size2").is_none());
+    }
+
+    #[test]
+    fn modules_fit_where_the_game_lets_them() {
+        let anaconda = hull("anaconda").expect("Anaconda");
+        let names = |slot: &str| anaconda.fits(anaconda.slot(slot).expect(slot)).iter().map(|m| m.symbol.clone()).collect::<Vec<_>>();
+        let fsds = names("FrameShiftDrive");
+        assert!(fsds.contains(&"int_hyperdrive_size6_class5".to_string()) && fsds.contains(&"int_hyperdrive_size2_class1".to_string()));
+        assert!(!fsds.iter().any(|s| s.contains("size7")), "nothing bigger than the slot");
+        assert!(fsds.iter().all(|s| s.starts_with("int_hyperdrive")), "{fsds:?}");
+        // Optional slots take fuel tanks (filed under the core tank's group), not the approach suite or core modules.
+        let optional = names("Slot02_Size6");
+        assert!(optional.contains(&"int_fueltank_size6_class3".to_string()) && optional.contains(&"int_shieldgenerator_size6_class5".to_string()), "{optional:?}");
+        assert!(!optional.iter().any(|s| s.contains("planetapproachsuite") || s.contains("hyperdrive") || s.contains("powerplant")), "{optional:?}");
+        let military = names("Military01");
+        assert!(military.iter().all(|s| !s.contains("shieldgenerator") && !s.contains("cargorack")), "{military:?}");
+        assert!(military.contains(&"int_hullreinforcement_size5_class2".to_string()));
+        let utility = names("TinyHardpoint1");
+        assert!(utility.contains(&"hpt_shieldbooster_size0_class5".to_string()) && !utility.iter().any(|s| s.contains("pulselaser")));
+        let huge = names("HugeHardpoint1");
+        assert!(huge.contains(&"hpt_multicannon_gimbal_huge".to_string()) && !huge.contains(&"hpt_shieldbooster_size0_class5".to_string()));
+        // Hull-only modules: the Kestrel's Mk II thrusters fit no Anaconda.
+        assert!(!names("MainEngines").contains(&"int_mkiiagileboost_engine_size5_class5".to_string()));
+        // A symbol is offered once, the plain module of it.
+        let pds = names("PowerDistributor");
+        let mut unique = pds.clone();
+        unique.dedup();
+        assert_eq!(pds.len(), unique.len());
+        assert!(!module("int_powerdistributor_size5_class5").expect("pd").pre_engineered);
+    }
+}
