@@ -31,64 +31,78 @@ pub fn wanted(live_run: bool) -> bool {
 pub fn at_start(live_run: bool, shot_tab: Option<&str>) -> Option<Card> {
     match shot_tab {
         Some(t) if t.eq_ignore_ascii_case("support") => Some(Card::default()),
-        Some(t) if t.eq_ignore_ascii_case("support-close") => Some(Card::finished(Instant::now())),
+        Some(t) if t.eq_ignore_ascii_case("support-close") => Some(Card::finished()),
         _ if wanted(live_run) => Some(Card::default()),
         _ => None,
     }
 }
 
-/// The 10 seconds from when the card was first drawn.
-#[derive(Clone, Copy)]
+/// The longest gap between two frames that counts in full: more means the card wasn't being drawn (the window was
+/// minimised), and only this much of it counts.
+const MAX_STEP: Duration = Duration::from_millis(100);
+
+/// The 10 seconds, counted only while the card is in front of the commander: drawn, with Elite Nexus the window in
+/// front. Minimised, behind the game or behind the welcome sheet, it waits.
+#[derive(Clone, Copy, Default)]
 pub struct Countdown {
-    shown: Instant,
+    /// Time the card has been seen so far.
+    seen: Duration,
+    /// The last frame it was seen, to count from on the next.
+    last: Option<Instant>,
 }
 
 impl Countdown {
-    pub fn new(shown: Instant) -> Self {
-        Countdown { shown }
+    /// One frame of the card: `seen` when it's in front of the commander.
+    pub fn tick(&mut self, now: Instant, seen: bool) {
+        if seen && let Some(last) = self.last {
+            self.seen = (self.seen + now.saturating_duration_since(last).min(MAX_STEP)).min(WAIT);
+        }
+        self.last = seen.then_some(now);
     }
 
     /// Time left before the card can be closed.
-    pub fn left(&self, now: Instant) -> Duration {
-        WAIT.saturating_sub(now.saturating_duration_since(self.shown))
+    pub fn left(&self) -> Duration {
+        WAIT.saturating_sub(self.seen)
     }
 
-    pub fn done(&self, now: Instant) -> bool {
-        self.left(now).is_zero()
+    pub fn done(&self) -> bool {
+        self.left().is_zero()
     }
 
     /// The whole seconds to show, rounded up: 10 at the start, 1 in the last second, 0 when it's over.
-    pub fn seconds(&self, now: Instant) -> u64 {
-        let left = self.left(now);
+    pub fn seconds(&self) -> u64 {
+        let left = self.left();
         left.as_secs() + u64::from(left.subsec_nanos() > 0)
     }
 
     /// How much of the wait is left, from 1 at the start to 0 at the end (the ring).
-    pub fn fraction_left(&self, now: Instant) -> f32 {
-        self.left(now).as_secs_f32() / WAIT.as_secs_f32()
+    pub fn fraction_left(&self) -> f32 {
+        self.left().as_secs_f32() / WAIT.as_secs_f32()
     }
 }
 
-/// The card while it's open. Its countdown starts on the frame it's first drawn, so time spent behind the welcome
-/// sheet doesn't count.
+/// The card while it's open.
 #[derive(Default)]
 pub struct Card {
-    countdown: Option<Countdown>,
+    countdown: Countdown,
 }
 
 impl Card {
     /// A card whose countdown is already over (screenshots of the Close button).
-    fn finished(now: Instant) -> Self {
-        Card { countdown: Some(Countdown::new(now.checked_sub(WAIT).unwrap_or(now))) }
+    fn finished() -> Self {
+        Card { countdown: Countdown { seen: WAIT, last: None } }
     }
 
     /// Draws the card; true once Close was clicked.
     pub fn show(&mut self, ctx: &egui::Context) -> bool {
-        let now = Instant::now();
-        let countdown = *self.countdown.get_or_insert_with(|| Countdown::new(now));
-        let done = countdown.done(now);
-        if !done {
-            // The ring empties smoothly; once Close shows nothing moves.
+        // Drawn means not minimised (the window draws nothing then); in front means focused (unknown counts as yes).
+        let in_front = ctx.input(|i| i.viewport().focused.unwrap_or(true) && i.viewport().minimized != Some(true));
+        self.countdown.tick(Instant::now(), in_front);
+        let countdown = self.countdown;
+        let done = countdown.done();
+        if !done && in_front {
+            // The ring empties smoothly; once Close shows nothing moves, and behind the game it waits without
+            // drawing (coming to the front repaints by itself).
             ctx.request_repaint_after(Duration::from_millis(33));
         }
         let mut closed = false;
@@ -134,7 +148,7 @@ impl Card {
                         if done {
                             closed = widgets::primary_button(ui, "Close").clicked();
                         } else {
-                            ring(ui, &countdown, now);
+                            ring(ui, &countdown);
                             ui.label(RichText::new("You can close this in").size(size::FOOTNOTE).color(pal::DIM));
                         }
                     });
@@ -270,13 +284,13 @@ fn support_buttons(ui: &mut Ui) {
 }
 
 /// A ring that empties over the countdown, with the seconds left in it.
-fn ring(ui: &mut Ui, countdown: &Countdown, now: Instant) {
+fn ring(ui: &mut Ui, countdown: &Countdown) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(30.0), Sense::hover());
     let p = ui.painter();
     let c = rect.center();
     let r = 12.5;
     p.circle_stroke(c, r, Stroke::new(3.0, pal::SEPARATOR));
-    let left = countdown.fraction_left(now);
+    let left = countdown.fraction_left();
     if left > 0.0 {
         // Clockwise from the top, as a clock's hand runs.
         let steps = ((64.0 * left).ceil() as usize).max(2);
@@ -288,29 +302,67 @@ fn ring(ui: &mut Ui, countdown: &Countdown, now: Instant) {
         });
         p.add(Shape::line(points.collect(), Stroke::new(3.0, pal::ACCENT)));
     }
-    p.text(c, Align2::CENTER_CENTER, countdown.seconds(now).to_string(), display(size::CAPTION), pal::TEXT);
+    p.text(c, Align2::CENTER_CENTER, countdown.seconds().to_string(), display(size::CAPTION), pal::TEXT);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Frames every 50 ms from `from` for `ms`, seen or not; the time after the last frame.
+    fn frames(c: &mut Countdown, from: Instant, ms: u64, seen: bool) -> Instant {
+        let mut t = from;
+        for _ in 0..ms / 50 {
+            t += Duration::from_millis(50);
+            c.tick(t, seen);
+        }
+        t
+    }
+
     #[test]
-    fn countdown_runs_ten_seconds() {
+    fn countdown_runs_ten_seconds_while_seen() {
         let t0 = Instant::now();
-        let c = Countdown::new(t0);
-        assert_eq!(c.seconds(t0), 10, "starts at 10");
-        assert!(!c.done(t0));
-        assert_eq!(c.seconds(t0 + Duration::from_millis(1)), 10, "rounded up");
-        assert_eq!(c.seconds(t0 + Duration::from_millis(9_200)), 1, "the last second shows 1");
-        assert!(!c.done(t0 + Duration::from_millis(9_999)), "no Close before the 10 seconds");
-        assert!(c.done(t0 + WAIT), "Close at 10 seconds");
-        assert_eq!(c.seconds(t0 + Duration::from_secs(60)), 0);
-        assert!((c.fraction_left(t0) - 1.0).abs() < 1e-6);
-        assert!((c.fraction_left(t0 + Duration::from_secs(5)) - 0.5).abs() < 1e-6);
-        assert_eq!(c.fraction_left(t0 + Duration::from_secs(60)), 0.0);
-        // A clock read before the card was shown (it never goes backwards, but nothing may panic).
-        assert_eq!(c.left(t0.checked_sub(Duration::from_secs(1)).unwrap_or(t0)), WAIT);
+        let mut c = Countdown::default();
+        c.tick(t0, true);
+        assert_eq!(c.seconds(), 10, "starts at 10");
+        assert!(!c.done());
+        assert!((c.fraction_left() - 1.0).abs() < 1e-6);
+        let t = frames(&mut c, t0, 50, true);
+        assert_eq!(c.seconds(), 10, "rounded up");
+        let t = frames(&mut c, t, 4_950, true);
+        assert!((c.fraction_left() - 0.5).abs() < 1e-4, "half way at 5 s");
+        let t = frames(&mut c, t, 4_200, true);
+        assert_eq!(c.seconds(), 1, "the last second shows 1");
+        let t = frames(&mut c, t, 750, true);
+        assert!(!c.done(), "no Close before the 10 seconds");
+        frames(&mut c, t, 50, true);
+        assert!(c.done(), "Close at 10 seconds");
+        assert_eq!(c.seconds(), 0);
+        assert_eq!(c.fraction_left(), 0.0);
+    }
+
+    #[test]
+    fn countdown_waits_while_the_card_isnt_seen() {
+        let t0 = Instant::now();
+        let mut c = Countdown::default();
+        c.tick(t0, true);
+        let t = frames(&mut c, t0, 3_000, true);
+        assert_eq!(c.seconds(), 7);
+        // Behind the game (not focused): frames run, nothing counts.
+        let t = frames(&mut c, t, 60_000, false);
+        assert_eq!(c.seconds(), 7, "waits while Elite Nexus isn't in front");
+        // Minimised: no frames at all, then one a minute later, which counts no more than a frame's worth.
+        c.tick(t, true);
+        let t = t + Duration::from_secs(60);
+        c.tick(t, true);
+        assert_eq!(c.seconds(), 7, "a minute without frames isn't a minute seen");
+        frames(&mut c, t, 7_000, true);
+        assert!(c.done());
+        // A clock read out of order never panics nor counts.
+        let mut c = Countdown::default();
+        c.tick(t0 + Duration::from_secs(1), true);
+        c.tick(t0, true);
+        assert_eq!(c.left(), WAIT);
     }
 
     #[test]
@@ -335,8 +387,8 @@ mod tests {
         assert!(at_start(false, None).is_none(), "a test run (--screenshot, --journal-dir)");
         assert!(at_start(false, Some("history")).is_none(), "another page's tab");
         let running = at_start(false, Some("support")).expect("--tab support");
-        assert!(running.countdown.is_none(), "its countdown starts when it's drawn");
+        assert_eq!(running.countdown.seconds(), 10, "its countdown starts when it's seen");
         let over = at_start(false, Some("support-close")).expect("--tab support-close");
-        assert!(over.countdown.is_some_and(|c| c.done(Instant::now())), "Close showing");
+        assert!(over.countdown.done(), "Close showing");
     }
 }

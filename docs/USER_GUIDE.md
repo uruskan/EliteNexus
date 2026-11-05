@@ -11,7 +11,7 @@ Sponsors and Buy Me a Coffee buttons (each opens its page in your browser), why 
 for, such as early-access ships to test in the game, and a thank-you to the supporters and contributors named in the
 README (the release notes thank the same people). Elite Nexus is free, with no ads, and nothing in it depends on
 support. After a 10-second countdown, **Close** appears; until then the card stays (Esc and clicks outside it don't
-close it). It's only in the main window: never on the overlay or in VR, and it doesn't take focus from the game. On
+close it). The countdown runs only while you can see it: with Elite Nexus minimised or behind the game, it waits. It's only in the main window: never on the overlay or in VR, and it doesn't take focus from the game. On
 a first start it comes after the welcome. In the stable release, supporters and everyone who bought a coffee won't
 see it. Settings › About links GitHub Sponsors too.
 
