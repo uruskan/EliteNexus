@@ -205,7 +205,7 @@ Tod McQuinn     ─▶ Selene Jean (─▶ Didi Vatermann, Bill Turner), Petra O
 
 | Engineer | Type | System | Base (body) | Discovery | Meeting requirement | Unlock (ship) / Referral task (on-foot) | Permit? |
 |---|---|---|---|---|---|---|---|
-| Bill Turner | Ship | Alioth | Turner Metallics Inc (4 A) | Common knowledge | Gain Friendly status with Alliance. You will also need Allied status with Alioth Independents to get a permit to access the Alioth starsystem. | Provide 50 units of Bromellite. | yes |
+| Bill Turner | Ship | Alioth | Turner Metallics Inc (4 A) | From Selene Jean (grade 3-4). (EDD says "Common knowledge": wrong, §4.4) | Gain Friendly status with Alliance. You will also need Allied status with Alioth Independents to get a permit to access the Alioth starsystem. | Provide 50 units of Bromellite. | yes |
 | Broo Tarquin | Ship | Muang | Broo's Legacy (5 A) | From Hera Tani (grade 3-4). | Gain combat rank Competent or higher. | Provide 50 units of Fujin Tea. | no |
 | Chloe Sedesi | Ship | Shenve | Cinder Dock (A 6) | From Marco Qwent (grade 3-4). | Attain a maximum distance from your career start location of at least 5,000 light years. | Provide 25 units of Sensor Fragments. | no |
 | Colonel Bris Dekker | Ship | Sol | Dekker's Yard (Iapetus) | From Juri Ishmaak (grade 3-4). | Friendly with the Federation. | Provide 1,000,000 or 10,000,000 credits worth of federal combat bonds. | yes |
@@ -245,6 +245,53 @@ Tod McQuinn     ─▶ Selene Jean (─▶ Didi Vatermann, Bill Turner), Petra O
 | Yi Shen | On-foot (Colonia) | Einheriar | Eidolon Hold (1 A) | Fulfill the referral requirements of Baltanos, Eleanor Bresa, and Rosa Dayette. | Fulfill the referral requirements of Baltanos, Eleanor Bresa, and Rosa Dayette. | Yi Shen does not offer a referral. | no |
 
 Permit-locked systems: Alioth (Bill Turner), Sol (Bris Dekker), Shinrarta Dezhra (Lori Jameson), Sirius (Marco Qwent), Achenar (Tiana Fortune).
+
+### 4.4 Unlock requirements re-checked (2026-11-05, game 4.4.2.1)
+
+Every engineer's discovery, invitation, unlock and referral was compared with these sources. Inara (HTTP 503), the
+Fandom wiki (402) and Frontier's forum (403) refused automated reads that day.
+
+* **Frontier's update notes**, every one from 18.08 (6 August 2024) to 4.4.2.1 (23 October 2026), read at
+  elitedangerous.com/news/updates.
+  * **18.08** is the only update in that span that changed engineers:
+    * "Updated engineer rolls to consistently give a fixed roll depending on the grade of the recipe and the
+      commander rank with the engineer" (§6.1).
+    * Hero Ferrari: Settlement Defence Plans 15 → 5.
+    * Yarden Bond: Smear Campaign Plans 8 → 5.
+    * Wellington Beck: 15 Cat Media, Classic Entertainment or Multimedia Entertainment in total.
+    * Kit Fowler: Opinion Polls 10 → 5.
+    * Power Regulators removed from recipes.
+  * Later notes touch engineering only in passing: resistances capped at 75 % (4.3.0.1, December 2025), MercGear
+    engineering fixes (4.4.1.0, September 2026: MercGear not engineerable right after purchase, the Seeker Missile Rack
+    MercGear with Petra Olmanova), and Mk II cargo racks' rounding (4.4.2.0, October 2026).
+  * The 2022–2024 notes (4.0.11 to 18.07) change no requirement either.
+* **ED Field Manual, "Engineers"** (edfieldmanual.com, reviewed 2026-09-10, marked "partially verified"). Its 24 ship
+  rows and 13 on-foot rows match §4.2, except one: Bill Turner comes from Selene Jean's referral.
+  * Its wording differs in places: "Deliver 10 units of Osmium" for Marsha Hicks, where the game's text (EDD) is
+    "Mine 10 units of Osmium".
+  * It notes that the combat-bond amounts for Juri Ishmaak and Colonel Bris Dekker (the lower or the higher figure)
+    depend on a condition no public source explains.
+* **Community unlock guides**:
+  * Fox's step-by-step guide (wanderer-toolbox.com, a restored copy).
+  * BoostRoom's engineering guide (2 September 2026).
+  * NEWP's engineering guide (updated 28 October 2026).
+  * All three: Tod McQuinn refers Selene Jean; she wants 500 t of ore mined, then 10 Painite. Fox's guide and
+    BoostRoom's add that Selene Jean leads to Didi Vatermann and Bill Turner.
+
+What changed in the data:
+
+* **Bill Turner**: discovery "From Selene Jean (grade 3-4)" instead of EDD's "Common knowledge", so Selene Jean's
+  referral now names both Didi Vatermann and Bill Turner (`ship_discovery` in the converter).
+* **On-foot engineers' `unlock_cost`** is empty. It held EDEngineer's pre-2024 "Unlock" rows (for example, 15
+  Settlement Defence Plans for Wellington Beck and 8 Smear Campaign Plans for Yarden Bond). Their current hand-ins are
+  the referral tasks in the converter's `ON_FOOT` table, which already had 18.08's values.
+
+**Selene Jean is unchanged**: discovered through Tod McQuinn (grade 3 and a third of grade 4), invited after
+500 t of ore mined, unlocked with 10 Painite. A tester's comment on GitHub issue #4 ("get invite, no need to provide
+10 Painite") most likely reflects the Engineers table showing only the last step. The page now shows the whole way.
+
+Still unconfirmed: whether Marsha Hicks takes bought Osmium. A 2026-10-04 news piece (carriertv.buanzo.org) reports
+commanders asking. The data keeps the game's "Mine 10 units of Osmium".
 
 ### 4.3 Which modules each engineer offers, and the max grade
 
@@ -381,7 +428,25 @@ On-foot engineers have no grades: each modification is a single upgrade. A suit 
 * **Engineer access:** an engineer offers a blueprint only up to their max grade for that module type (§4.3). You need that engineer's access at or above the grade.
 * **Experimental effects:** one per module, applied on a module that has a blueprint. They cost a fixed recipe (Appendix A2). Applying a new experimental replaces the old one. Journal: `EngineerCraft.ApplyExperimentalEffect`, `Loadout…Engineering.ExperimentalEffect`.
 * **Journal fields:** engineered modules appear in `Loadout.Modules[].Engineering` as `{EngineerID, BlueprintID, BlueprintName (fdname, e.g. "FSD_LongRange"), Level, Quality (0..1 progress in the current grade), Modifiers[], ExperimentalEffect}`. Stored modules show `EngineerModifications`, `Level` and `Quality`. `EngineerCraft` logs every roll with the `Ingredients[]` consumed. These let the planner subtract materials automatically.
-* **Rolls needed per grade:** not published by Frontier. Planners such as EDEngineer and EDOMH let the user choose a roll count; keep that user-configurable.
+* **Rolls needed per grade (checked 2026-11-05):**
+  * **Fixed since Update 18.08** (6 August 2024). Frontier's notes: "Updated engineer rolls to consistently give a
+    fixed roll depending on the grade of the recipe and the commander rank with the engineer." Before 18.08 a roll's
+    progress was random, which is why older guides speak of luck and of 10 or more rolls for a G5.
+  * **The share of a grade one roll fills**: 20 % at the rank that opens the grade, then 25, 34, 50 and 100 % for each
+    rank above. So 5 rolls at the opening rank, one fewer per rank above, and at rank 5 it's 1 roll for G1 up to 5 for
+    G5.
+    * Source: the Fandom wiki's "Engineers" table, as search engines quote it. The wiki refused our reads, so it
+      wasn't seen directly.
+    * NEWP's guide (28 October 2026) and BoostRoom's (2 September 2026) give the same 1 to 5 at full reputation.
+    * A tester's report of 5 rolls for a G1 at a new engineer fits it.
+  * **A G5 always takes 5 rolls**: only rank 5 opens it.
+  * **Rank goes up as the commander crafts.** A new engineer's grades take up to 5 rolls each until the rank climbs.
+    How many rolls each rank takes isn't published.
+  * **In code**: `engineering::GRADE_ROLLS`, `rolls_at_rank`, `grade_rolls_at_rank`.
+    * The Blueprint planner starts from the top rank's counts.
+    * It keeps the commander's own (1 to 5 at each grade) in the settings, and offers the counts for the rank the
+      journal reports with the engineer for the plan.
+    * `trader::blueprint_shopping_by_grade` multiplies them by the number of modules.
 * **Newer module sources:**
   * **Pre-engineered** items from the tech broker, e.g. "Engineered FSD (SCO) V1" classes 2–7 (needs a Titan Drive Component) and the AX/enzyme weapons (Appendix A4 / EDD list).
   * **MercGear** modules (2026, FDevIDs `outfitting.csv` category `mercgear`) bought with **MercCoins**. Journal: `BuyMercCoinsPrice` on Outfitting/ModuleBuy, `Statistics.Bank_Account.MercCoins_*`.

@@ -355,6 +355,30 @@ pub fn blueprint_merc_coins(blueprint: &Blueprint, from_grade: u8, to_grade: u8,
         .fold(0, u32::saturating_add)
 }
 
+/// The rolls a plan makes at each grade from `from_grade` to `to_grade` (clamped to the blueprint's grades): `rolls[g -
+/// 1]` at grade `g` (as [`crate::engineering::GRADE_ROLLS`]) on each of `modules` modules, as every module is rolled
+/// on its own.
+pub fn planned_rolls(blueprint: &Blueprint, from_grade: u8, to_grade: u8, rolls: &[u32; 5], modules: u32) -> Vec<(u8, u32)> {
+    (from_grade.max(1)..=to_grade.min(blueprint.max_grade()))
+        .map(|g| (g, rolls.get(usize::from(g) - 1).copied().unwrap_or(0).saturating_mul(modules)))
+        .collect()
+}
+
+/// Materials needed to roll `blueprint` from `from_grade` to `to_grade` with `rolls[g - 1]` rolls at grade `g`, on
+/// `modules` modules (four hull reinforcement packages with the same blueprint take four times the materials), summed
+/// per material.
+pub fn blueprint_shopping_by_grade(blueprint: &Blueprint, from_grade: u8, to_grade: u8, rolls: &[u32; 5], modules: u32) -> Vec<(String, u32)> {
+    blueprint_shopping_rolls(blueprint, &planned_rolls(blueprint, from_grade, to_grade, rolls, modules))
+}
+
+/// Merc Coins for the same rolls as [`blueprint_shopping_by_grade`] (0 for ordinary blueprints).
+pub fn blueprint_merc_coins_by_grade(blueprint: &Blueprint, from_grade: u8, to_grade: u8, rolls: &[u32; 5], modules: u32) -> u32 {
+    planned_rolls(blueprint, from_grade, to_grade, rolls, modules)
+        .into_iter()
+        .map(|(g, n)| blueprint.merc_coins_for(g).saturating_mul(n))
+        .fold(0, u32::saturating_add)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -561,5 +585,36 @@ mod tests {
         // DWE (G5 wake) from Eccentric Hyperspace Trajectories (G4 wake): 6:1 → 24.
         assert_eq!(plan.given("hyperspacetrajectories"), 24);
         assert!(plan.is_complete());
+    }
+
+    /// Each grade its own rolls, times the modules that get the blueprint.
+    #[test]
+    fn rolls_per_grade_and_modules() {
+        use crate::engineering::GRADE_ROLLS;
+        let count = |list: &[(String, u32)], s: &str| list.iter().find(|(k, _)| k == s).map_or(0, |(_, n)| *n);
+        let lr = blueprint("FSD_LongRange").unwrap();
+        // At an engineer's top rank: G1 once (1 wake echo), G2 twice (wake echoes again, and more), up to G5 five times.
+        let one = blueprint_shopping_by_grade(lr, 1, 5, &GRADE_ROLLS, 1);
+        assert_eq!(count(&one, "disruptedwakeechoes"), 1 + 2, "G1's single roll and G2's two");
+        assert_eq!(count(&one, "dataminedwake"), 5, "G5's five rolls");
+        assert_eq!(count(&one, "manganese"), 4, "G4's four rolls");
+        assert_eq!(one.iter().map(|(_, n)| n).sum::<u32>(), 1 + 2 * 2 + 3 * 3 + 4 * 3 + 5 * 3);
+        // Four modules take four times everything.
+        let four = blueprint_shopping_by_grade(lr, 1, 5, &GRADE_ROLLS, 4);
+        for (s, n) in &one {
+            assert_eq!(count(&four, s), n * 4, "{s}");
+        }
+        // Grades outside the plan or the blueprint count nothing; the same rolls everywhere match the old sum.
+        assert_eq!(blueprint_shopping_by_grade(lr, 4, 5, &GRADE_ROLLS, 1).iter().map(|(_, n)| n).sum::<u32>(), 4 * 3 + 5 * 3);
+        assert!(blueprint_shopping_by_grade(lr, 6, 9, &GRADE_ROLLS, 3).is_empty());
+        assert!(blueprint_shopping_by_grade(lr, 1, 5, &GRADE_ROLLS, 0).is_empty(), "no modules, nothing to roll");
+        assert_eq!(blueprint_shopping_by_grade(lr, 1, 5, &[3; 5], 1), blueprint_shopping(lr, 1, 5, 3));
+        assert_eq!(planned_rolls(lr, 2, 4, &GRADE_ROLLS, 2), vec![(2, 4), (3, 6), (4, 8)]);
+        // Merc Coins: the 5E Extended cargo rack's G2 to G4 at 10, 20 and 40 coins a roll, 2, 3 and 4 rolls, on 3 racks.
+        let rack = blueprint("cargoracks5c1_extended").unwrap();
+        assert_eq!(blueprint_merc_coins_by_grade(rack, 1, 5, &GRADE_ROLLS, 3), (10 * 2 + 20 * 3 + 40 * 4) * 3);
+        assert_eq!(blueprint_merc_coins_by_grade(lr, 1, 5, &GRADE_ROLLS, 3), 0);
+        // Huge counts saturate instead of wrapping.
+        assert_eq!(blueprint_merc_coins_by_grade(rack, 2, 4, &[u32::MAX; 5], u32::MAX), u32::MAX);
     }
 }

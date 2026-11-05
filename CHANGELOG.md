@@ -231,6 +231,25 @@ release time that section becomes the new version and the release workflow publi
   carrier, or nearest you, from Spansh's station search, with the nearest picked: plan a route there for your ship or
   your carrier in one click, or pick another station. Without Spansh it falls back to the local database and says what
   that one knows.
+- **Engineering › Blueprint planner: rolls at each grade** (GitHub issue #4; thanks to nhok0169 for this idea and the
+  next two). Each grade now has its own number of rolls, shown as chips under the grade to reach.
+  - Since the game's August 2024 update, every roll fills a fixed share of its grade, set by the grade and your rank
+    with the engineer. The planner starts from an engineer's top rank: 1 roll at G1, 2 at G2, up to 5 at G5.
+  - The pen opens all five grades to change. At a lower rank a grade takes up to 5 rolls, as commanders report, and a
+    button sets the counts for the rank your journal reports with the engineer for the plan.
+  - Your counts are kept for later plans.
+- **Engineering › Blueprint planner: number of modules**. Plan one blueprint for several modules at once, such as four
+  hull reinforcement packages. The materials, Merc Coins and experimental effects count for every module, and so do the
+  wishlist, the shopping list and the trader plan. **From your ship** puts identical modules (same blueprint, same
+  grade) in one row with their count, and adds them as one plan.
+- **Engineering › Engineers: the whole way to each engineer**.
+  - The list shows your next step with each one in plain words, from your journal, or what an unlocked one works on.
+    Three dots show where you stand: heard of, invited, unlocked.
+  - Click an engineer for the whole way to them, with the step you're on: who tells you about them and at what grade,
+    what earns the invitation, and what they want before they work for you. The panel also says how to raise your rank,
+    who they lead to and what they work on.
+  - The old table showed only the last step: for Selene Jean, "Provide 10 units of Painite". The whole way is grade 3
+    and a third of grade 4 with Tod 'The Blaster' McQuinn, then 500 tons of ore mined, then the 10 Painite.
 
 ### Changed
 - **Statistics** is rebuilt in three tabs. **Career** turns the game's own statistics into plain words: time in the
@@ -258,8 +277,8 @@ release time that section becomes the new version and the release workflow publi
   and − and + step it by an amount that fits its size (1,000 Cr around 48,000 Cr, 100,000 Cr around 1.5 M Cr); **Within**
   can be **Anywhere**. Under it, the commodity's galactic average and the best price in the alert's range right now,
   with its filters, each set the price in one click. Your alerts are a list with a switch and a delete button on each.
-- **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
-  controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
+- **Engineering** › Blueprint planner is easier to read. Pick the grade to reach with plain controls, and it says at
+  once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
 - **Engineering** › Suits & weapons and Synthesis read the same way: each recipe (a grade, a modification, a
   synthesis) is one row that says Ready or how many materials you're short of, with its price or effect, and opens
@@ -328,6 +347,15 @@ release time that section becomes the new version and the release workflow publi
   system, distance and demand in columns of their own, sortable, with the next best buyers on the price's tooltip.
 
 ### Fixed
+- **Engineering › Engineers**, checked against every game update since August 2024 and current guides:
+  - Bill Turner comes through Selene Jean's referral. The data, and so Ask, said every commander knows of him from
+    the start.
+  - On-foot engineers no longer carry hand-ins from before 2024 (15 Settlement Defence Plans and the like) into what
+    Ask says. The game's current, lower requirements were already shown.
+  - On-foot engineers' modifications show by name instead of the game's codes (`suit_improvedarmourrating`).
+- **Ask** plans engineering with each grade's own rolls (1 at G1 up to 5 at G5, unless asked otherwise) instead of 3 at
+  every grade, can plan several modules at once, and gives the whole way to an engineer, step by step, marking the steps
+  done and the next one.
 - **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at
   the window's edge, and the bodies table scrolled in a box of its own.
 - **Inara**: switching sync on, or starting Elite Nexus during a game session, no longer sends missions you handed

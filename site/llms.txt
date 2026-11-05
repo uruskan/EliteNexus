@@ -70,8 +70,9 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   Powerplay, combat missions, what makes you wanted, notoriety, the detention centre), written for the rules before
   Frontier's Law & Disorder update (December 2026). The assistant answers "where's the nearest war?" from the same list.
 - Also: Spansh neutron/exact/fleet-carrier route planners, next system copied to the clipboard after each jump,
-  engineering wishlist and material shopping list (with where to get what you're short of: the nearest material
-  trader of its kind, planets rich in a raw material, markets and ring hotspots for a commodity), fleet loadouts with
+  engineering wishlist and material shopping list (each grade's own rolls, several modules at once, and where to get
+  what you're short of: the nearest material trader of its kind, planets rich in a raw material, markets and ring
+  hotspots for a commodity), every engineer's whole way to unlock them from your journal, fleet loadouts with
   EDSY/Coriolis links, missions (and where to get the goods they ask for) and massacre stacks, mining (with the
   Rhino's surface mining locations, a radar and a minimap to find their deposits again, how far apart to place rigs,
   and where to surface-mine next: bodies with mining locations near you or along a route, by class and volcanism,

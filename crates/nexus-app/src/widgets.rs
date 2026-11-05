@@ -501,6 +501,25 @@ pub fn bar(ui: &mut Ui, frac: f32, color: Color32, height: f32, text: Option<&st
     resp
 }
 
+/// Steps in order as dots: the `done` first ones filled green, the next one filled in `now` (the step being worked on),
+/// the rest as grey rings. For a few steps (the way to an engineer: heard of, invited, unlocked).
+pub fn step_dots(ui: &mut Ui, steps: usize, done: usize, now: Color32) -> Response {
+    const GAP: f32 = 12.0;
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(GAP * steps as f32, 12.0), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        for i in 0..steps {
+            let c = Pos2::new(rect.left() + GAP * (i as f32 + 0.5), rect.center().y);
+            match i.cmp(&done) {
+                std::cmp::Ordering::Less => p.circle_filled(c, 4.0, pal::GOOD),
+                std::cmp::Ordering::Equal => p.circle_filled(c, 4.0, now),
+                std::cmp::Ordering::Greater => p.circle_stroke(c, 3.5, Stroke::new(1.2, pal::FAINT)),
+            };
+        }
+    }
+    resp
+}
+
 /// Shares of a whole as one capsule, like the storage bar in Apple's settings: each part in its colour, as wide as its
 /// share (a small share keeps a sliver, so it still shows), with a hairline gap between parts. Returns the bar's
 /// response and the part under the pointer, for its tooltip.
@@ -780,6 +799,16 @@ pub fn chip(ui: &mut Ui, text: &str) -> Response {
     ui.add(egui::Button::new(RichText::new(text).size(size::CALLOUT).color(pal::TEXT)).fill(pal::CARD).corner_radius(CornerRadius::same(255)).min_size(Vec2::new(0.0, 32.0)))
 }
 
+/// A count on a capsule after its caption ("G3 4": the caption dim, the count bright), for a set of numbers that open
+/// to change on a click.
+pub fn count_chip(ui: &mut Ui, caption: &str, count: &str) -> Response {
+    let mut job = egui::text::LayoutJob::default();
+    let format = |font_id: FontId, color: Color32| egui::TextFormat { font_id, color, valign: Align::Center, ..Default::default() };
+    job.append(caption, 0.0, format(FontId::proportional(size::FOOTNOTE), pal::DIM));
+    job.append(count, 6.0, format(display(size::CALLOUT), pal::TEXT));
+    ui.add(egui::Button::new(job).fill(pal::CARD_HI).corner_radius(CornerRadius::same(255)).min_size(Vec2::new(0.0, 28.0)))
+}
+
 // ---------------------------------------------------------------------------------------------
 // Filter chips
 
@@ -925,7 +954,8 @@ pub fn number(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>
     let mid = widest[0].max(widest[1]) + 18.0;
     // The glass goes under the controls, so its place is kept before they're drawn.
     let under = ui.painter().add(egui::Shape::Noop);
-    let row = ui.horizontal(|ui| {
+    // − value +, left to right even in a right-to-left row (a grouped list's trailing control), which would turn it round.
+    let row = ui.allocate_ui_with_layout(Vec2::new(28.0 * 2.0 + mid, H), Layout::left_to_right(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         let minus = step_half(ui, egui_phosphor::regular::MINUS, *value > lo, true);
         let mut resp = ui

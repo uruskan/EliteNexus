@@ -244,6 +244,116 @@ impl Engineer {
         let d: f64 = self.pos.iter().zip(pos).map(|(a, b)| (a - b) * (a - b)).sum();
         d.sqrt()
     }
+
+    /// One step of the way to them, in plain words: who tells the commander about them and how, what earns their
+    /// invitation, what they ask for before they work for the commander.
+    pub fn step(&self, step: Step) -> String {
+        match step {
+            Step::Learn => self.learn(),
+            // Yi Shen's invitation comes with the three referrals that tell the commander about them.
+            Step::Invitation if self.meeting.trim() == self.discovery.trim() => "Nothing more: the referrals bring the invitation.".into(),
+            Step::Invitation => sentence(&self.meeting),
+            Step::Unlock if self.unlock.trim().is_empty() => format!("Nothing to hand in: once invited, go to {}.", self.base),
+            Step::Unlock => sentence(&self.unlock),
+        }
+    }
+
+    /// Known to every commander from the start: no one refers them.
+    pub fn public(&self) -> bool {
+        self.referred_by.is_empty()
+    }
+
+    /// The step the commander is on with them ([`Step::next`]), past hearing of them for one known to all from the start
+    /// (the journal may not have listed any engineer yet).
+    pub fn next_step(&self, progress: Option<&str>) -> Option<Step> {
+        match Step::next(progress) {
+            Some(Step::Learn) if self.public() => Some(Step::Invitation),
+            s => s,
+        }
+    }
+
+    /// The steps still ahead from where the commander stands with them (`progress` as for [`Step::next`]): all three for
+    /// one they haven't heard of, none once they're unlocked.
+    pub fn steps_from(&self, progress: Option<&str>) -> Vec<(Step, String)> {
+        let Some(next) = self.next_step(progress) else { return Vec::new() };
+        Step::ALL.into_iter().filter(|s| *s >= next).map(|s| (s, self.step(s))).collect()
+    }
+
+    /// How the commander hears of them: known to everyone from the start, a ship engineer's referral (grade 3 and a
+    /// third of grade 4 with the engineer before), or an on-foot engineer's referral task (goods handed to the one
+    /// before).
+    fn learn(&self) -> String {
+        if self.public() {
+            return "Known to every commander from the start.".into();
+        }
+        if self.kind == EngineerKind::Ship {
+            return format!("Reach grade 3 and a third of the way to grade 4 with {}.", and_list(&self.referred_by));
+        }
+        let costs: Vec<(&str, &[Ingredient])> =
+            self.referred_by.iter().map(|by| (by.as_str(), engineer_by_name(by).map_or(&[][..], |e| e.referral_cost.as_slice()))).collect();
+        if costs.iter().all(|(_, c)| !c.is_empty()) {
+            let tasks: Vec<String> = costs.iter().map(|(by, c)| format!("{} to {by}", and_list(&c.iter().map(units).collect::<Vec<_>>()))).collect();
+            return format!("Provide {}.", and_list(&tasks));
+        }
+        let tasks: Vec<String> = self.referred_by.iter().map(|by| format!("{by}'s referral task")).collect();
+        format!("Complete {}.", and_list(&tasks))
+    }
+}
+
+/// "5 units of Push", "1 unit of Meta-Alloys".
+fn units(i: &Ingredient) -> String {
+    format!("{} unit{} of {}", i.count, if i.count == 1 { "" } else { "s" }, i.name())
+}
+
+/// "A", "A and B", "A, B and C".
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// Text as a sentence: trimmed, with a full stop.
+fn sentence(s: &str) -> String {
+    let s = s.trim();
+    if s.is_empty() || s.ends_with(['.', '!', '?']) { s.to_string() } else { format!("{s}.") }
+}
+
+/// A step on the way to an engineer working for the commander, in order: the journal's `EngineerProgress` says which
+/// one they're on ([`Step::next`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Step {
+    /// Hearing of them: known to everyone from the start, or told by another engineer.
+    Learn,
+    /// What earns their invitation.
+    Invitation,
+    /// What they ask for at their workshop before they work for the commander.
+    Unlock,
+}
+
+impl Step {
+    pub const ALL: [Step; 3] = [Step::Learn, Step::Invitation, Step::Unlock];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Step::Learn => "Learn of them",
+            Step::Invitation => "Invitation",
+            Step::Unlock => "Unlock",
+        }
+    }
+
+    /// The step a commander is on with an engineer, from `Progress` in the journal's `EngineerProgress` (`None`: the
+    /// journal doesn't list the engineer, so the commander hasn't heard of them). `None` back: no step left, as they're
+    /// unlocked (or the commander is barred).
+    pub fn next(progress: Option<&str>) -> Option<Step> {
+        match progress.map(str::trim) {
+            None | Some("") => Some(Step::Learn),
+            Some(p) if p.eq_ignore_ascii_case("Known") => Some(Step::Invitation),
+            Some(p) if p.eq_ignore_ascii_case("Invited") || p.eq_ignore_ascii_case("Acquainted") => Some(Step::Unlock),
+            Some(_) => None,
+        }
+    }
 }
 
 /// One synthesis recipe (journal `Synthesis.Name`).
@@ -766,6 +876,35 @@ pub fn blueprints_for_module(module_symbol_or_type: &str) -> Vec<&'static Bluepr
 }
 
 // ---------------------------------------------------------------------------------------------
+// Rolls
+// ---------------------------------------------------------------------------------------------
+
+/// The rolls that complete each grade (G1 first) at an engineer's top rank: 1 for G1 up to 5 for G5. Since the game's
+/// Update 18.08 (6 August 2024) a roll fills a fixed share of its grade, set by the grade and the commander's rank with
+/// the engineer ([`rolls_at_rank`]; `docs/research/engineering.md` §6.1 has the sources). The Blueprint planner and Ask
+/// start from these, and the commander's own are in the Engineering page's settings, for Fleet's planner to read too.
+pub const GRADE_ROLLS: [u32; 5] = [1, 2, 3, 4, 5];
+
+/// The most rolls a grade takes, as commanders report it: at the rank that opens it, a roll fills a fifth of it.
+pub const MAX_ROLLS: u32 = 5;
+
+/// The rolls that complete `grade` (1–5) at `rank` with the engineer, as commanders report them (Frontier's notes say
+/// only that grade and rank set them): 5 at the rank that opens the grade, one fewer for each rank above it, so 1 for
+/// G1 at rank 5. A grade above the rank counts at the rank that opens it, as the commander has to reach that first. 0
+/// for a grade that doesn't exist.
+pub fn rolls_at_rank(grade: u8, rank: u8) -> u32 {
+    if !(1..=5).contains(&grade) {
+        return 0;
+    }
+    MAX_ROLLS - u32::from(rank.clamp(grade, 5) - grade)
+}
+
+/// [`rolls_at_rank`] for every grade, G1 first.
+pub fn grade_rolls_at_rank(rank: u8) -> [u32; 5] {
+    [1, 2, 3, 4, 5].map(|g| rolls_at_rank(g, rank))
+}
+
+// ---------------------------------------------------------------------------------------------
 // Experimentals
 // ---------------------------------------------------------------------------------------------
 
@@ -1008,6 +1147,67 @@ mod tests {
         let domino = engineer_by_name("Domino Green").unwrap();
         assert_eq!(domino.referral_cost, vec![Ingredient { symbol: "push".into(), count: 5 }]);
         assert!(domino.mods.iter().any(|m| m == "suit_improvedradar"));
+    }
+
+    /// Since Update 18.08 a roll fills a fixed share of its grade: 20 % at the rank that opens it, then 25, 34, 50 and
+    /// 100 % for each rank above (engineering.md §6.1).
+    #[test]
+    fn rolls_by_grade_and_rank() {
+        assert_eq!(GRADE_ROLLS, grade_rolls_at_rank(5), "the planner's defaults are the top rank's");
+        assert_eq!(grade_rolls_at_rank(1), [5; 5], "a new engineer: five rolls at each grade, as each rank comes");
+        assert_eq!(grade_rolls_at_rank(3), [3, 4, 5, 5, 5]);
+        assert_eq!((rolls_at_rank(1, 2), rolls_at_rank(2, 4), rolls_at_rank(4, 5)), (4, 3, 4));
+        assert_eq!((rolls_at_rank(0, 5), rolls_at_rank(6, 5), rolls_at_rank(3, 0), rolls_at_rank(1, 9)), (0, 0, 5, 1));
+        assert!(GRADE_ROLLS.iter().all(|n| (1..=MAX_ROLLS).contains(n)));
+    }
+
+    /// The whole way to an engineer in plain words, and the steps left from where the journal says the commander stands.
+    #[test]
+    fn the_way_to_an_engineer() {
+        let selene = engineer_by_name("Selene Jean").unwrap();
+        assert_eq!(selene.step(Step::Learn), "Reach grade 3 and a third of the way to grade 4 with Tod 'The Blaster' McQuinn.");
+        assert_eq!(selene.step(Step::Invitation), "Mine at least 500 tons of ore.");
+        assert_eq!(selene.step(Step::Unlock), "Provide 10 units of Painite.");
+        let labels = |p: Option<&str>| selene.steps_from(p).into_iter().map(|(s, _)| s).collect::<Vec<_>>();
+        assert_eq!(labels(None), Step::ALL.to_vec(), "not heard of yet: the whole way");
+        assert_eq!(labels(Some("Known")), vec![Step::Invitation, Step::Unlock]);
+        assert_eq!(labels(Some("Invited")), vec![Step::Unlock]);
+        assert_eq!(labels(Some("Acquainted")), vec![Step::Unlock]);
+        assert!(labels(Some("Unlocked")).is_empty() && labels(Some("Barred")).is_empty());
+        // Known to all from the start, even before the journal lists them; a Colonia engineer's referral; Bill Turner
+        // comes through Selene Jean.
+        let farseer = engineer_by_name("Felicity Farseer").unwrap();
+        assert_eq!(farseer.step(Step::Learn), "Known to every commander from the start.");
+        assert_eq!((farseer.next_step(None), selene.next_step(None)), (Some(Step::Invitation), Some(Step::Learn)));
+        assert_eq!(farseer.steps_from(None).len(), 2, "nothing to learn about a public engineer");
+        assert_eq!(engineers().iter().filter(|e| e.public()).count(), 5 + 6, "five ship engineers and six on foot");
+        assert_eq!(farseer.step(Step::Invitation), "Gain exploration rank Scout or higher.");
+        assert_eq!(engineer_by_name("Mel Brandon").unwrap().step(Step::Learn), "Reach grade 3 and a third of the way to grade 4 with Elvira Martuuk.");
+        let bill = engineer_by_name("Bill Turner").unwrap();
+        assert_eq!(bill.referred_by, vec!["Selene Jean".to_string()]);
+        assert!(selene.refers_to.contains(&"Bill Turner".to_string()) && selene.refers_to.contains(&"Didi Vatermann".to_string()));
+        // On foot: the referral task is handed to the engineer before; there's nothing to hand in to unlock them.
+        let kit = engineer_by_name("Kit Fowler").unwrap();
+        assert_eq!(kit.step(Step::Learn), "Provide 5 units of Push to Domino Green.");
+        assert_eq!(kit.step(Step::Invitation), "Sell 5 Opinion Polls to bartenders.");
+        assert_eq!(kit.step(Step::Unlock), "Nothing to hand in: once invited, go to The Last Call.");
+        assert!(kit.unlock_cost.is_empty(), "the old pre-2024 hand-ins are gone");
+        let yi = engineer_by_name("Yi Shen").unwrap();
+        assert_eq!(
+            yi.step(Step::Learn),
+            "Provide 10 units of Faction Associates to Baltanos, 10 units of Digital Designs to Eleanor Bresa and 10 units of Manufacturing Instructions to Rosa Dayette."
+        );
+        assert_eq!(yi.step(Step::Invitation), "Nothing more: the referrals bring the invitation.");
+        // Update 18.08's lower on-foot requirements.
+        assert_eq!(engineer_by_name("Hero Ferrari").unwrap().referral_cost, vec![Ingredient { symbol: "settlementdefenceplans".into(), count: 5 }]);
+        assert!(engineer_by_name("Yarden Bond").unwrap().meeting.contains("5 Smear Campaign Plans"));
+        // Every step of every engineer says something.
+        for e in engineers() {
+            for s in Step::ALL {
+                let t = e.step(s);
+                assert!(t.len() > 10 && t.ends_with('.'), "{} {s:?}: {t}", e.name);
+            }
+        }
     }
 
     #[test]

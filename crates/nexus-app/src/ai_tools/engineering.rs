@@ -4,19 +4,19 @@
 
 use super::{NexusTools, arg_f64, arg_str, fit, r1, strip_nulls};
 use nexus_data::commodities::name_key;
-use nexus_data::engineering::{self as eng, Blueprint, Effect, Engineer, EngineerKind, Experimental, Ingredient, Region};
+use nexus_data::engineering::{self as eng, Blueprint, Effect, Engineer, EngineerKind, Experimental, Ingredient, Region, Step};
 use nexus_data::outfitting::{display_name, slot_display};
-use nexus_data::trader::{ShoppingOptions, UnresolvedReason, blueprint_merc_coins, blueprint_shopping, plan_shopping_with};
+use nexus_data::trader::{ShoppingOptions, UnresolvedReason, blueprint_merc_coins_by_grade, blueprint_shopping_by_grade, plan_shopping_with};
 use nexus_model::GameState;
 use nexus_model::fleet::ShipModule;
 use nexus_model::inventory::MaterialCategory;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-/// Rolls planned at each grade unless asked otherwise, as on the Engineering page: most grades take 2 to 4.
-const ROLLS: u32 = 3;
 /// Engineers listed when the whole list doesn't fit.
 const FEW_ENGINEERS: usize = 3;
+/// The most modules one plan covers, as on the Engineering page.
+const MAX_MODULES: u32 = 99;
 
 fn effects(list: &[Effect]) -> Vec<String> {
     list.iter().map(|e| format!("{} {}", e.property, e.value)).collect()
@@ -180,23 +180,30 @@ fn merc_coins(gs: &GameState) -> Option<u64> {
 }
 
 /// What is left to do before an engineer works for the commander, from where they stand (`None`: the journal doesn't
-/// list the engineer, so the commander hasn't heard of them yet).
+/// list the engineer, so the commander hasn't heard of them yet), as the Engineers tab words it.
 fn to_unlock(e: &Engineer, status: Option<&str>) -> Option<String> {
-    let (learn, invite, unlock) = (("Learn of them", e.discovery.as_str()), ("Invitation", e.meeting.as_str()), ("Unlock", e.unlock.as_str()));
-    let steps: &[(&str, &str)] = match status {
-        None => &[learn, invite, unlock],
-        Some("Known") => &[invite, unlock],
-        Some("Invited" | "Acquainted") => &[unlock],
-        Some(_) => &[],
-    };
-    let text: Vec<String> = steps
-        .iter()
-        .filter_map(|(label, s)| {
-            let s = s.trim().trim_end_matches('.');
-            (!s.is_empty()).then(|| format!("{label}: {s}."))
-        })
-        .collect();
+    let text: Vec<String> = e.steps_from(status).into_iter().map(|(s, how)| format!("{}: {how}", s.label())).collect();
     (!text.is_empty()).then(|| text.join(" "))
+}
+
+/// The whole way to an engineer, each step marked done or next, as the Engineers tab shows it.
+fn way_to(e: &Engineer, status: Option<&str>) -> Value {
+    let next = e.next_step(status);
+    let barred = status.is_some_and(|s| s.trim().eq_ignore_ascii_case("Barred"));
+    Step::ALL
+        .into_iter()
+        .map(|s| {
+            let mut v = json!({ "step": s.label(), "how": e.step(s) });
+            match next {
+                _ if barred => {}
+                Some(n) if s < n => v["done"] = json!(true),
+                Some(n) if s == n => v["next"] = json!(true),
+                None => v["done"] = json!(true),
+                _ => {}
+            }
+            v
+        })
+        .collect()
 }
 
 fn unlocked(gs: &GameState, e: &Engineer) -> bool {
@@ -347,7 +354,13 @@ impl NexusTools {
         if asked_to.is_some_and(|g| g > hi) {
             notes.push(format!("{} goes up to G{hi}.", bp.name));
         }
-        let rolls = arg_f64(a, "rolls_per_grade").map_or(ROLLS, |r| r.round().clamp(1.0, 10.0) as u32);
+        // The rolls at each grade: the same count at every grade when asked, else the engineer's top rank's (1 at G1 up
+        // to 5 at G5), as the Blueprint planner starts from. On how many modules.
+        let raw_rolls = arg_f64(a, "rolls_per_grade").filter(|r| r.is_finite());
+        let asked_rolls = raw_rolls.map(|r| r.round().clamp(1.0, f64::from(eng::MAX_ROLLS)) as u32);
+        let capped = raw_rolls.is_some_and(|r| r.round() > f64::from(eng::MAX_ROLLS));
+        let rolls = asked_rolls.map_or(eng::GRADE_ROLLS, |r| [r; 5]);
+        let modules = arg_f64(a, "modules").map_or(1, |m| m.round().clamp(1.0, f64::from(MAX_MODULES)) as u32);
         let x = arg_str(a, "experimental").map(|e| find_experimental(t, &e)).transpose()?;
 
         // Where to start: as asked, or where the current ship's module of this type already is with this blueprint.
@@ -376,18 +389,20 @@ impl NexusTools {
         };
 
         // What it takes, against what the commander holds.
-        let mut need = if from <= to { blueprint_shopping(bp, from, to, rolls) } else { Vec::new() };
+        let mut need = if from <= to { blueprint_shopping_by_grade(bp, from, to, &rolls, modules) } else { Vec::new() };
+        // Each module gets its own experimental effect.
         for i in x.map(|x| x.cost.as_slice()).unwrap_or_default() {
+            let count = i.count.saturating_mul(modules);
             match need.iter_mut().find(|(s, _)| *s == i.symbol) {
-                Some((_, n)) => *n = n.saturating_add(i.count),
-                None => need.push((i.symbol.clone(), i.count)),
+                Some((_, n)) => *n = n.saturating_add(count),
+                None => need.push((i.symbol.clone(), count)),
             }
         }
         let inv = holdings(gs);
         let have = |s: &str| u32::try_from(inv.get(&s.to_ascii_lowercase()).copied().unwrap_or(0).max(0)).unwrap_or(u32::MAX);
         let (short, enough): (Vec<_>, Vec<_>) = need.iter().partition(|(s, n)| have(s) < *n);
         let plan = plan_shopping_with(&need, &inv, &ShoppingOptions::default());
-        let coins = if from <= to { blueprint_merc_coins(bp, from, to, rolls) } else { 0 };
+        let coins = if from <= to { blueprint_merc_coins_by_grade(bp, from, to, &rolls, modules) } else { 0 };
         let balance = merc_coins(gs);
         let coins_short = balance.map_or(0, |b| u64::from(coins).saturating_sub(b));
         let total: u64 = need.iter().map(|(_, n)| u64::from(*n)).sum();
@@ -431,7 +446,14 @@ impl NexusTools {
         let still_short: Vec<Value> = still_short.into_iter().map(|(r, items)| json!({ "why": why(r), "materials": items })).collect();
         let engineers = by_reach(gs, bp.engineers_for_grade(to).filter_map(|g| eng::engineer_by_name(&g.engineer).map(|e| (e, g.max_grade))));
         let fitted: Vec<Value> = fitted.into_iter().map(fitted_row).collect();
-        notes.push(format!("A roll takes one set of its grade's materials and fills part of the grade; needed counts {rolls} roll{} at each grade.", if rolls == 1 { "" } else { "s" }));
+        notes.push(match asked_rolls {
+            Some(n) if capped => format!("A roll takes one set of its grade's materials; needed counts {n} rolls at each grade: more were asked, but since the game's 2024 update a grade takes at most {n}, as commanders report."),
+            Some(n) => format!("A roll takes one set of its grade's materials; needed counts {n} roll{} at each grade, as asked.", if n == 1 { "" } else { "s" }),
+            None => "A roll takes one set of its grade's materials. Since 2024 each roll fills a fixed share of its grade, set by the grade and the commander's rank with the engineer: needed counts the top rank's rolls (1 at G1 up to 5 at G5); at a lower rank commanders report up to 5 a grade.".to_string(),
+        });
+        if modules > 1 {
+            notes.push(format!("needed covers {modules} modules, each rolled on its own and each with its own experimental effect."));
+        }
         if !plan.trades.is_empty() {
             notes.push("Trades are made at material traders; the plan keeps a tenth of each material's storage cap and never gives away what it needs.".into());
         }
@@ -464,10 +486,14 @@ impl NexusTools {
             v
         };
         let (out, _) = fit(self.budget, CUT.len() + 1, |level| {
+            let rolls_at: serde_json::Map<String, Value> = (from..=to).map(|g| (format!("G{g}"), json!(rolls[usize::from(g) - 1]))).collect();
             let mut out = json!({
-                "module": t, "blueprint": bp.name, "from_grade": from, "to_grade": to, "rolls_per_grade": rolls,
+                "module": t, "blueprint": bp.name, "from_grade": from, "to_grade": to, "rolls_at_each_grade": rolls_at,
                 "verdict": verdict, "materials_in_hand": format!("{in_hand} of {total}"),
             });
+            if modules > 1 {
+                out["modules"] = json!(modules);
+            }
             if level < 5 {
                 out["effects_at_grade"] = json!(bp.effects.get(usize::from(to).saturating_sub(1)).map(Vec::as_slice).map(effects).unwrap_or_default());
             }
@@ -517,9 +543,11 @@ impl NexusTools {
     }
 }
 
-/// One engineer: where, what they offer, the commander's standing and what unlocking them takes.
+/// One engineer: where, what they offer, the commander's standing and the whole way to them, each step marked done or
+/// next.
 fn engineer_detail(gs: &GameState, e: &Engineer) -> Value {
     let status = gs.cmdr.engineers.get(&e.id);
+    let progress = status.map(|s| s.progress.as_str()).filter(|p| !p.is_empty());
     let text = |s: &str| Some(s.trim().to_string()).filter(|s| !s.is_empty());
     let mut v = json!({
         "name": e.name,
@@ -527,10 +555,10 @@ fn engineer_detail(gs: &GameState, e: &Engineer) -> Value {
         "system": e.system, "workshop": text(&e.base), "body": text(&e.body),
         "distance_ly": gs.location.star_pos.map(|p| r1(e.distance_to(p))),
         "permit_needed": e.permit.then_some(true), "in_colonia": (e.region == Region::Colonia).then_some(true),
-        "status": status.map(|s| s.progress.as_str()),
+        "status": progress,
         "engineer_rank": status.and_then(|s| s.rank),
         "rank_progress_pct": status.and_then(|s| s.rank_progress),
-        "to_unlock": to_unlock(e, status.map(|s| s.progress.as_str())),
+        "way_to_them": (progress != Some("Unlocked")).then(|| way_to(e, progress)),
         "unlock_cost": (!e.unlock_cost.is_empty()).then(|| e.unlock_cost.iter().map(ingredient).collect::<Vec<_>>()),
         "reputation": text(&e.reputation),
         "referral": text(&e.referral),
@@ -542,7 +570,12 @@ fn engineer_detail(gs: &GameState, e: &Engineer) -> Value {
     }
     strip_nulls(&mut v);
     if status.is_none() {
-        v["notes"] = json!(["No status: the commander's journal doesn't list this engineer yet, so they haven't heard of them."]);
+        let note = if e.public() {
+            "No status: the commander's journal doesn't list this engineer yet, though every commander knows of them from the start."
+        } else {
+            "No status: the commander's journal doesn't list this engineer yet, so they haven't heard of them."
+        };
+        v["notes"] = json!([note]);
     }
     v
 }
@@ -590,9 +623,14 @@ mod tests {
 
     #[test]
     fn unlocking_starts_where_the_commander_stands() {
+        // Not heard of: the whole way, from the referral.
+        let selene = eng::engineer_by_name("Selene Jean").unwrap();
+        let unknown = to_unlock(selene, None).unwrap();
+        assert!(unknown.starts_with("Learn of them: Reach grade 3") && unknown.contains(selene.meeting.trim()) && unknown.contains(selene.unlock.trim()), "{unknown}");
+        // Known to all from the start, even before the journal lists them: from the invitation.
         let e = eng::engineer_by_name("Felicity Farseer").unwrap();
-        let unknown = to_unlock(e, None).unwrap();
-        assert!(unknown.starts_with("Learn of them: ") && unknown.contains(e.meeting.trim()) && unknown.contains(e.unlock.trim()), "{unknown}");
+        let public = to_unlock(e, None).unwrap();
+        assert!(public.starts_with("Invitation: ") && public.contains(e.unlock.trim()), "{public}");
         assert_eq!(to_unlock(e, Some("Invited")), Some(format!("Unlock: {}", e.unlock.trim())));
         assert_eq!(to_unlock(e, Some("Unlocked")), None);
         // Every step ends its sentence, whether the data has a full stop or not.
