@@ -6,6 +6,12 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
+- **Missions › Recent mission history** can be cleared (asked for by Asmodeus on the Frontier Forums): **Clear**
+  hides the missions in the list, so it starts fresh with the next one you complete, fail or abandon. They're hidden
+  from this list only: the game, its journals and every other page of Elite Nexus still have them (Statistics still
+  counts them), and your active missions are never hidden. **Undo**, right after, takes back the last Clear, and
+  **Show them again** brings back every mission you cleared. Each commander's history is cleared on its own and
+  stays cleared after a restart. The list also says when it shows only the newest 40.
 - **Market › Trade routes**: a **Cargo space** you set. It follows your ship's hold until you set another, so you can
   check routes for a trade ship before you board it (set its landing pad too); the one you set is remembered, and the
   ↺ beside it goes back to your ship's. Each route shows the **Stock** where you buy and the **Demand** where you

@@ -53,6 +53,8 @@ pub struct Settings {
     pub colonisation: crate::pages::colonisation::ColonisationPrefs,
     /// BGS & Powerplay: the period shown and the tick hour.
     pub bgs: crate::pages::bgs::BgsPrefs,
+    /// Missions: how far each commander cleared the recent mission history.
+    pub missions: crate::pages::missions::MissionsPrefs,
     /// Mining: the deposits the Rhino refined at (positions exist only live), notes on mining locations.
     pub mining: crate::pages::mining::MiningPrefs,
     /// The overlay: the island at the top of the game's screen.
@@ -213,6 +215,7 @@ impl Default for Settings {
             carrier: Default::default(),
             colonisation: Default::default(),
             bgs: Default::default(),
+            missions: Default::default(),
             mining: Default::default(),
             overlay: Default::default(),
             screenshots: Default::default(),
@@ -704,6 +707,23 @@ mod tests {
         assert_eq!(back.bgs, s.bgs);
         std::fs::write(d.0.join("settings.json"), r#"{ "tts_rate": 1.2 }"#).expect("write");
         assert_eq!(Settings::load(&d.0).0.bgs, crate::pages::bgs::BgsPrefs::default());
+    }
+
+    /// A cleared mission history stays cleared after a restart: the history is read from the journals again at every
+    /// start, so settings.json keeps how far it was cleared. Files saved before have nothing cleared.
+    #[test]
+    fn cleared_mission_history_is_kept() {
+        let d = Dir::new("missions");
+        let mut s = Settings::default();
+        s.missions.cleared.insert("F1234567".into(), nexus_journal::Timestamp::parse("2026-11-05T14:30:05Z").expect("time"));
+        s.save(&d.0);
+        let text = std::fs::read_to_string(d.0.join("settings.json")).expect("saved");
+        assert!(text.contains(r#""F1234567": "2026-11-05T14:30:05Z""#), "{text}");
+        let (back, problem) = Settings::load(&d.0);
+        assert!(problem.is_none());
+        assert_eq!(back.missions, s.missions);
+        std::fs::write(d.0.join("settings.json"), r#"{ "tts_rate": 1.2 }"#).expect("write");
+        assert!(Settings::load(&d.0).0.missions.cleared.is_empty());
     }
 
     /// The speech engine and voice survive a restart; older files speak through Windows speech in its default voice,

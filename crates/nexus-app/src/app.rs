@@ -761,7 +761,9 @@ impl NexusApp {
             }
             Page::Missions => {
                 let sources = pages::where_to_get::Sources { db: self.market.db.as_ref(), spansh: &self.spansh, rt: self.rt.handle() };
-                market_goto = pages::missions::show(ui, gs, &mut self.missions, &sources);
+                let (changed, goto) = pages::missions::show(ui, gs, &mut self.missions, &mut self.settings.missions, &sources);
+                settings_changed |= changed;
+                market_goto = goto;
             }
             Page::Combat => {
                 let feed = self.settings.accounts.eddn_listen;
