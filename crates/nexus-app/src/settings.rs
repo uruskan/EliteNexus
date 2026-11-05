@@ -145,8 +145,6 @@ pub struct Accounts {
     pub edsm_api_key: String,
     pub inara_enabled: bool,
     pub inara_api_key: String,
-    /// Sent as `isBeingDeveloped`. Inara approved "Elite Nexus" on 2026-10-13; on by default for the first weeks after.
-    pub inara_dev_mode: bool,
     pub edastro_enabled: bool,
     /// EDDN sharing paused by the commander (the header's Pause button).
     pub eddn_paused: bool,
@@ -169,7 +167,7 @@ impl Default for Settings {
             auto_copy_next_system: true,
             auto_page: false,
             auto_page_altitude_km: 150.0,
-            accounts: Accounts { eddn_listen: true, inara_dev_mode: true, ..Default::default() },
+            accounts: Accounts { eddn_listen: true, ..Default::default() },
             welcomed: false,
             wishlist: Vec::new(),
             price_watches: Vec::new(),
@@ -642,6 +640,21 @@ mod tests {
         assert_eq!(back.tts_rate, 1.25);
         assert_eq!(back.accounts.inara_api_key, "dpapi:AAAA");
         assert!(kept_copies(&d).is_empty());
+    }
+
+    /// A file saved while Inara's Developer mode existed (0.7.3-beta.2 and before) still reads whole, with nothing to
+    /// report.
+    #[test]
+    fn a_setting_that_was_removed_is_ignored() {
+        let d = Dir::new("removed");
+        std::fs::write(d.0.join("settings.json"), r#"{ "tts_rate": 1.2, "accounts": { "inara_enabled": true, "inara_api_key": "dpapi:AAAA", "inara_dev_mode": true } }"#).expect("write");
+        let (s, problem) = Settings::load(&d.0);
+        assert!(problem.is_none(), "{:?}", problem.map(|p| p.what));
+        assert!(s.accounts.inara_enabled);
+        assert_eq!((s.accounts.inara_api_key.as_str(), s.tts_rate), ("dpapi:AAAA", 1.2));
+        s.save(&d.0);
+        let text = std::fs::read_to_string(d.0.join("settings.json")).expect("saved");
+        assert!(!text.contains("inara_dev_mode"), "dropped on the next save");
     }
 
     /// The BGS tick hour survives a restart (it used to go back to 13:00 UTC); older files without it get the default.

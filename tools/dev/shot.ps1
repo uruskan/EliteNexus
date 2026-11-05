@@ -22,7 +22,7 @@
 #        With -Page Statistics: career, activity or all opens that tab.
 # -JournalDir: read a test journal folder instead of the real one (test runs never upload).
 # -Overlay: an overlay moment with sample content, compact and expanded (jump, hyperspace, arrival, approach,
-#        sampling, close, mining, trade, docked, carrier, two, alert, quiet).
+#        sampling, close, mining, trade, docking, docked, carrier, two, alert, quiet).
 # -Demo: a sample Ask conversation and an alert banner. -Exe: another build (e.g. one from your own
 #        CARGO_TARGET_DIR). The data folder is the build's own (target\debug\nexus-data).
 param(

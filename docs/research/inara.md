@@ -117,7 +117,7 @@ From the Dev guide (paraphrased):
 - **Does an unapproved app work?**
   - The docs only say the name must be whitelisted first, and that newly accepted apps start in development mode server-side (`isBeingDeveloped` forced on).
   - The docs don't say what happens to requests with an unknown `appName`. **Verified 2026-10-13:** every request is refused at header level with `eventStatusText` "This application has no access allowed", confirmed by Artie as the not-whitelisted answer. Elite Nexus pauses sync on it and Accounts & sync explains why.
-  - "Elite Nexus" was whitelisted on 2026-10-13 (see above). Keep `isBeingDeveloped: true` and a test account for development work.
+  - "Elite Nexus" was whitelisted on 2026-10-13 (see above). Since 0.7.3 it sends no `isBeingDeveloped` at all: test runs (`--journal-dir`, `--screenshot`) never upload, so everything it sends is live play. Use a test account for development work that has to upload.
 - **Personal vs generic API key:**
   - **Personal key:** each user generates it in Inara Settings → API (https://inara.cz/elite/cmdr-settings-api/; EDMC links `https://inara.cz/settings-api`). It identifies the user and is required for all `add*`/`set*`/`del*` events and for `getCommanderProfile` without `searchName`.
   - **Generic application key:** your app's own key, usable only for **read-only general events**. Per the docs these are `getCommanderProfile` (with `searchName`) and `getCommunityGoalsRecent`. How it is issued is not documented; presumably Artie provides it on approval **[UNVERIFIED]**.
@@ -415,7 +415,7 @@ Otherwise EDMC shows "Inara only accepts Live galaxy data", at most every 5 minu
   - API-key field.
   - Show `header.eventData.userName` after the first successful sync, as a "connected as …" check.
   - Link to https://inara.cz/elite/cmdr-settings-api/.
-- **Header defaults:** `appName: "Elite Nexus"` (exactly what you register), `appVersion` from `CARGO_PKG_VERSION`, and `isBeingDeveloped: cfg!(debug_assertions) || prerelease`.
+- **Header defaults:** `appName: "Elite Nexus"` (exactly what you register) and `appVersion` from `CARGO_PKG_VERSION`. `isBeingDeveloped` is left out (it defaults to false): it was a setting, on by default, for the first weeks after approval, and was removed after 0.7.3-beta.2.
 
 ## 8. [UNVERIFIED] / open questions
 

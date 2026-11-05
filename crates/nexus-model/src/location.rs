@@ -106,6 +106,18 @@ impl StationInfo {
     }
 }
 
+/// Docking a station granted (`DockingGranted`): kept until the ship docks, the permission runs out or is cancelled,
+/// or the commander leaves.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct DockingGrant {
+    /// Display name (a carrier's as the game names it).
+    pub station: String,
+    pub market_id: u64,
+    /// The landing pad, when the game gave one.
+    pub pad: Option<u32>,
+    pub at: Timestamp,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct FsdTarget {
     pub name: String,
@@ -142,6 +154,8 @@ pub struct Location {
     pub fsd_target: Option<FsdTarget>,
     pub destination: Option<StatusDestination>,
     pub last_arrival: Timestamp,
+    /// The docking permission in force, and its pad.
+    pub docking: Option<DockingGrant>,
 }
 
 impl Location {
@@ -159,6 +173,8 @@ impl Location {
         self.body_type = a.body_type.clone();
         self.hyperspace = false;
         self.last_arrival = ts;
+        // A jump, a carrier's jump or a new session: any docking permission is gone.
+        self.docking = None;
         if let Some(t) = a.taxi {
             self.in_taxi = t;
         }
@@ -217,6 +233,7 @@ impl Location {
         self.docked = true;
         self.landed = false;
         self.supercruise = false;
+        self.docking = None;
         self.system = if d.star_system.is_empty() { self.system.clone() } else { d.star_system.clone() };
         if d.system_address != 0 {
             self.system_address = d.system_address;
@@ -251,6 +268,7 @@ impl Location {
         self.supercruise = true;
         self.docked = false;
         self.landed = false;
+        self.docking = None;
         self.body = None;
         self.body_id = None;
         self.body_type = None;
@@ -332,6 +350,24 @@ pub enum ArrivalKind {
     CarrierJump,
 }
 
+/// Why docking was denied, in plain words, from `DockingDenied`'s `Reason` (FDevIDs' list, and the fleet carriers'
+/// own). One the game adds later is passed on as it is.
+pub fn denied_reason(reason: &str) -> String {
+    match reason {
+        "Distance" => "too far away: ask again within 7.5 km".into(),
+        "NoSpace" => "no free landing pad right now".into(),
+        "TooLarge" => "your ship is too large for its landing pads".into(),
+        "Hostile" => "the station is hostile to you".into(),
+        "Offences" => "you have offences against the station".into(),
+        "ActiveFighter" => "recall your fighter first".into(),
+        "RestrictedAccess" => "access is restricted (a carrier's owner decides who may dock)".into(),
+        "JumpImminent" => "the carrier is about to jump".into(),
+        "DockOffline" => "its docking is offline".into(),
+        "NoReason" | "" => "no reason given".into(),
+        other => other.to_string(),
+    }
+}
+
 /// Straight-line distance in light years.
 pub fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
     ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt()
@@ -381,5 +417,13 @@ mod tests {
     #[test]
     fn ly_distance() {
         assert_eq!(distance([0.0, 0.0, 0.0], [3.0, 4.0, 0.0]), 5.0);
+    }
+
+    #[test]
+    fn docking_denied_in_plain_words() {
+        assert_eq!(denied_reason("Distance"), "too far away: ask again within 7.5 km");
+        assert_eq!(denied_reason("RestrictedAccess"), "access is restricted (a carrier's owner decides who may dock)");
+        assert_eq!(denied_reason(""), "no reason given");
+        assert_eq!(denied_reason("SomethingNew"), "SomethingNew", "one the game adds later is passed on");
     }
 }

@@ -106,6 +106,16 @@ release time that section becomes the new version and the release workflow publi
 - **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
   the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
   for later starts.
+- **Overlay: where the route ends.** On a plotted route (the galaxy map's, or one planned on Navigation), the open
+  island names the route's last system and how far it is in a straight line ("Orrere · 23.4 ly away"), under the
+  next jump, and the small island adds the distance to the jumps left ("2 jumps · 23.4 ly"). It showed only the
+  next jump and the jumps left.
+- **Overlay: docking granted.** When a station grants you docking, the island opens with your landing pad and the
+  station, as it did only when docking was denied, then keeps the pad ("Pad 36") until you dock, the permission
+  runs out or you leave. The banner in Elite Nexus says it too. A denied request now says why in plain words ("too
+  far away: ask again within 7.5 km") instead of the game's code ("Distance"). An alert that comes while a cockpit
+  panel is open (docking is usually requested from one) now waits until the panel closes, instead of running out
+  while the island is kept small.
 - **Settings › Follow my flight** (off by default) changes the page as you fly: it reads what you're doing from
   the game's Status.json and switches when that changes. Flying a system opens Exploration; getting below
   **Planet view below** (150 km by default) over a
@@ -189,10 +199,28 @@ release time that section becomes the new version and the release workflow publi
 - **Exploration** › Find valuable bodies shows its settings in a bar under the search, each once: Within, Stops, Jump
   range, Bodies worth at least, Furthest from the star, and Values (if you map them, or from the scan alone). Type a
   value or step it with − and +.
+- **Overlay with See-through off: the island fits what it shows.** It was a fixed black panel of 408 × 168 points
+  whatever it said, mostly empty for a word or two. It's now a window the island's own size: a small capsule for a
+  word or two, larger only while it's open, and it floats a little below the top of the screen as the see-through
+  island does. On Windows it has the island's rounded shape; elsewhere its corners are square. It switches size
+  only when the island changes shape and draws nothing while it's still, so it costs no more than before. A place
+  you dragged it to keeps the island where it was. On a PC without DirectX 12, where see-through can't work, the
+  island is now its own window too (it was a black rectangle), and Settings › Overlay says why.
+- **Cockpit lights: the dimmer's keys in the game are F7, F8 and F9.** F10 stepped the light kept, but F10 is also
+  the game's screenshot key, so every screenshot changed the dimmer too. Now F7 steps the light kept, F8 the reach,
+  and F9 still switches it on and off; none of the game's built-in control presets uses F2 to F11. A dimmer
+  installed earlier keeps F9, F10 and F11 until you click Save on the Cockpit lights tab, which says so. The tab
+  also checks the dimmer's keys against the game's screenshot key, which isn't among its controls.
+- **Inara**: Developer mode is gone from Accounts & sync (Inara options). Elite Nexus no longer marks what it sends
+  as "in development", so Inara now takes the community goals you're part of, and your progress in them, as it does
+  from any approved app. A settings file that still has the switch reads as before.
 
 ### Fixed
 - **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at
   the window's edge, and the bodies table scrolled in a box of its own.
+- **Overlay: Keep it when idle works with See-through off.** It kept nothing there: with nothing to say, the opaque
+  panel hid anyway, and switching the setting on didn't bring it back. The small empty island now stays, as it does
+  see-through, and so does the small island while a cockpit panel is open.
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.

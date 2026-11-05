@@ -161,7 +161,7 @@ pub fn config(acc: &Accounts) -> UplinkConfig {
             commander_name: acc.edsm_commander.trim().to_string(),
             api_key: secrets::open(&acc.edsm_api_key),
         }),
-        inara: acc.inara_enabled.then(|| InaraCredentials { api_key: secrets::open(&acc.inara_api_key), is_being_developed: acc.inara_dev_mode }),
+        inara: acc.inara_enabled.then(|| InaraCredentials { api_key: secrets::open(&acc.inara_api_key) }),
         edastro: acc.edastro_enabled,
         ..UplinkConfig::default()
     }

@@ -1,5 +1,5 @@
 //! What the overlay asks the desktop: whether the game (or Elite Nexus) is the window in front, which monitor the game
-//! is on, and, on Windows, for a window that never takes the focus from the game.
+//! is on, and, on Windows, for a window that never takes the focus from the game and has the island's shape.
 //!
 //! Windows reads the foreground window's class; X11 reads `_NET_ACTIVE_WINDOW` through libX11, loaded at run time
 //! (winit loads the same library), so the binary links nothing new. Wayland and macOS can't tell, so the overlay
@@ -75,6 +75,22 @@ impl Desktop {
         let _ = (title, locked);
     }
 
+    /// Windows: the overlay window (found by `title` among this thread's windows), for [`set_shape`]. None elsewhere.
+    pub fn window(&mut self, title: &str) -> Option<isize> {
+        #[cfg(windows)]
+        {
+            if self.overlay.is_none() {
+                self.overlay = win::find(title);
+            }
+            self.overlay
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = title;
+            None
+        }
+    }
+
     /// The overlay window was closed.
     pub fn forget_window(&mut self) {
         #[cfg(windows)]
@@ -84,13 +100,31 @@ impl Desktop {
     }
 }
 
+/// Windows: cuts `window` (from [`Desktop::window`]) to `parts`, rounded rectangles in its client area's physical
+/// pixels (left, top, right, bottom, corner radius), so with see-through off it has the island's shape; no parts give
+/// it back its whole rectangle. True once Windows has taken it. Elsewhere the window stays a rectangle (false).
+pub fn set_shape(window: isize, parts: &[[i32; 5]]) -> bool {
+    #[cfg(windows)]
+    {
+        win::set_shape(window, parts)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (window, parts);
+        false
+    }
+}
+
 #[cfg(windows)]
 mod win {
     use windows_sys::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
-    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY};
+    use windows_sys::Win32::Graphics::Gdi::{
+        ClientToScreen, CombineRgn, CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, SetWindowRgn, HRGN, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        MONITOR_DEFAULTTOPRIMARY, RGN_OR,
+    };
     use windows_sys::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumThreadWindows, FindWindowW, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, IsWindow, SetWindowLongW, SetWindowPos,
+        EnumThreadWindows, FindWindowW, GetClassNameW, GetForegroundWindow, GetWindowLongW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId, IsWindow, SetWindowLongW, SetWindowPos,
         GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     };
 
@@ -157,6 +191,47 @@ mod win {
         // SAFETY: `visit` uses `search` only during the call.
         unsafe { EnumThreadWindows(GetCurrentThreadId(), Some(visit), &mut search as *mut Search as LPARAM) };
         (!search.found.is_null()).then_some(search.found as isize)
+    }
+
+    /// Gives the window the shape of `parts` (rounded rectangles: left, top, right, bottom, corner radius, in its client
+    /// area's pixels), or its whole rectangle back for none. False when the window is gone or Windows refused the shape.
+    pub fn set_shape(hwnd: isize, parts: &[[i32; 5]]) -> bool {
+        let hwnd = hwnd as HWND;
+        // SAFETY: the handle is checked first; the rectangle and point are locals. Each region made here is either
+        // combined into the first and deleted, or handed to SetWindowRgn, after which the system owns it (deleted here
+        // only if that call fails).
+        unsafe {
+            if IsWindow(hwnd) == 0 {
+                return false;
+            }
+            // A window's shape is in window coordinates, and a borderless window keeps a pixel of frame at its top
+            // (winit): the parts move by where the client area starts, so that frame stays outside the shape.
+            let mut frame = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            let mut client = POINT { x: 0, y: 0 };
+            let (dx, dy) = if GetWindowRect(hwnd, &mut frame) != 0 && ClientToScreen(hwnd, &mut client) != 0 { (client.x - frame.left, client.y - frame.top) } else { (0, 0) };
+            let mut region: HRGN = std::ptr::null_mut();
+            for &[left, top, right, bottom, radius] in parts {
+                // Right and bottom are exclusive; the ellipse is the corner's diameter.
+                let part = CreateRoundRectRgn(left + dx, top + dy, right + dx + 1, bottom + dy + 1, 2 * radius, 2 * radius);
+                if part.is_null() {
+                    continue;
+                }
+                if region.is_null() {
+                    region = part;
+                } else {
+                    CombineRgn(region, region, part, RGN_OR);
+                    DeleteObject(part);
+                }
+            }
+            // No redraw: the overlay presents its frame for this shape right after.
+            if SetWindowRgn(hwnd, region, 0) == 0 {
+                if !region.is_null() {
+                    DeleteObject(region);
+                }
+                return false;
+            }
+        }
+        true
     }
 
     /// Sets or clears WS_EX_NOACTIVATE (and keeps WS_EX_TOOLWINDOW, which leaves it out of Alt+Tab). False when the

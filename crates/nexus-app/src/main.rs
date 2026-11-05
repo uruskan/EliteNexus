@@ -227,7 +227,10 @@ fn main() -> eframe::Result {
                 let info = a.get_info();
                 (info.backend == wgpu::Backend::Dx12, info.device_type == wgpu::DeviceType::DiscreteGpu)
             };
-            adapters.iter().filter(usable).max_by_key(rank).cloned().ok_or_else(|| "No graphics adapter can draw to the window".to_string())
+            let chosen = adapters.iter().filter(usable).max_by_key(rank).cloned().ok_or_else(|| "No graphics adapter can draw to the window".to_string())?;
+            // Another adapter draws no see-through window: the overlay's island is then a window of its own.
+            overlay::window::SEE_THROUGH_RENDERER.store(chosen.get_info().backend == wgpu::Backend::Dx12, std::sync::atomic::Ordering::Relaxed);
+            Ok(chosen)
         }));
     }
     eframe::run_native(

@@ -162,7 +162,9 @@ shaders are kept outside git (Frontier's code: never commit it).
   `dcl_resource_texture1d (float,float,float,float) t120`, `dcl_temps 11` and, before the final
   `mul o0.xyz, r0.xyzx, cb2[0].xxxx`: load IniParams (`ld_indexable(texture1d)… t120`), `dp3` of `v0.xyz` with
   itself, compare with reach², `movc` the strength or 1, multiply `r0.xyz` (colour) and `r1.xyz` (luminance
-  source). `[Constants] x = 0.35, y = 5, z = 1`; keys F9 toggle `z`, F10 cycle `x`, F11 cycle `y`. Confirmed in
+  source). `[Constants] x = 0.35, y = 5, z = 1`; keys F9 toggle `z`, F10 cycle `x`, F11 cycle `y` (the shipped
+  dimmer later moved `x` to F7 and `y` to F8: F10 is the game's own screenshot key, outside its controls, so every
+  screenshot also stepped the light kept; play-test 2026-11-04). Confirmed in
   the game: only the cockpit lights dim, strength and on/off behave, nothing else changes. A 3 m reach let
   some of this ship's cockpit lights back (they sit up to ~5 m away), so the reach should not go below ~5 m
   by default and should be adjustable per ship.

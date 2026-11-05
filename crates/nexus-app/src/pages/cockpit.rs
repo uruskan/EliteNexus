@@ -35,8 +35,12 @@ pub struct CockpitUi {
     /// Bytes of capture files left in the game folder, measured in the background.
     leftovers: Slot<u64>,
     cleanup: Slot<Result<Removed, String>>,
-    /// The dimmer's keys that the game's own controls use too, with the actions bound to them.
-    clashes: Vec<(&'static str, String)>,
+    /// The dimmer's keys in the installed config, with what each does (the current ones until it's read).
+    keys: Vec<(String, &'static str)>,
+    /// The installed config still has an earlier version's keys (the light kept on F10, the game's screenshot key).
+    keys_outdated: bool,
+    /// The dimmer's keys that the game uses too.
+    clashes: Vec<Clash>,
     /// Why the game's controls couldn't be read for that check.
     clash_error: Option<String>,
     message: Option<(bool, String)>,
@@ -73,6 +77,8 @@ impl CockpitUi {
             self.edit = config.dimmer;
         }
         self.leftovers = Slot::default();
+        self.keys = current_keys();
+        self.keys_outdated = false;
         self.clashes.clear();
         self.clash_error = None;
         self.calibration = None;
@@ -80,10 +86,13 @@ impl CockpitUi {
         self.old_patterns = false;
         self.hook_missing = false;
         if let (Some(folder), Some(Status::Installed { .. })) = (self.folder.clone(), &self.status) {
-            (self.clashes, self.clash_error) = match key_clashes(&folder) {
-                Ok(c) => (c, None),
-                Err(e) => (Vec::new(), Some(e)),
-            };
+            // The keys the game has now, which may be an earlier version's until the settings are saved.
+            if let Some(bound) = dimmer::bound_keys(&folder) {
+                self.keys = dimmer::KEYS.iter().zip(bound).map(|((key, what), b)| (b.unwrap_or_else(|| key.to_string()), *what)).collect();
+            }
+            self.keys_outdated = dimmer::keys_outdated(&folder);
+            let keys: Vec<String> = self.keys.iter().map(|(k, _)| k.clone()).collect();
+            (self.clashes, self.clash_error) = key_clashes(&folder, &keys);
             self.calibration = dimmer::read_calibration(&folder);
             self.recorded = dimmer::recorded_shaders(&folder);
             self.old_patterns = dimmer::uses_patterns(&folder);
@@ -97,31 +106,61 @@ impl CockpitUi {
     }
 }
 
-/// The dimmer's keys that the commander's active control presets bind too. Only the presets the game uses count:
-/// when they can't be read, the error says why (no guess from another preset).
-fn key_clashes(game: &Path) -> Result<Vec<(&'static str, String)>, String> {
-    let dir = nexus_binds::default_bindings_dir().ok_or("the game's Options folder wasn't found")?;
-    let presets = nexus_binds::find_presets(&dir).map_err(|e| e.to_string())?;
-    // Built-in presets (KeyboardMouseOnly, ...) live in the game's ControlSchemes folder.
-    let schemes = game.join("ControlSchemes");
-    let bindings = presets.load_effective(&[schemes.as_path()]).map_err(|e| e.to_string())?;
-    Ok(clashes(&bindings))
+/// The dimmer's keys as this version writes them, with what each does.
+fn current_keys() -> Vec<(String, &'static str)> {
+    dimmer::KEYS.iter().map(|(k, what)| (k.to_string(), *what)).collect()
 }
 
-fn clashes(b: &Bindings) -> Vec<(&'static str, String)> {
+/// "F9, F7 and F8": the keys this version writes.
+fn key_names() -> String {
+    let keys: Vec<&str> = dimmer::KEYS.iter().map(|(k, _)| *k).collect();
+    match keys.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+        _ => keys.join(""),
+    }
+}
+
+/// A dimmer key something else uses too: the game itself (outside its controls), and the actions the commander's
+/// controls bind to it on its own.
+#[derive(Debug, Clone, PartialEq)]
+struct Clash {
+    key: String,
+    game: Option<&'static str>,
+    actions: String,
+}
+
+/// The dimmer's `keys` that the game takes for itself or the commander's active control presets bind too. Only the
+/// presets the game uses count: when they can't be read, the error says why (no guess from another preset), and the
+/// game's own keys are still checked.
+fn key_clashes(game: &Path, keys: &[String]) -> (Vec<Clash>, Option<String>) {
+    let bindings = || -> Result<Bindings, String> {
+        let dir = nexus_binds::default_bindings_dir().ok_or("the game's Options folder wasn't found")?;
+        let presets = nexus_binds::find_presets(&dir).map_err(|e| e.to_string())?;
+        // Built-in presets (KeyboardMouseOnly, ...) live in the game's ControlSchemes folder.
+        let schemes = game.join("ControlSchemes");
+        presets.load_effective(&[schemes.as_path()]).map_err(|e| e.to_string())
+    };
+    match bindings() {
+        Ok(b) => (clashes(Some(&b), keys), None),
+        Err(e) => (clashes(None, keys), Some(e)),
+    }
+}
+
+fn clashes(b: Option<&Bindings>, keys: &[String]) -> Vec<Clash> {
     let mut out = Vec::new();
-    for (key, _) in dimmer::KEYS {
+    for key in keys {
+        let game = dimmer::GAME_KEYS.iter().find(|(k, _)| k.eq_ignore_ascii_case(key)).map(|(_, what)| *what);
         let name = format!("Key_{key}");
         let mut actions: Vec<String> = Vec::new();
-        for a in b.actions.iter().filter(|a| a.inputs().any(|(_, i)| fires_with(i, &name))) {
+        for a in b.iter().flat_map(|b| b.actions.iter()).filter(|a| a.inputs().any(|(_, i)| fires_with(i, &name))) {
             let info = a.info();
             let what = format!("{} ({})", info.name, info.context.label());
             if !actions.contains(&what) {
                 actions.push(what);
             }
         }
-        if !actions.is_empty() {
-            out.push((key, actions.join(", ")));
+        if game.is_some() || !actions.is_empty() {
+            out.push(Clash { key: key.clone(), game, actions: actions.join(", ") });
         }
     }
     out
@@ -264,7 +303,10 @@ fn not_installed(ui: &mut Ui, st: &mut CockpitUi, playing: bool, rt: &tokio::run
         format!("Elite Nexus downloads 3Dmigoto {} (4.7 MB) from its official GitHub release and checks it against a pinned checksum. 3Dmigoto is an open-source (GPL-3.0) graphics modding tool; Elite Nexus uses it to load its own fixes, nothing else.", dimmer::MIGOTO_VERSION),
         format!("It puts d3d11.dll, d3dcompiler_47.dll, {}, {} and a ShaderFixes folder next to EliteDangerous64.exe, in the folder below. Remove takes them out again.", dimmer::CONFIG, dimmer::MANIFEST),
         "Then you calibrate once: start the game, get into your cockpit, quit. Elite Nexus finds the light shader among the ones your game loaded and keeps a fix for exactly that one.".to_string(),
-        "While you play, F9, F10 and F11 (pressed without Shift, Ctrl or Alt) switch and set the dimmer. The game gets those presses too, so a key your controls use on its own does both; the tab names any it finds.".to_string(),
+        format!(
+            "While you play, {} (pressed without Shift, Ctrl or Alt) switch and set the dimmer. None of the game's built-in control presets uses them, and the game's screenshot key (F10) is left alone. The game gets those presses too, so a key your own controls use on its own does both; the tab names any it finds.",
+            key_names()
+        ),
         "No game file is changed: 3Dmigoto swaps the light shader in memory while the game runs. Frontier tolerates 3Dmigoto mods (commanders have used them for years) but has never approved them.".to_string(),
     ];
     if cfg!(not(windows)) {
@@ -442,7 +484,8 @@ fn installed(ui: &mut Ui, st: &mut CockpitUi, folder: &Path, installs: &[GameIns
         calibration(ui, st, folder, installs, playing, game);
         ui.add_space(6.0);
     }
-    let saved = matches!(&st.status, Some(Status::Installed { config }) if config.dimmer == st.edit);
+    // An earlier version's keys count as unsaved too: saving writes the current ones.
+    let saved = matches!(&st.status, Some(Status::Installed { config }) if config.dimmer == st.edit) && !st.keys_outdated;
     // HUD colours' "Keep hostile red..." runs on the same install.
     let protecting = matches!(&st.status, Some(Status::Installed { config }) if config.protect.on);
     group(ui, |g| {
@@ -468,7 +511,7 @@ fn installed(ui: &mut Ui, st: &mut CockpitUi, folder: &Path, installs: &[GameIns
                 _ => Err(dimmer::DimmerError::NotOurs),
             };
             st.message = Some(match result {
-                Ok(()) => (true, "Saved. The game uses it the next time it starts; F9, F10 and F11 change it while you play.".into()),
+                Ok(()) => (true, format!("Saved. The game uses it the next time it starts; {} change it while you play.", key_names())),
                 Err(e) => (false, e.to_string()),
             });
             st.refresh(ui.ctx(), installs);
@@ -525,15 +568,35 @@ fn installed(ui: &mut Ui, st: &mut CockpitUi, folder: &Path, installs: &[GameIns
         });
     }
     section(ui, "Keys in the game");
-    for (key, what) in dimmer::KEYS {
-        let clash = st.clashes.iter().find(|(k, _)| *k == key);
+    for (key, what) in &st.keys {
+        let clash = st.clashes.iter().find(|c| c.key == *key);
         ui.horizontal(|ui| {
             widgets::badge(ui, key, if clash.is_some() { pal::WARN } else { pal::ACCENT });
-            ui.label(RichText::new(what).color(pal::DIM));
+            ui.label(RichText::new(*what).color(pal::DIM));
         });
-        if let Some((_, actions)) = clash {
-            ui.add(egui::Label::new(RichText::new(format!("{}  {key} is bound in your game controls too: {actions}. Pressing it does both, so give the game's action another key (Options › Controls in the game).", icon::WARNING)).size(size::FOOTNOTE).color(pal::WARN)).wrap());
+        let warn = |ui: &mut Ui, text: String| {
+            ui.add(egui::Label::new(RichText::new(format!("{}  {text}", icon::WARNING)).size(size::FOOTNOTE).color(pal::WARN)).wrap());
+        };
+        if let Some(game) = clash.and_then(|c| c.game) {
+            warn(ui, format!("{key} is also {game}, which isn't among its controls: pressing it does both."));
         }
+        if let Some(c) = clash.filter(|c| !c.actions.is_empty()) {
+            warn(ui, format!("{key} is bound in your game controls too: {}. Pressing it does both, so give the game's action another key (Options › Controls in the game).", c.actions));
+        }
+    }
+    if st.keys_outdated {
+        ui.add(
+            egui::Label::new(
+                RichText::new(format!(
+                    "{}  These are an earlier version's keys: the light kept was on F10, the game's screenshot key, so every screenshot changed it too. Save to move the keys to {}: F7 steps the light kept, F8 the reach, F9 switches it on and off.",
+                    icon::WARNING,
+                    key_names()
+                ))
+                .size(size::FOOTNOTE)
+                .color(pal::WARN),
+            )
+            .wrap(),
+        );
     }
     if let Some(e) = &st.clash_error {
         ui.add(egui::Label::new(RichText::new(format!("{}  Couldn't check these keys against the control presets the game uses ({e}).", icon::WARNING)).size(size::FOOTNOTE).color(pal::WARN)).wrap());
@@ -549,7 +612,7 @@ fn explain(ui: &mut Ui) {
             "Calibration: for one session the game records the shaders it loads; Elite Nexus finds the light shader among them by what its code looks like and keeps a fix for exactly that shader, by its fingerprint. In the game, 3Dmigoto only swaps that one shader: every other shader, including ones the game adds later (new ships, new carriers), is left alone.",
             "After a game update that changes the light shader, the fingerprint no longer matches: the dimmer simply stays off until you calibrate again, and Elite Nexus tells you when the game has been updated. The game is never affected.",
             "The fixes are made on your PC from your game and never leave it.",
-            "Settings saved here apply the next time the game starts; F9, F10 and F11 change them while you play, and the game gets those presses too.",
+            "Settings saved here apply the next time the game starts; F9, F7 and F8 change them while you play, and the game gets those presses too.",
             "The same install is the graphics hook HUD colours needs to keep hostile red, friendly green and shield blue out of a theme. If you only want that, switch the dimmer off here.",
             "It can't run alongside EDHM or another 3Dmigoto mod: they all need the game's d3d11.dll.",
             "Frontier tolerates mods like this but has never approved them.",
@@ -598,8 +661,21 @@ mod tests {
 </Root>
 "#;
         let b = Bindings::parse(xml).unwrap();
-        // F9 needs Shift in the game, and the dimmer's keys fire only without modifiers: no clash.
-        assert_eq!(clashes(&b), vec![("F10", "Open Galaxy Map (Ship)".to_string()), ("F11", "Left Panel (Navigation) (Ship)".to_string())]);
-        assert!(clashes(&Bindings::default()).is_empty());
+        let keys = |k: &[&str]| k.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+        // An earlier version's keys: F9 needs Shift in the game, and the dimmer's keys fire only without modifiers, so no
+        // clash; F10 is the game's screenshot key besides the binding.
+        let old = keys(&["F9", "F10", "F11"]);
+        assert_eq!(
+            clashes(Some(&b), &old),
+            vec![
+                Clash { key: "F10".into(), game: Some("the game's screenshot key"), actions: "Open Galaxy Map (Ship)".into() },
+                Clash { key: "F11".into(), game: None, actions: "Left Panel (Navigation) (Ship)".into() },
+            ]
+        );
+        assert_eq!(clashes(None, &old).len(), 1, "the game's own key, even when the controls can't be read");
+        // The keys now clash with nothing the game does by itself or binds by default.
+        let now: Vec<String> = current_keys().into_iter().map(|(k, _)| k).collect();
+        assert!(clashes(Some(&Bindings::default()), &now).is_empty());
+        assert_eq!(key_names(), "F9, F7 and F8");
     }
 }

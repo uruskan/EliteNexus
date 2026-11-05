@@ -6,9 +6,14 @@
 //! and on Windows marked WS_EX_NOACTIVATE. Click-through is switched on only after the window has shown (set at
 //! creation, Windows never shows it), and once it's on the window gets no input at all, so locking and unlocking live
 //! in the main window. It hides (no frames at all) while the game isn't in front, and when there's nothing to say.
+//!
+//! See-through, the window is a fixed transparent canvas the island morphs in. With see-through off it's the island
+//! itself ([`draw::cutout`]): sized to what it shows, where the island would be in that canvas, and on Windows cut to
+//! its shape. It changes size only when the island changes shape, which costs a resize of a small window then, and
+//! nothing while it's still: it isn't drawn at all between changes.
 
 use super::draw::{self, Anchor, Anim, Look};
-use super::platform::Desktop;
+use super::platform::{self, Desktop};
 use super::{Inputs, IslandView, Rhythm, Size, Sources};
 use crate::pages::Page;
 use egui::{Context, Pos2, Rect, Vec2, ViewportBuilder, ViewportCommand, ViewportId, WindowLevel, X11WindowType};
@@ -16,11 +21,17 @@ use nexus_model::{Alert, GameState};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The window's title. It has no title bar; Windows finds the window by it.
 const TITLE: &str = "Elite Nexus overlay";
+
+/// Whether the renderer can draw a see-through window, as `main.rs` found when it picked the graphics adapter: on
+/// Windows only DirectX 12 draws through DirectComposition, and on another adapter a see-through window would be an
+/// opaque black canvas. Without it the island is its own window, as with see-through off.
+pub static SEE_THROUGH_RENDERER: AtomicBool = AtomicBool::new(true);
 
 /// The overlay's settings (Settings › Overlay).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -31,15 +42,20 @@ pub struct OverlayPrefs {
     /// Clicks go through to the game; unlocked, it can be dragged and a click opens its page.
     pub locked: bool,
     pub anchor: Anchor,
-    /// Where it was dragged to (its top-left corner, in points); None: at its anchor on the game's monitor.
+    /// Where it was dragged to: the see-through canvas's top-left corner, in points (the island's own window sits in
+    /// it); None: at its anchor on the game's monitor.
     pub position: Option<[f32; 2]>,
+    /// `position` is the canvas's. Earlier versions kept the opaque panel's top-left with see-through off; such a
+    /// position is moved once so the island stays where the panel was ([`OverlayPrefs::settle_position`]).
+    pub position_is_canvas: bool,
     /// Its own scale, 100 to 250 %.
     pub scale: f32,
-    /// Keep the small empty island when there's nothing to say, instead of fading away.
+    /// Keep the small empty island when there's nothing to say, instead of fading away (see-through or not).
     pub keep_minimal: bool,
     /// Stay visible whichever window is in front, not only the game or Elite Nexus.
     pub always_visible: bool,
-    /// A see-through window around the island (applies after a restart). Off: an opaque black panel.
+    /// A see-through window around the island (applies after a restart). Off: the island is an opaque window of its
+    /// own, its size and (on Windows) its shape.
     pub see_through: bool,
     /// VR: an opaque panel of fixed size that never hides, with nothing under 14 pt, for mirroring into a headset.
     pub vr: bool,
@@ -49,7 +65,36 @@ pub struct OverlayPrefs {
 
 impl Default for OverlayPrefs {
     fn default() -> Self {
-        OverlayPrefs { enabled: false, locked: true, anchor: Anchor::Centre, position: None, scale: 1.0, keep_minimal: false, always_visible: false, see_through: false, vr: false, xsoverlay: false }
+        OverlayPrefs {
+            enabled: false,
+            locked: true,
+            anchor: Anchor::Centre,
+            position: None,
+            position_is_canvas: false,
+            scale: 1.0,
+            keep_minimal: false,
+            always_visible: false,
+            see_through: false,
+            vr: false,
+            xsoverlay: false,
+        }
+    }
+}
+
+impl OverlayPrefs {
+    /// A position saved by an earlier version with see-through off was its opaque panel's top-left, where the open
+    /// island now sits in the canvas: it moves by that much once, so the island stays where it was. `cut`: the island
+    /// is its own window now; `k`: points per island point. True when the settings changed.
+    pub fn settle_position(&mut self, cut: bool, k: f32) -> bool {
+        if self.position_is_canvas {
+            return false;
+        }
+        self.position_is_canvas = true;
+        if cut && let Some([x, y]) = self.position {
+            let d = draw::PANEL_OFFSET * k;
+            self.position = Some([x - d.x, y - d.y]);
+        }
+        true
     }
 }
 
@@ -71,6 +116,9 @@ struct Shared {
     /// Closed from outside (Alt+F4 while it had the focus, unlocked).
     closed: bool,
     clicked: bool,
+    /// Windows: the overlay's window, and the shape it was last given (its own pixels).
+    window: Option<isize>,
+    shaped: Option<(isize, Vec<[i32; 5]>)>,
 }
 
 /// What the main window last told the overlay's window.
@@ -82,6 +130,8 @@ struct Sent {
     /// Frames painted when it was last shown.
     shown_at: Option<u64>,
     passthrough: Option<bool>,
+    /// Its size (points).
+    size: Option<Vec2>,
 }
 
 /// What the overlay asks of the main window.
@@ -113,8 +163,14 @@ pub struct Overlay {
     /// The game's monitor (Windows), looked up every few seconds.
     monitor: Option<[i32; 4]>,
     monitor_asked: Option<f64>,
-    /// Where the window was last put (points), and when.
-    placed: Option<(Pos2, f64)>,
+    /// Where the window was last put (points), when, and where that is from the canvas's top-left (the island's own
+    /// window sits inside the canvas).
+    placed: Option<(Pos2, f64, Vec2)>,
+    /// See-through off: the island's own window, as the view last asked for it.
+    cutout: Option<draw::Cutout>,
+    /// The island's clock starts here. egui's input time stands still while eframe runs only `App::logic` (the main
+    /// window minimised or covered), and the island's moments and alerts must still run out on time.
+    epoch: Instant,
     /// The window renderer was set up for see-through windows at start.
     see_through: bool,
     /// Off in screenshot runs: nothing may pop up over the game.
@@ -171,9 +227,10 @@ pub fn place(anchor: Anchor, monitor: Rect, canvas: Vec2) -> Pos2 {
 }
 
 impl Overlay {
-    /// `see_through`: the renderer was set up for it at start. `allowed`: off in screenshot runs. `demo`: the
-    /// `--overlay` moment.
+    /// `see_through`: the renderer was set up for it at start (and could be: [`SEE_THROUGH_RENDERER`]). `allowed`: off
+    /// in screenshot runs. `demo`: the `--overlay` moment.
     pub fn new(see_through: bool, allowed: bool, demo: Option<(IslandView, IslandView)>) -> Self {
+        let see_through = see_through && SEE_THROUGH_RENDERER.load(Ordering::Relaxed);
         Overlay {
             id: ViewportId::from_hash_of("elite-nexus-overlay"),
             shared: Default::default(),
@@ -190,6 +247,8 @@ impl Overlay {
             monitor: None,
             monitor_asked: None,
             placed: None,
+            cutout: None,
+            epoch: Instant::now(),
             see_through,
             allowed,
             demo,
@@ -227,7 +286,7 @@ impl Overlay {
             self.rhythm = Rhythm::default();
             return req;
         }
-        let t = ctx.input(|i| i.time);
+        let t = self.clock();
         // The overlay's window was closed from outside (Alt+F4 while unlocked): the overlay is off.
         let closed = self.shared.lock().closed;
         if closed || ctx.input(|i| i.raw.viewports.get(&self.id).is_some_and(|v| v.close_requested())) {
@@ -251,6 +310,9 @@ impl Overlay {
             self.monitor = self.desktop.game_monitor();
         }
         let look = self.look(prefs);
+        if prefs.settle_position(look.cut(), draw::scale_of(ctx, &look)) {
+            req.prefs_changed = true;
+        }
         let view = match &self.demo {
             // The demo turns from compact to expanded and back every four seconds, to show the morph.
             Some((compact, expanded)) => {
@@ -261,15 +323,39 @@ impl Overlay {
         };
         // Shown only while the game or Elite Nexus is in front (unless kept visible), and while there's something to say.
         let in_front = prefs.always_visible || prefs.vr || self.demo.is_some() || self.in_front != Some(false);
-        // An empty capsule says nothing as an opaque black panel: the panel goes instead (VR keeps it).
-        let view = if !look.see_through && !look.vr && view.size == Size::Minimal { IslandView { size: Size::Gone, ..view } } else { view };
+        let gone = view.size == Size::Gone;
+        let view = if in_front { view } else { IslandView::default() };
+        // See-through off, the window is the island's own: sized for this view before it shows (with nothing to show it
+        // keeps its size, and fades its content out). Measured once the window exists, so a frame has set up the fonts.
+        if look.cut()
+            && self.sent.open
+            && let Some(c) = draw::cutout(ctx, &view, &look)
+        {
+            self.cutout = Some(c);
+        }
+        // The window follows it now, also when only this runs (the main window minimised or behind the game, so `show`
+        // doesn't); `show` gives the viewport's builder the same.
+        if self.sent.open {
+            let (pos, size, offset) = self.frame(ctx, prefs, &look);
+            if self.sent.size != Some(size) {
+                ctx.send_viewport_cmd_to(self.id, ViewportCommand::InnerSize(size));
+                self.sent.size = Some(size);
+            }
+            if let Some(pos) = pos {
+                self.put(ctx, pos, offset);
+            }
+        }
+        // Its own frames give it the island's shape (Windows), once it has the size the island was cut for.
+        let window = if self.sent.open { self.desktop.window(TITLE) } else { None };
         let mut s = self.shared.lock();
-        let idle = view.size == Size::Gone && prefs.locked && s.faded_out;
+        s.window = window;
+        // Nothing to say: gone once it has faded away, and never shown before there's something to show (an opaque
+        // window would otherwise flash black while its first frame fades from nothing to nothing).
+        let idle = gone && prefs.locked && (s.faded_out || self.sent.shown_at.is_none());
         // macOS brings a window it shows to the front, taking the keyboard from the game: a see-through overlay stays
         // shown there and simply draws nothing.
         let can_hide = !(cfg!(target_os = "macos") && look.see_through && !look.vr);
         let show = prefs.vr || (in_front && !idle) || !can_hide;
-        let view = if in_front { view } else { IslandView::default() };
         if s.view != view || s.look != Some(look) {
             s.view = view;
             s.look = Some(look);
@@ -317,11 +403,14 @@ impl Overlay {
         // seen in where the window is: away from where it was put, a second after it was put there.
         let outer = ctx.input(|i| i.raw.viewports.get(&self.id).and_then(|v| v.outer_rect)).map(|r| r.min);
         if !prefs.locked
-            && let (Some((placed, at)), Some(outer)) = (self.placed, outer)
+            && let (Some((placed, at, offset)), Some(outer)) = (self.placed, outer)
             && t - at >= 1.0
             && placed.distance(outer) > 2.0
         {
-            prefs.position = Some([outer.x, outer.y]);
+            // Kept as the canvas's top-left, whatever size the island's own window has.
+            let canvas = outer - offset;
+            prefs.position = Some([canvas.x, canvas.y]);
+            prefs.position_is_canvas = true;
             req.prefs_changed = true;
         }
         // Asked again twice a second while the game runs: whether it's in front, the island's next change.
@@ -363,10 +452,35 @@ impl Overlay {
         self.view.clone()
     }
 
+    /// Where the window goes (points; None while the monitor isn't known), its size, and where it is from the canvas's
+    /// top-left: the canvas at its place, or, see-through off, the island's own window where the island would be in it.
+    fn frame(&self, ctx: &Context, prefs: &OverlayPrefs, look: &Look) -> (Option<Pos2>, Vec2, Vec2) {
+        let canvas = look.canvas() * draw::scale_of(ctx, look);
+        let (size, offset) = match self.cutout.as_ref().filter(|_| look.cut()) {
+            Some(c) => (c.rect.size(), c.rect.min.to_vec2()),
+            None => (canvas, Vec2::ZERO),
+        };
+        (self.position(ctx, prefs, canvas).map(|p| p + offset), size, offset)
+    }
+
+    /// Moves the window to `pos` (points) when that's somewhere new, and notes when.
+    fn put(&mut self, ctx: &Context, pos: Pos2, offset: Vec2) {
+        if self.placed.is_none_or(|(p, _, _)| p != pos) {
+            ctx.send_viewport_cmd_to(self.id, ViewportCommand::OuterPosition(pos));
+            self.placed = Some((pos, self.clock(), offset));
+        }
+    }
+
+    /// Seconds since the overlay was made: the island's clock.
+    fn clock(&self) -> f64 {
+        self.epoch.elapsed().as_secs_f64()
+    }
+
     /// The overlay is off: its window closes (eframe drops a viewport no frame shows any more).
     fn close(&mut self) {
         self.sent = Sent::default();
         self.placed = None;
+        self.cutout = None;
         self.desktop.forget_window();
         *self.shared.lock() = Shared::default();
     }
@@ -397,7 +511,8 @@ impl Overlay {
             return;
         }
         let look = self.look(prefs);
-        let canvas = look.canvas() * draw::scale_of(ctx, &look);
+        // See-through off: the island's own window, where the island would be in the canvas.
+        let (pos, size, offset) = self.frame(ctx, prefs, &look);
         let mut builder = ViewportBuilder::default()
             .with_title(TITLE)
             .with_decorations(false)
@@ -409,17 +524,18 @@ impl Overlay {
             .with_has_shadow(false)
             // X11: window managers don't give the focus to a notification.
             .with_window_type(X11WindowType::Notification)
-            .with_inner_size(canvas);
-        if let Some(pos) = self.position(ctx, prefs, canvas) {
+            .with_inner_size(size);
+        if let Some(pos) = pos {
             builder = builder.with_position(pos);
-            if self.placed.is_none_or(|(p, _)| p != pos) {
-                self.placed = Some((pos, ctx.input(|i| i.time)));
+            if self.placed.is_none_or(|(p, _, _)| p != pos) {
+                self.placed = Some((pos, self.clock(), offset));
             }
         }
         if !self.sent.open {
             // Created hidden; it shows once it has painted.
             builder = builder.with_visible(false);
             self.sent.open = true;
+            self.sent.size = Some(size);
             ctx.request_repaint_of(self.id);
         }
         let shared = self.shared.clone();
@@ -428,6 +544,18 @@ impl Overlay {
             let s = &mut *guard;
             let Some(look) = s.look else { return };
             let out = draw::island(ui, &s.view, &look, &mut s.anim);
+            // The window's shape goes with what was just drawn at its size, in its own pixels; kept once Windows takes it.
+            // A window that never had one (see-through) is left as it is.
+            if let (Some(window), Some(parts)) = (s.window, &out.shape) {
+                let ppp = ui.ctx().pixels_per_point();
+                let px = |v: f32| (v * ppp).round() as i32;
+                let parts: Vec<[i32; 5]> = parts.iter().map(|(r, radius)| [px(r.left()), px(r.top()), px(r.right()), px(r.bottom()), px(*radius)]).collect();
+                let was = s.shaped.as_ref().is_some_and(|(w, p)| *w == window && !p.is_empty());
+                let changed = s.shaped.as_ref().is_none_or(|(w, p)| *w != window || *p != parts);
+                if changed && (was || !parts.is_empty()) && platform::set_shape(window, &parts) {
+                    s.shaped = Some((window, parts));
+                }
+            }
             s.painted += 1;
             s.faded_out = out.faded_out;
             s.closed |= ui.input(|i| i.viewport().close_requested());
@@ -453,6 +581,22 @@ mod tests {
         assert_eq!(place(Anchor::Centre, monitor, canvas), Pos2::new(1920.0 + 1280.0 - 220.0, 0.0));
         assert_eq!(place(Anchor::Left, monitor, canvas), Pos2::new(1920.0, 0.0));
         assert_eq!(place(Anchor::Right, monitor, canvas), Pos2::new(1920.0 + 2560.0 - 440.0, 0.0));
+    }
+
+    /// With see-through off, earlier versions kept the opaque panel's top-left where it was dragged to; that place is now
+    /// the canvas's, with the open island 16 points in and 12 down. Moved once, the island stays where the panel was.
+    #[test]
+    fn a_place_dragged_to_by_an_earlier_version_keeps_the_island_there() {
+        let mut p: OverlayPrefs = serde_json::from_str(r#"{ "enabled": true, "position": [1000.0, 40.0] }"#).expect("prefs");
+        assert!(!p.position_is_canvas, "an earlier version's settings");
+        assert!(p.settle_position(true, 1.5));
+        assert_eq!(p.position, Some([1000.0 - 24.0, 40.0 - 18.0]), "by the open island's place in the canvas, at its scale");
+        assert!(!p.settle_position(true, 1.5), "once");
+        let mut q: OverlayPrefs = serde_json::from_str(r#"{ "position": [1000.0, 40.0], "see_through": true }"#).expect("prefs");
+        assert!(q.settle_position(false, 1.0));
+        assert_eq!(q.position, Some([1000.0, 40.0]), "see-through kept the canvas's place already");
+        let mut fresh = OverlayPrefs::default();
+        assert!(fresh.settle_position(true, 1.0) && fresh.position.is_none());
     }
 
     #[test]

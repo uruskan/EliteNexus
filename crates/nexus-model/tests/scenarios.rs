@@ -646,6 +646,33 @@ fn claimed_and_delivered_constructions_are_yours() {
     assert_eq!(col.involvement(&col.depots[&3_956_000_100]), Involvement::Visited);
 }
 
+fn docking(event: &str, ts: &str, extra: &str) -> String {
+    format!(r#"{{ "timestamp":"{ts}", "event":"{event}", "MarketID":3700000000, "StationName":"Q2K-71N", "StationType":"FleetCarrier"{extra} }}"#)
+}
+
+/// Play-test, 2026-11-04: a denied request showed on the overlay, the granted one a few seconds later showed nothing.
+/// Both raise an alert now, and the pad is kept until the ship docks.
+#[test]
+fn docking_granted_and_denied_both_say_so_and_the_pad_stays_until_docked() {
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let denied = feed(&mut m, &[docking("DockingDenied", "2026-10-01T10:01:00Z", r#", "Reason":"Distance""#).as_str()]);
+    assert_eq!(denied.len(), 1);
+    assert_eq!((denied[0].title.as_str(), denied[0].detail.as_str()), ("Docking denied", "Q2K-71N: too far away: ask again within 7.5 km"));
+    assert!(m.active().unwrap().location.docking.is_none());
+    let granted = feed(&mut m, &[docking("DockingGranted", "2026-10-01T10:01:20Z", r#", "LandingPad":12"#).as_str()]);
+    assert_eq!((granted[0].title.as_str(), granted[0].detail.as_str()), ("Docking granted", "Pad 12 · Q2K-71N"));
+    assert_eq!(granted[0].priority, denied[0].priority, "shown alike");
+    let grant = m.active().unwrap().location.docking.clone().expect("the pad is kept");
+    assert_eq!((grant.pad, grant.market_id), (Some(12), 3_700_000_000));
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:02:30Z", "event":"Docked", "StationName":"Q2K-71N", "StationType":"FleetCarrier", "StarSystem":"Alpha", "SystemAddress":100, "MarketID":3700000000 }"#]);
+    assert!(m.active().unwrap().location.docking.is_none(), "docked: no pad to look for");
+    feed(&mut m, &[docking("DockingGranted", "2026-10-01T11:00:00Z", r#", "LandingPad":3"#).as_str(), docking("DockingTimeout", "2026-10-01T11:05:00Z", "").as_str()]);
+    assert!(m.active().unwrap().location.docking.is_none(), "the permission ran out");
+    feed(&mut m, &[docking("DockingGranted", "2026-10-01T11:10:00Z", r#", "LandingPad":3"#).as_str(), r#"{ "timestamp":"2026-10-01T11:10:30Z", "event":"SupercruiseEntry", "StarSystem":"Alpha", "SystemAddress":100 }"#]);
+    assert!(m.active().unwrap().location.docking.is_none(), "left for supercruise");
+}
+
 /// NavRoute.json as the game writes it when a route is plotted: the system it was plotted from comes first.
 fn nav_route(systems: &[(&str, u64, f64)]) -> nexus_journal::Companion {
     let hops: Vec<String> = systems
