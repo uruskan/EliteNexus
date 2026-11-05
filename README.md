@@ -68,7 +68,7 @@ Nothing in the app depends on it. o7
 * **Keep hostile red, friendly green and shield blue.** The game's setting moves every HUD colour together, so a blue
   theme turns hostile contacts blue too. Switch this on and your theme colours only the HUD's orange.
 * **Cockpit lights.** The game has no setting for them: Elite Nexus dims the cockpit's own lamps and glow and nothing
-  else, with in-game keys for on/off (F9), how much light stays (F10) and reach (F11).
+  else, with in-game keys for on/off (F9), how much light stays (F7) and reach (F8).
 * **Glare and exposure.** Odyssey's auto-exposure darkens everything outside when the dashboard is bright; tame the
   glare and lift the darks with the game's own tone-mapping values, starting from community presets.
 

@@ -15,8 +15,9 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   rest of the HUD takes the theme colour; the game's own setting alone recolours friend and foe too. It cannot colour
   single HUD elements and cannot run alongside EDHM.
 - Cockpit lights: the game has no cockpit-light setting; Elite Nexus dims the cockpit's own lights (only those) via
-  the same 3Dmigoto hook, with in-game keys F9 (on/off), F10 (light kept) and F11 (reach); the game also gets those
-  key presses, so the app warns when the controls bind one of them on its own. The hook needs a one-time calibration
+  the same 3Dmigoto hook, with in-game keys F9 (on/off), F7 (light kept) and F8 (reach), which no built-in control
+  preset uses and which leave the game's screenshot key (F10) alone; the game also gets those key presses, so the app
+  warns when the controls bind one of them on its own. The hook needs a one-time calibration
   (one game session) and asks to be calibrated again after a game update; until then it is simply off.
 - Folders: the journal folder and the game folder are found automatically (the game in every Steam library, with
   Steam's own folder read from the registry, in Windows' installed-programs list and in the usual Epic and Frontier

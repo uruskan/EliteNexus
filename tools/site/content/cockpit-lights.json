@@ -1,12 +1,12 @@
 {
   "slug": "cockpit-lights",
   "title": "Elite Dangerous Cockpit Light Dimmer — Elite Nexus",
-  "description": "Dim Elite Dangerous cockpit lights independently of the HUD. Set how much light stays and how far the dimmer reaches, use F9, F10 and F11 in flight, and install or remove the optional graphics hook in one click.",
+  "description": "Dim Elite Dangerous cockpit lights independently of the HUD. Set how much light stays and how far the dimmer reaches, use F9, F7 and F8 in flight, and install or remove the optional graphics hook in one click.",
   "kicker": "Cockpit lights",
   "heading": "Less cabin light. More of the galaxy.",
   "lead": "Turn down the cockpit’s own lamps and glow with a dedicated dimmer. Keep your HUD readable, your surroundings unchanged, and adjust the cabin while you fly.",
   "hero_image": "cockpit-lights.png",
-  "hero_alt": "Elite Nexus Cockpit lights tab with the installed dimmer, Light kept and Reach settings, and F9, F10 and F11 keyboard controls.",
+  "hero_alt": "Elite Nexus Cockpit lights tab with the installed dimmer, Light kept and Reach settings, and its in-game keys.",
   "hero_caption": "A dedicated dimmer for the cockpit’s own lights, with saved settings and in-game keyboard controls.",
   "toc": [
     {

@@ -206,6 +206,11 @@ release time that section becomes the new version and the release workflow publi
   only when the island changes shape and draws nothing while it's still, so it costs no more than before. A place
   you dragged it to keeps the island where it was. On a PC without DirectX 12, where see-through can't work, the
   island is now its own window too (it was a black rectangle), and Settings › Overlay says why.
+- **Cockpit lights: the dimmer's keys in the game are F7, F8 and F9.** F10 stepped the light kept, but F10 is also
+  the game's screenshot key, so every screenshot changed the dimmer too. Now F7 steps the light kept, F8 the reach,
+  and F9 still switches it on and off; none of the game's built-in control presets uses F2 to F11. A dimmer
+  installed earlier keeps F9, F10 and F11 until you click Save on the Cockpit lights tab, which says so. The tab
+  also checks the dimmer's keys against the game's screenshot key, which isn't among its controls.
 - **Inara**: Developer mode is gone from Accounts & sync (Inara options). Elite Nexus no longer marks what it sends
   as "in development", so Inara now takes the community goals you're part of, and your progress in them, as it does
   from any approved app. A settings file that still has the switch reads as before.
