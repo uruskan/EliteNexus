@@ -26,6 +26,7 @@ mod screenshots;
 mod secrets;
 mod settings;
 mod shopping;
+mod support;
 mod surface_finder;
 mod sync;
 #[cfg(test)]

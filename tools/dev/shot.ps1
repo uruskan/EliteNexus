@@ -28,6 +28,8 @@
 #        current ship (Compare: beside the hull as a shipyard sells it; Weapons: against an
 #        Anaconda as sold).
 #        With -Page Statistics: career, activity, ships or all opens that tab.
+#        On any page: support shows the support card of each start with its countdown running,
+#        support-close with the countdown over and Close showing (other shots never show it).
 # -JournalDir: read a test journal folder instead of the real one (test runs never upload).
 # -Overlay: an overlay moment with sample content, compact and expanded (jump, hyperspace, arrival, approach,
 #        sampling, close, mining, trade, docking, docked, carrier, two, alert, quiet).

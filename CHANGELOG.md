@@ -6,6 +6,11 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
+- **A support card at start**: while Elite Nexus is in beta, each start shows a small card in the middle of the main
+  window with the **GitHub Sponsors** and **Buy Me a Coffee** buttons and what support pays for. It can be closed
+  after a 10-second countdown. Elite Nexus stays free with no ads, and nothing in it depends on support. The card
+  never appears on the overlay or in VR, and never takes focus from the game; on a first start it waits until the
+  welcome is done.
 - **Missions › Recent mission history** can be cleared (asked for by Asmodeus on the Frontier Forums): **Clear**
   hides the missions in the list, so it starts fresh with the next one you complete, fail or abandon. They're hidden
   from this list only: the game, its journals and every other page of Elite Nexus still have them (Statistics still

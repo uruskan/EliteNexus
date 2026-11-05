@@ -771,6 +771,12 @@ pub fn primary_button(ui: &mut Ui, text: &str) -> Response {
     )
 }
 
+/// A capsule in a colour of its own with its own text colour (the support buttons, in their brands' colours).
+pub fn tinted_button(ui: &mut Ui, text: &str, fill: Color32, ink: Color32, min_size: Vec2) -> Response {
+    ui.add(egui::Button::new(RichText::new(text).font(display(size::CALLOUT)).color(ink)).fill(fill).corner_radius(CornerRadius::same(255)).min_size(min_size))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// A secondary action: a grey capsule.
 pub fn button(ui: &mut Ui, text: &str) -> Response {
     ui.add(egui::Button::new(RichText::new(text).size(size::CALLOUT).color(pal::TEXT)).corner_radius(CornerRadius::same(255)).min_size(Vec2::new(0.0, 30.0)))

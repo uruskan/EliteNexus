@@ -102,7 +102,8 @@ a layout changes.
   ship's build with every row ticked, as for a second ship like it; `buy-build`: nothing loaded), `buy-one` (Fleet > Where to buy, one module: a 6A frame shift drive), `plan`, `plan-fsd`, `plan-new`, `plan-hull` (Fleet > Plan a loadout with the current ship; `plan-fsd` opens its frame shift drive's list, with engineering planned for it; `plan-new`: its start, with saved builds and every hull; `plan-hull`: a new Python; `plan-defence`, `plan-weapons`, `plan-power`, `plan-travel`, `plan-compare`: the current ship on that panel, Compare beside the hull as a shipyard sells it, Weapons against an Anaconda as sold), `materials`, `engineers`
   (`engineers:selene`: with that engineer's whole way open, any part of a name without spaces), `suits`, `synthesis`,
   `merc`, `rolls` (Engineering; `rolls`: four hull reinforcement packages with the rolls at each grade open), `where`, `where:Monazite`, `where-route` (Mining > Where to mine: near
-  you, near you for that material, or along a route towards Colonia), `career`, `activity`, `ships`, `all` (Statistics), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from that
+  you, near you for that material, or along a route towards Colonia), `career`, `activity`, `ships`, `all` (Statistics), `support`, `support-close` (any page: the support card shown at
+  each start, which screenshot runs otherwise never show; its countdown running, or over with Close showing), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from that
   theme; add `,options` to open the protection's options; nothing is written). `find`, `untouched`, `known`, `buy`,
   `buy-one`, the `where` tabs and `route-carrier` start their search on the first frame: add
   `-Delay 15` to `-Delay 25` for Spansh to answer. `routes` (Market › Trade routes) searches the local database on the

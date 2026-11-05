@@ -137,6 +137,8 @@ pub struct NexusApp {
     /// The commander and their model's `mining.spots_rev` and `drops_rev` when the Rhino's deposits and hover drops
     /// were last copied into the settings.
     deposits_rev: (String, u64, u64),
+    /// The support card shown at start (`support::at_start`) until it's closed.
+    support: Option<crate::support::Card>,
 }
 
 impl NexusApp {
@@ -197,6 +199,7 @@ impl NexusApp {
         // `--demo` screenshots fill the alert history, and `--tab bell` opens it, so its design can be checked (not
         // "alerts": Market has a tab of that name).
         let demo = ov.demo && shot.is_some();
+        let shot_tab = ov.tab.clone().filter(|_| shot.is_some());
         let mut alert_history = crate::alert_history::AlertHistory::default();
         if demo {
             // As if Elite Nexus had been running for an hour.
@@ -271,6 +274,7 @@ impl NexusApp {
             // The first frames load fonts and textures: nothing is logged in the first 10 seconds.
             slow_frame_logged: Some(Instant::now()),
             deposits_rev: (String::new(), 0, 0),
+            support: crate::support::at_start(live_run, shot_tab.as_deref()),
         }
     }
 
@@ -1415,6 +1419,11 @@ impl NexusApp {
                     self.page = Page::Accounts;
                 }
             }
+        }
+        // The support card, after the welcome sheet on a first start.
+        let welcome_open = !self.settings.welcomed && self.shot.is_none();
+        if !welcome_open && self.support.as_mut().is_some_and(|card| card.show(&ctx)) {
+            self.support = None;
         }
         self.toasts(&ctx);
     }
