@@ -1,21 +1,89 @@
 use crate::pages::where_to_get::{Goto, Sources, WhereToGet};
 use crate::theme::{display, pal, size};
-use crate::widgets::{badge, badge_size, bar, card, duration, empty, short_credits};
+use crate::widgets::{badge, badge_size, bar, button, card, card_with, duration, empty, footnote, short_credits};
 use egui::{Color32, Grid, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
 use nexus_journal::Timestamp;
 use nexus_model::missions::{Mission, MissionOutcome, MissionRecord};
 use nexus_model::GameState;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-/// The Missions page's state: "where to get it" for the goods your missions ask for.
+/// The Missions page's state: "where to get it" for the goods your missions ask for, and how to take back a Clear just
+/// made.
 #[derive(Default)]
 pub struct MissionsUi {
     get: WhereToGet,
+    undo: Option<Undo>,
 }
 
-/// Returns what a "where to get it" panel asks the Market page to open.
-pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> Option<Goto> {
+/// How to take back a Clear: whose history it was (as [`commander_key`] names them), and where it had been cleared up
+/// to before (None: nowhere).
+#[derive(Debug, Clone, PartialEq)]
+struct Undo {
+    cmdr: String,
+    before: Option<Timestamp>,
+}
+
+/// What the Missions page keeps in settings.json.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MissionsPrefs {
+    /// How far each commander cleared their recent history (by FID, or by name where the journals give none): when the
+    /// last mission it held then ended. The list leaves out the missions that ended then or before. The history is read
+    /// from the journals again at every start, so this is what keeps them out of it; the journals aren't touched.
+    pub cleared: BTreeMap<String, Timestamp>,
+}
+
+impl MissionsPrefs {
+    /// Where `cmdr`'s history was cleared up to (None: it never was, or it's shown again).
+    pub fn cleared(&self, cmdr: &str) -> Option<Timestamp> {
+        self.cleared.get(cmdr).copied()
+    }
+
+    /// Clears `cmdr`'s history: every mission in `history` is left out of the list from now on, and one that ends
+    /// later shows. Returns how to take it back, or None when there was nothing to clear.
+    fn clear(&mut self, cmdr: &str, history: &[MissionRecord]) -> Option<Undo> {
+        let newest = history.iter().map(|r| r.ts).max()?;
+        let before = self.cleared(cmdr);
+        if before.is_some_and(|b| b >= newest) {
+            return None;
+        }
+        self.cleared.insert(cmdr.to_string(), newest);
+        Some(Undo { cmdr: cmdr.to_string(), before })
+    }
+
+    /// Takes back a Clear: the history is hidden up to where it was before.
+    fn undo(&mut self, u: &Undo) {
+        match u.before {
+            Some(t) => {
+                self.cleared.insert(u.cmdr.clone(), t);
+            }
+            None => {
+                self.cleared.remove(&u.cmdr);
+            }
+        }
+    }
+
+    /// Shows all of `cmdr`'s history again.
+    fn show_all(&mut self, cmdr: &str) {
+        self.cleared.remove(cmdr);
+    }
+}
+
+/// Whose settings these are, as the model tells its commanders apart: the FID, or the name in journals that give none.
+fn commander_key(gs: &GameState) -> &str {
+    if gs.cmdr.fid.is_empty() { &gs.cmdr.name } else { &gs.cmdr.fid }
+}
+
+/// The missions the recent history lists, oldest first: those that ended after it was last cleared.
+fn shown(history: &[MissionRecord], cleared: Option<Timestamp>) -> impl Iterator<Item = &MissionRecord> {
+    history.iter().filter(move |r| cleared.is_none_or(|c| r.ts > c))
+}
+
+/// Returns true when `prefs` changed (to be saved), and what a "where to get it" panel asks the Market page to open.
+pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, prefs: &mut MissionsPrefs, src: &Sources) -> (bool, Option<Goto>) {
     let stacks = gs.missions.massacre_stacks();
     if !stacks.is_empty() {
         for s in &stacks {
@@ -174,19 +242,65 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> 
     });
     let goto = goods(ui, gs, st, src);
     ui.add_space(8.0);
-    card(ui, "Recent mission history", |ui| {
+    let changed = history(ui, gs, st, prefs);
+    (changed, goto)
+}
+
+/// The most missions the recent history lists, newest first.
+const HISTORY_ROWS: usize = 40;
+
+const CLEAR_TIP: &str = "Hide these missions from this list, so it starts fresh. Only from this list: the game, its journals and every other page of Elite Nexus still have them, and you can show them again.";
+const SHOW_AGAIN_TIP: &str = "Bring back every mission you cleared from this list";
+
+/// The recent mission history, with Clear, Undo and Show them again. Returns true when `prefs` changed (to be saved).
+fn history(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, prefs: &mut MissionsPrefs) -> bool {
+    let cmdr = commander_key(gs);
+    let all = &gs.missions.history;
+    let cleared = prefs.cleared(cmdr);
+    let list: Vec<&MissionRecord> = shown(all, cleared).collect();
+    let hidden = all.len() - list.len();
+    // Undo is for a Clear just made: until a mission ends after it, and for the commander who made it.
+    if !list.is_empty() || st.undo.as_ref().is_some_and(|u| u.cmdr != cmdr) {
+        st.undo = None;
+    }
+    let (mut clear, mut undo, mut show_all) = (false, false, false);
+    let right = |ui: &mut Ui| {
+        if !list.is_empty() && button(ui, "Clear").on_hover_text(CLEAR_TIP).clicked() {
+            clear = true;
+        }
+    };
+    card_with(ui, "Recent mission history", right, |ui| {
         // Reported by other developers and on Frontier's forums: the wingmate who handed the mission in gets the
         // MissionCompleted line, the others get none (docs/research/journal.md §5.6).
         let shared = "A mission a wingmate shared and handed in isn't counted: the game writes nothing about it in your journal.";
-        if gs.missions.history.is_empty() {
+        if all.is_empty() {
             ui.label(RichText::new("None recorded.").color(pal::DIM));
-            crate::widgets::footnote(ui, shared);
+            footnote(ui, shared);
+            return;
+        }
+        let note = hidden_note(hidden);
+        if list.is_empty() {
+            empty(ui, icon::CHECK_CIRCLE, "History cleared", "Missions you complete, fail or abandon from now on show here.");
+            ui.vertical_centered(|ui| match &st.undo {
+                Some(u) => {
+                    undo = button(ui, "Undo").on_hover_text("Bring back the missions you just cleared").clicked();
+                    // An earlier Clear hid more than Undo brings back.
+                    if u.before.is_some() {
+                        ui.add_space(6.0);
+                        show_all = button(ui, "Show them again").on_hover_text(SHOW_AGAIN_TIP).clicked();
+                    }
+                }
+                None => show_all = button(ui, "Show them again").on_hover_text(SHOW_AGAIN_TIP).clicked(),
+            });
+            ui.add_space(12.0);
+            footnote(ui, &note);
+            footnote(ui, shared);
             return;
         }
         // The title last, in the width the other columns leave: a long one ends in "…" (whole on hover) instead of
         // widening the card past the window.
         Grid::new("mhist").num_columns(4).striped(true).spacing([12.0, 3.0]).max_col_width(ui.available_width()).show(ui, |ui| {
-            for r in gs.missions.history.iter().rev().take(40) {
+            for r in list.iter().rev().take(HISTORY_ROWS) {
                 ui.label(RichText::new(r.ts.to_local_string("%d %b %H:%M")).color(pal::FAINT));
                 let (t, c) = match r.outcome {
                     MissionOutcome::Completed => ("completed", pal::GOOD),
@@ -200,9 +314,42 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut MissionsUi, src: &Sources) -> 
                 ui.end_row();
             }
         });
-        crate::widgets::footnote(ui, shared);
+        if list.len() > HISTORY_ROWS {
+            footnote(ui, &format!("The newest {HISTORY_ROWS} of {}.", nexus_data::names::group_digits(list.len() as i64)));
+        }
+        if hidden > 0 {
+            ui.add_space(6.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(&note).size(size::FOOTNOTE).color(pal::DIM));
+                show_all = button(ui, "Show them again").on_hover_text(SHOW_AGAIN_TIP).clicked();
+            });
+        }
+        footnote(ui, shared);
     });
-    goto
+    let mut changed = false;
+    if clear && let Some(u) = prefs.clear(cmdr, all) {
+        st.undo = Some(u);
+        changed = true;
+    }
+    if undo && let Some(u) = st.undo.take() {
+        prefs.undo(&u);
+        changed = true;
+    }
+    if show_all {
+        prefs.show_all(cmdr);
+        st.undo = None;
+        changed = true;
+    }
+    changed
+}
+
+/// What the list says about the missions it leaves out, `hidden` of them, since it was cleared.
+fn hidden_note(hidden: usize) -> String {
+    let (missions, are, them) = if hidden == 1 { ("mission", "is", "it") } else { ("missions", "are", "them") };
+    format!(
+        "{} {missions} you cleared {are} hidden from this list only: the game, its journals and every other page of Elite Nexus still have {them}.",
+        nexus_data::names::group_digits(hidden as i64),
+    )
 }
 
 /// What a mission in the history paid, in its colour: a completed one's reward; a failed or abandoned one paid
@@ -353,5 +500,185 @@ mod tests {
         assert_eq!(goods.len(), 1, "the delivery's gold comes with the mission");
         assert_eq!((goods[0].name.as_str(), goods[0].tonnes, goods[0].missions.len()), ("Wasserstoff-Treibstoff", 20, 2));
         assert_eq!(nexus_data::commodities::commodity(goods[0].symbol).map(|c| c.name.as_str()), Some("Hydrogen Fuel"));
+    }
+
+    fn ended(id: u64, ts: i64, outcome: MissionOutcome) -> MissionRecord {
+        MissionRecord { id, title: format!("Mission {id}"), faction: String::new(), outcome, reward: 100_000, ts: Timestamp(ts) }
+    }
+
+    /// The missions the list shows, by id.
+    fn listed(history: &[MissionRecord], cleared: Option<Timestamp>) -> Vec<u64> {
+        shown(history, cleared).map(|r| r.id).collect()
+    }
+
+    /// Clear hides every mission the history holds, two handed in in the same second too, and a mission that ends
+    /// afterwards shows.
+    #[test]
+    fn clearing_hides_the_history_so_far() {
+        let mut history = vec![ended(1, 100, MissionOutcome::Completed), ended(2, 200, MissionOutcome::Failed), ended(3, 200, MissionOutcome::Abandoned)];
+        let mut prefs = MissionsPrefs::default();
+        assert_eq!(listed(&history, prefs.cleared("F1")), [1, 2, 3]);
+        let undo = prefs.clear("F1", &history).expect("missions to clear");
+        assert_eq!(undo, Undo { cmdr: "F1".into(), before: None });
+        assert!(listed(&history, prefs.cleared("F1")).is_empty());
+        assert_eq!(prefs.clear("F1", &history), None, "nothing new to clear");
+        assert_eq!(MissionsPrefs::default().clear("F1", &[]), None, "nor in an empty history");
+        history.push(ended(4, 201, MissionOutcome::Completed));
+        assert_eq!(listed(&history, prefs.cleared("F1")), [4]);
+    }
+
+    /// Undo takes back only the last Clear; Show them again brings back the whole history.
+    #[test]
+    fn undo_and_show_them_again() {
+        let mut history = vec![ended(1, 100, MissionOutcome::Completed)];
+        let mut prefs = MissionsPrefs::default();
+        prefs.clear("F1", &history).expect("missions to clear");
+        history.push(ended(2, 200, MissionOutcome::Completed));
+        let undo = prefs.clear("F1", &history).expect("a new mission to clear");
+        assert_eq!(undo.before, Some(Timestamp(100)));
+        assert!(listed(&history, prefs.cleared("F1")).is_empty());
+        prefs.undo(&undo);
+        assert_eq!(listed(&history, prefs.cleared("F1")), [2]);
+        prefs.show_all("F1");
+        assert_eq!(listed(&history, prefs.cleared("F1")), [1, 2]);
+        assert!(prefs.cleared.is_empty(), "nothing left to keep in settings.json");
+    }
+
+    /// Each commander's history is cleared on its own (by FID; by name in journals that give none), and it stays cleared
+    /// after a restart: settings.json keeps how far, and the history read again from the journals is hidden up to there.
+    #[test]
+    fn cleared_per_commander_and_kept() {
+        let mut alpha = GameState::default();
+        alpha.cmdr.fid = "F1".into();
+        alpha.cmdr.name = "Alpha".into();
+        let mut legacy = GameState::default();
+        legacy.cmdr.name = "Legacy".into();
+        assert_eq!((commander_key(&alpha), commander_key(&legacy)), ("F1", "Legacy"));
+        let history = vec![ended(1, 100, MissionOutcome::Completed), ended(2, 200, MissionOutcome::Completed)];
+        let mut prefs = MissionsPrefs::default();
+        prefs.clear(commander_key(&alpha), &history);
+        prefs.clear(commander_key(&legacy), &history[..1]);
+        let saved = serde_json::to_string(&prefs).expect("saved");
+        assert!(saved.contains(r#""F1":"1970-01-01T00:03:20Z""#), "{saved}");
+        let back: MissionsPrefs = serde_json::from_str(&saved).expect("read back");
+        assert_eq!(back, prefs);
+        // The next start reads the history from the journals again.
+        let replayed = history.clone();
+        assert!(listed(&replayed, back.cleared("F1")).is_empty());
+        assert_eq!(listed(&replayed, back.cleared("Legacy")), [2]);
+        assert_eq!(listed(&replayed, back.cleared("F2")), [1, 2], "another commander's history is untouched");
+    }
+
+    #[test]
+    fn says_what_is_hidden() {
+        assert_eq!(hidden_note(1), "1 mission you cleared is hidden from this list only: the game, its journals and every other page of Elite Nexus still have it.");
+        assert_eq!(hidden_note(1_234), "1,234 missions you cleared are hidden from this list only: the game, its journals and every other page of Elite Nexus still have them.");
+    }
+
+    /// The history card drawn headless, as the app draws it, with its buttons found by label and clicked.
+    struct Card {
+        ctx: egui::Context,
+        gs: GameState,
+        st: MissionsUi,
+        prefs: MissionsPrefs,
+        /// The buttons of the last drawing: label and centre.
+        buttons: Vec<(String, egui::Pos2)>,
+    }
+
+    impl Card {
+        fn new(history: Vec<MissionRecord>) -> Card {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            ctx.enable_accesskit();
+            let mut gs = GameState::default();
+            gs.cmdr.fid = "F1".into();
+            gs.missions.history = history;
+            let mut card = Card { ctx, gs, st: MissionsUi::default(), prefs: MissionsPrefs::default(), buttons: Vec::new() };
+            card.draw(Vec::new());
+            card
+        }
+
+        /// Draws the card once with `events`; returns whether the settings changed.
+        fn draw(&mut self, events: Vec<egui::Event>) -> bool {
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0))), events, ..Default::default() };
+            let Card { ctx, gs, st, prefs, .. } = self;
+            let mut changed = false;
+            // A pass egui runs again (a new grid's sizing) has no input: what the first one did counts.
+            let mut out = ctx.run_ui(input, |ui| changed |= history(ui, gs, st, prefs));
+            // Nothing is painted here: the font atlas egui would upload is dropped.
+            out.textures_delta.clear();
+            let nodes = out.platform_output.accesskit_update.map(|u| u.nodes).unwrap_or_default();
+            self.buttons = nodes
+                .iter()
+                .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+                .filter_map(|(_, n)| Some((n.label()?.to_string(), n.bounds()?)))
+                .map(|(label, b)| (label, egui::pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)))
+                .collect();
+            changed
+        }
+
+        /// The buttons' labels, in alphabetical order.
+        fn buttons(&self) -> Vec<&str> {
+            let mut labels: Vec<&str> = self.buttons.iter().map(|(l, _)| l.as_str()).collect();
+            labels.sort_unstable();
+            labels
+        }
+
+        /// Clicks the button labelled `label` and draws the card again; returns whether the settings changed.
+        fn click(&mut self, label: &str) -> bool {
+            let pos = self.buttons.iter().find(|(l, _)| l == label).unwrap_or_else(|| panic!("no {label} button in {:?}", self.buttons)).1;
+            let button = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() };
+            let pressed = self.draw(vec![egui::Event::PointerMoved(pos), button(true)]);
+            let released = self.draw(vec![button(false)]);
+            self.draw(Vec::new());
+            pressed || released
+        }
+
+        fn listed(&self) -> Vec<u64> {
+            listed(&self.gs.missions.history, self.prefs.cleared(commander_key(&self.gs)))
+        }
+    }
+
+    /// The card clicked through: Clear empties it and offers Undo, which takes back that Clear only; a mission that ends
+    /// afterwards or another commander ends the Undo; Show them again brings back everything, also after a restart.
+    #[test]
+    fn the_card_clicked_through() {
+        let mut card = Card::new(vec![ended(1, 100, MissionOutcome::Completed), ended(2, 200, MissionOutcome::Failed)]);
+        assert_eq!(card.buttons(), ["Clear"]);
+        assert!(card.click("Clear"), "to be saved");
+        assert_eq!(card.prefs.cleared("F1"), Some(Timestamp(200)));
+        assert_eq!(card.buttons(), ["Undo"], "nothing was hidden before: Undo brings it all back");
+        assert!(card.click("Undo"));
+        assert!(card.prefs.cleared.is_empty());
+        assert_eq!(card.buttons(), ["Clear"]);
+        // Cleared, then a mission ends: it shows, with Show them again for the cleared ones, and Undo is gone.
+        card.click("Clear");
+        card.gs.missions.history.push(ended(3, 300, MissionOutcome::Completed));
+        card.draw(Vec::new());
+        assert_eq!(card.buttons(), ["Clear", "Show them again"]);
+        // Cleared again: Undo brings back that mission alone, Show them again all three.
+        assert!(card.click("Clear"));
+        assert_eq!(card.buttons(), ["Show them again", "Undo"]);
+        card.click("Undo");
+        assert_eq!(card.listed(), [3]);
+        assert!(card.click("Show them again"));
+        assert_eq!(card.listed(), [1, 2, 3]);
+        // Another commander, whose history was cleared too: the Undo isn't theirs, and it doesn't come back.
+        card.click("Clear");
+        card.prefs.cleared.insert("F2".into(), Timestamp(300));
+        card.gs.cmdr.fid = "F2".into();
+        card.draw(Vec::new());
+        assert_eq!(card.buttons(), ["Show them again"]);
+        card.gs.cmdr.fid = "F1".into();
+        card.draw(Vec::new());
+        assert_eq!(card.buttons(), ["Show them again"]);
+        // Elite Nexus starts again: settings.json kept how far.
+        card.st = MissionsUi::default();
+        card.draw(Vec::new());
+        assert!(card.listed().is_empty());
+        assert_eq!(card.buttons(), ["Show them again"]);
+        assert!(card.click("Show them again"));
+        assert_eq!((card.prefs.cleared("F1"), card.prefs.cleared("F2")), (None, Some(Timestamp(300))));
+        assert_eq!(card.buttons(), ["Clear"]);
     }
 }
