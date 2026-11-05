@@ -3,11 +3,16 @@
 //! Everything here runs on the speech thread, which [`Com::init`] has joined to COM.
 
 use super::VoiceInfo;
+use std::time::{Duration, Instant};
 use windows::Win32::Media::Speech::{
-    ISpObjectToken, ISpObjectTokenCategory, ISpVoice, SPCAT_VOICES, SPF_ASYNC, SPF_IS_NOT_XML, SPF_PURGEBEFORESPEAK, SPRS_DONE, SPVOICESTATUS, SpObjectTokenCategory, SpVoice,
+    ISpObjectToken, ISpObjectTokenCategory, ISpVoice, SPCAT_VOICES, SPF_ASYNC, SPF_IS_NOT_XML, SPF_PURGEBEFORESPEAK, SPVOICESTATUS, SpObjectTokenCategory, SpVoice,
 };
 use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize};
-use windows::core::{PCWSTR, PWSTR};
+use windows::core::{Interface, PCWSTR, PWSTR};
+
+/// A line still being spoken after this long is cut off, as the speech programs on Linux are, so the lines after it
+/// are still heard: only a stuck voice takes that long.
+const LINE_LIMIT: Duration = Duration::from_secs(120);
 
 /// COM on this thread, from `init` until dropped (on the same thread).
 pub struct Com(bool);
@@ -39,6 +44,8 @@ pub struct Sapi {
     default: Option<ISpObjectToken>,
     /// The installed voices, with the tokens `SetVoice` takes.
     tokens: Vec<(VoiceInfo, ISpObjectToken)>,
+    /// The line being spoken: its text, which SAPI reads until the line is done or stopped, and when it started.
+    line: Option<(Vec<u16>, Instant)>,
 }
 
 impl Sapi {
@@ -51,7 +58,7 @@ impl Sapi {
                 tracing::warn!("SAPI's voices couldn't be listed: {e}");
                 Vec::new()
             });
-            Ok(Sapi { voice, default, tokens })
+            Ok(Sapi { voice, default, tokens, line: None })
         }
     }
 
@@ -59,51 +66,96 @@ impl Sapi {
         self.tokens.iter().map(|(v, _)| v.clone()).collect()
     }
 
-    /// The voice with this id (empty: the default one). False when it isn't installed.
-    pub fn set_voice(&self, id: &str) -> bool {
+    /// Lists the installed voices again: one installed since shows up.
+    pub fn reload(&mut self) {
+        // SAFETY: as in open.
+        match unsafe { installed_voices() } {
+            Ok(tokens) => self.tokens = tokens,
+            Err(e) => tracing::warn!("SAPI's voices couldn't be listed: {e}"),
+        }
+    }
+
+    /// The voice with this id (empty: the default one), from the next line on. False when it isn't installed; one
+    /// installed since the list was read is looked for again first.
+    pub fn set_voice(&mut self, id: &str) -> bool {
+        if !id.is_empty() && !self.tokens.iter().any(|(v, _)| v.id == id) {
+            self.reload();
+        }
         let token = if id.is_empty() { self.default.as_ref() } else { self.tokens.iter().find(|(v, _)| v.id == id).map(|(_, t)| t) };
         // SAFETY: as in open.
         token.is_some_and(|t| unsafe { self.voice.SetVoice(t) }.is_ok())
     }
 
+    /// The speed: SAPI applies it to the line being spoken too.
     pub fn set_rate(&self, rate: f32) {
         // SAFETY: as in open.
         let _ = unsafe { self.voice.SetRate(sapi_rate(rate)) };
     }
 
+    /// The volume: SAPI applies it to the line being spoken too.
     pub fn set_volume(&self, volume: f32) {
         // SAFETY: as in open.
         let _ = unsafe { self.voice.SetVolume(sapi_volume(volume)) };
     }
 
-    /// Speaks one line and waits for it (so back-to-back alerts queue rather than interrupt), up to 2 minutes like
-    /// the speech programs on Linux: a voice stuck longer is cut off, so the lines after it are still heard.
-    pub fn speak(&self, text: &str) -> Result<(), String> {
+    /// Starts speaking one line and returns: [`Sapi::wait`] says when it's done. One line at a time, so back-to-back
+    /// alerts queue rather than interrupt, while a new rate or volume still reaches the line being spoken.
+    pub fn speak(&mut self, text: &str) -> Result<(), String> {
+        self.stop();
         let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
         // Plain text: a name with "<" in it can't be read as SAPI's XML.
         let flags = (SPF_ASYNC.0 | SPF_IS_NOT_XML.0) as u32;
-        // SAFETY: as in open; `wide` outlives the speaking: it's waited for, or purged, before returning.
-        unsafe {
-            self.voice.Speak(PCWSTR(wide.as_ptr()), flags, None).map_err(|e| e.to_string())?;
-            let spoken = self.wait();
-            if !matches!(spoken, Ok(true)) {
-                // SAPI may still be reading `wide`. Without SPF_ASYNC the purge returns once the voice has stopped.
-                let _ = self.voice.Speak(PCWSTR::null(), SPF_PURGEBEFORESPEAK.0 as u32, None);
-            }
-            match spoken {
-                Ok(true) => Ok(()),
-                Ok(false) => Err("it didn't finish within 2 minutes".into()),
-                Err(e) => Err(e.to_string()),
-            }
+        // SAFETY: as in open; `wide` is kept in `line` until the voice is done with it or has been stopped.
+        unsafe { self.voice.Speak(PCWSTR(wide.as_ptr()), flags, None) }.map_err(|e| e.to_string())?;
+        self.line = Some((wide, Instant::now()));
+        Ok(())
+    }
+
+    /// A line is being spoken.
+    pub fn speaking(&self) -> bool {
+        self.line.is_some()
+    }
+
+    /// Waits up to `up_to` for the line being spoken. Once it has ended, how it went: spoken, or why not (an error, or
+    /// still speaking after 2 minutes, when it's cut off). None while it's still being spoken, or with no line.
+    pub fn wait(&mut self, up_to: Duration) -> Option<Result<(), String>> {
+        let started = self.line.as_ref()?.1;
+        let ms = u32::try_from(up_to.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: as in open.
+        let result = match unsafe { self.done_within(ms) } {
+            Ok(true) => Ok(()),
+            Ok(false) if started.elapsed() < LINE_LIMIT => return None,
+            Ok(false) => Err("it didn't finish within 2 minutes".to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        if result.is_err() {
+            self.stop();
+        }
+        self.line = None;
+        Some(result)
+    }
+
+    /// Stops the line being spoken. SAPI no longer reads its text when this returns: without SPF_ASYNC the purge
+    /// returns once the voice has stopped.
+    fn stop(&mut self) {
+        if self.line.is_some() {
+            // SAFETY: as in open.
+            let _ = unsafe { self.voice.Speak(PCWSTR::null(), SPF_PURGEBEFORESPEAK.0 as u32, None) };
+            self.line = None;
         }
     }
 
-    /// Waits up to 2 minutes for the line: true once it has been spoken.
-    unsafe fn wait(&self) -> windows::core::Result<bool> {
-        // SAFETY: as in open.
+    /// Waits up to `ms` for the line: true once it has been spoken, false while it still is.
+    unsafe fn done_within(&self, ms: u32) -> windows::core::Result<bool> {
+        // SAFETY: as in open. The method's Result can't tell S_FALSE (the time ran out) from S_OK (done); the call
+        // through the interface's table can.
         unsafe {
-            // Running out of time isn't an error here: the voice's state says whether it finished.
-            self.voice.WaitUntilDone(120_000)?;
+            let hr = (Interface::vtable(&self.voice).WaitUntilDone)(Interface::as_raw(&self.voice), ms);
+            hr.ok()?;
+            if hr.0 != 0 {
+                return Ok(false);
+            }
+            // Done: whether the engine reported an error on the way.
             let (mut state, mut bookmark) = (SPVOICESTATUS::default(), PWSTR::null());
             let status = self.voice.GetStatus(&mut state, &mut bookmark);
             if !bookmark.is_null() {
@@ -111,8 +163,15 @@ impl Sapi {
             }
             status?;
             state.hrLastResult.ok()?;
-            Ok(state.dwRunningState & SPRS_DONE.0 as u32 != 0)
+            Ok(true)
         }
+    }
+}
+
+impl Drop for Sapi {
+    /// A line still being spoken is stopped first: SAPI may still be reading its text.
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -169,20 +228,78 @@ mod tests {
         assert_eq!((sapi_volume(1.0), sapi_volume(0.9), sapi_volume(0.5), sapi_volume(2.0), sapi_volume(-1.0)), (100, 90, 50, 100, 0));
     }
 
+    /// Speaks a line and waits for it, as the speech thread does.
+    fn say(sapi: &mut Sapi, text: &str) -> Result<(), String> {
+        sapi.speak(text)?;
+        loop {
+            if let Some(result) = sapi.wait(Duration::from_millis(50)) {
+                return result;
+            }
+        }
+    }
+
     /// Speaks each installed SAPI voice's name out loud: `cargo test -p nexus-app sapi_speaks -- --ignored`.
     #[test]
     #[ignore]
     fn sapi_speaks_with_each_voice() {
         let _com = Com::init();
-        let sapi = Sapi::open().expect("SAPI");
+        let mut sapi = Sapi::open().expect("SAPI");
         let voices = sapi.voices();
         assert!(!voices.is_empty(), "no SAPI voices installed");
         for v in &voices {
             assert!(sapi.set_voice(&v.id), "{}", v.name);
-            sapi.speak(&v.name).expect("spoken");
+            say(&mut sapi, &v.name).expect("spoken");
         }
         assert!(sapi.set_voice(""));
         assert!(!sapi.set_voice("no such voice"));
-        sapi.speak("Back to the default voice. <b>Not</b> XML.").expect("spoken");
+        say(&mut sapi, "Back to the default voice. <b>Not</b> XML.").expect("spoken");
+    }
+
+    /// The speech thread's way of speaking, silently (volume 0): a line is still being spoken at its first look, takes a
+    /// new speed and volume meanwhile, and says how it went once it ends; dropping the engine mid-line stops it.
+    /// `cargo test -p nexus-app sapi_silent -- --ignored`
+    #[test]
+    #[ignore]
+    fn sapi_silent_lines_end_while_settings_change() {
+        let _com = Com::init();
+        let mut sapi = Sapi::open().expect("SAPI");
+        sapi.set_volume(0.0);
+        sapi.speak("A long line, spoken silently, so that it is still being spoken when it is looked at for the first time.").expect("speaking");
+        assert!(sapi.speaking());
+        assert!(sapi.wait(Duration::from_millis(50)).is_none(), "still speaking");
+        sapi.set_rate(2.0);
+        sapi.set_volume(0.0);
+        let started = Instant::now();
+        let result = loop {
+            if let Some(r) = sapi.wait(Duration::from_millis(50)) {
+                break r;
+            }
+            assert!(started.elapsed() < Duration::from_secs(30), "the line ends");
+        };
+        assert_eq!(result, Ok(()));
+        assert!(!sapi.speaking());
+        assert!(sapi.wait(Duration::from_millis(10)).is_none(), "no line");
+        sapi.speak("Stopped halfway, silently.").expect("speaking");
+        drop(sapi);
+    }
+
+    /// Lowers the volume and raises the speed halfway through a line: both are heard at once, before it ends.
+    /// `cargo test -p nexus-app sapi_changes -- --ignored`
+    #[test]
+    #[ignore]
+    fn sapi_changes_reach_the_line_being_spoken() {
+        let _com = Com::init();
+        let mut sapi = Sapi::open().expect("SAPI");
+        sapi.speak("This line starts at normal speed and full volume, then gets faster and quieter before it ends, while it is still being spoken.").expect("speaking");
+        assert!(sapi.wait(Duration::from_millis(2500)).is_none(), "still speaking");
+        sapi.set_rate(1.8);
+        sapi.set_volume(0.3);
+        let result = loop {
+            if let Some(r) = sapi.wait(Duration::from_millis(50)) {
+                break r;
+            }
+        };
+        assert_eq!(result, Ok(()));
+        assert!(!sapi.speaking());
     }
 }

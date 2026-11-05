@@ -149,7 +149,9 @@ Settings › Time & language › Speech) and **SAPI** (Windows' classic speech e
 other programs install for it, such as IVONA or CereProc, which Windows speech doesn't list). **Voice** picks one of
 the engine's voices; **Default** follows the voice chosen in Windows. Switching the engine goes back to its default
 voice, since the two engines have different voices. If the chosen voice is uninstalled later, the default voice
-speaks instead and Settings says so.
+speaks instead and Settings says so. A voice you install while Elite Nexus runs shows up in the list when you open
+Settings or the list. With SAPI, a new speed or volume applies at once, even to a line being spoken, and a new voice
+from the next line; lines waiting to be spoken keep their turn.
 
 Choose the minimum priority in Settings:
 * **Critical** — hull critical, ship destroyed.

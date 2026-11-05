@@ -639,6 +639,7 @@ impl NexusApp {
         let mut settings_changed = false;
         let mut test_voice = false;
         let mut restart = false;
+        let mut refresh_voices = false;
         let mut map_action = None;
         let mut follow = None;
         // A "where to get it" panel (Engineering, Missions) opens the Market page on its answer.
@@ -717,6 +718,7 @@ impl NexusApp {
                     restart_core: false,
                     voice: self.speaker.status(),
                     voices: self.speaker.voices(),
+                    refresh_voices: false,
                     overlay_see_through: self.overlay.see_through(),
                     last_screenshot: self.shots.last(),
                     agents: self.mcp.status(),
@@ -725,6 +727,7 @@ impl NexusApp {
                 settings_changed = cx.changed;
                 test_voice = cx.test_voice;
                 restart = cx.restart_core;
+                refresh_voices = cx.refresh_voices;
             }
             Page::Navigation => {
                 settings_changed |= pages::navigation::show(ui, gs, &mut self.nav, &mut self.settings.auto_copy_next_system, &mut self.settings.carrier, &self.spansh, self.rt.handle())
@@ -766,6 +769,9 @@ impl NexusApp {
             body(ui);
         }
         drop(model);
+        if refresh_voices {
+            self.speaker.refresh_voices();
+        }
         if let Some(to) = market_goto {
             self.market_ui.open_source(self.market.db.as_ref(), to);
             self.page = Page::Market;
@@ -813,6 +819,7 @@ impl NexusApp {
             restart_core: false,
             voice: self.speaker.status(),
             voices: self.speaker.voices(),
+            refresh_voices: false,
             overlay_see_through: self.overlay.see_through(),
             last_screenshot: self.shots.last(),
             agents: self.mcp.status(),
@@ -830,6 +837,9 @@ impl NexusApp {
             }
         });
         let (changed, test_voice, restart) = (cx.changed, cx.test_voice, cx.restart_core);
+        if cx.refresh_voices {
+            self.speaker.refresh_voices();
+        }
         self.after_settings(ui.ctx(), changed, test_voice, restart);
     }
 

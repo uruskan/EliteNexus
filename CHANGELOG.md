@@ -145,6 +145,10 @@ release time that section becomes the new version and the release workflow publi
   **Live** badge stays, with the feed's rate and the database's size beside it.
 
 ### Fixed
+- **Voice (SAPI)**: a voice installed while Elite Nexus runs shows up in Settings › Voice when you open Settings or
+  the list; it used to appear only after switching the speech engine. A new voice, speed or volume no longer waits
+  until the line being spoken, and every alert queued before it, has been said: a new speed or volume applies at
+  once, even to the line being spoken, and a new voice from the next line.
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
