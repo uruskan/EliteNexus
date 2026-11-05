@@ -9,8 +9,8 @@ use crate::runplan::{self, Order, PlanInput, RunPlan};
 use crate::settings::PriceWatch;
 use crate::theme::{display, pal, size};
 use crate::widgets::{Number, Suggestion, TableSort, badge, bar, card, cmp_opt, cmp_text, duration, empty, short_credits};
-use egui::{Color32, Grid, RichText, Ui};
-use egui_extras::{Column, TableBuilder};
+use egui::{Color32, RichText, Ui};
+use egui_extras::Column;
 use egui_phosphor::regular as icon;
 use nexus_galaxy::{
     CommodityHit, CommodityInfo, CommodityQuery, CommodityQuote, CommoditySummary, Deal, DealQuery, GalaxyDb, HotspotHit, HotspotQuery, MaterialTrader, PricePoint,
@@ -115,6 +115,18 @@ pub struct MarketPrefs {
     pub plan_cheapest: bool,
     pub plan_hold: bool,
     pub plan_carriers: bool,
+    /// Station tab: the markets open side by side (market ids, oldest first, at most [`MAX_TILES`]).
+    pub tiles: Vec<u64>,
+    /// Station tab: the list of markets on the left is shown.
+    pub tiles_list: bool,
+    /// Station tab: the list shows this system's stations and carriers without a market in the database too.
+    pub tiles_unknown: bool,
+    /// Station tab: which goods the markets list.
+    pub tiles_show: TileShow,
+    /// Markets opened lately, newest first (the list's Recent section).
+    pub recent_markets: Vec<RecentMarket>,
+    /// The market the game wrote last (its id and time): a market opened in the game opens here once.
+    pub seen_docked: (u64, i64),
 }
 
 impl Default for MarketPrefs {
@@ -151,6 +163,12 @@ impl Default for MarketPrefs {
             plan_cheapest: false,
             plan_hold: true,
             plan_carriers: true,
+            tiles: Vec::new(),
+            tiles_list: true,
+            tiles_unknown: false,
+            tiles_show: TileShow::All,
+            recent_markets: Vec::new(),
+            seen_docked: (0, 0),
         }
     }
 }
@@ -172,7 +190,18 @@ impl MarketPrefs {
         self.plan_radius = clamp(self.plan_radius, 5.0, MAX_SEARCH_LY, 100.0);
         self.pins.truncate(MAX_PINS);
         self.recent.truncate(RECENT);
+        let mut seen = rustc_hash::FxHashSet::default();
+        self.tiles.retain(|t| *t != 0 && seen.insert(*t));
+        self.tiles.truncate(MAX_TILES);
+        self.recent_markets.truncate(RECENT_MARKETS);
         self
+    }
+
+    /// Puts a market at the top of the Station tab's Recent list.
+    fn remember_market(&mut self, s: &StationInfo) {
+        self.recent_markets.retain(|r| r.market_id != s.market_id);
+        self.recent_markets.insert(0, RecentMarket { market_id: s.market_id, name: s.name.clone(), system: s.system.clone(), carrier: s.is_carrier });
+        self.recent_markets.truncate(RECENT_MARKETS);
     }
 
     /// Makes `name` the page shown and the newest of the recent ones.
@@ -189,6 +218,32 @@ const RECENT: usize = 8;
 
 /// Pins kept at most (the run planner tries every stop order up to eight stations).
 const MAX_PINS: usize = 24;
+
+/// Markets open side by side on the Station tab, at most.
+const MAX_TILES: usize = 8;
+/// Markets the Station tab's Recent list keeps.
+const RECENT_MARKETS: usize = 12;
+
+/// Which goods the Station tab's markets list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum TileShow {
+    #[default]
+    All,
+    /// What the station sells: where you buy.
+    Sells,
+    /// What the station buys: where you sell.
+    Buys,
+}
+
+/// A market opened lately, for the Station tab's Recent list.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RecentMarket {
+    pub market_id: u64,
+    pub name: String,
+    pub system: String,
+    pub carrier: bool,
+}
 
 /// A market entry the commander pinned: it stays on top of the Market page, priced from the latest
 /// data, and the run planner fills it.
@@ -275,8 +330,9 @@ enum RowAction {
 }
 
 type Res<T> = Result<Vec<T>, String>;
-/// The database's carriers by callsign (those the game listed here), and the carriers it places in this system.
-type CarrierView = (FxHashMap<String, StationInfo>, Vec<StationInfo>);
+/// The database's carriers by callsign (those the game listed here), and every station and carrier it places in this
+/// system.
+type HereView = (FxHashMap<String, StationInfo>, Vec<StationInfo>);
 /// Abnormal-price filters: mode, ratio ×100, radius, age, carriers, pad.
 type AbnKey = (TradeMode, u64, Option<u64>, u64, bool, Option<char>);
 
@@ -327,10 +383,25 @@ pub struct MarketUi {
     pick: Option<PickKey>,
     detail: Slot<Result<PickDetail, String>>,
     detail_key: Option<(u64, String)>,
-    /// Station tab: a market opened from a list (`None` = the market of the station you're docked at).
-    station: Option<u64>,
-    station_market: Slot<Result<Option<StationMarket>, String>>,
-    station_key: Option<u64>,
+    /// Station tab: the open markets as the database has them, by market id; reloaded when the tiles change, a little
+    /// after the game writes a market, and every few seconds while the tab shows.
+    tiles_live: Slot<Result<FxHashMap<u64, Option<StationMarket>>, String>>,
+    tiles_key: Option<Vec<u64>>,
+    tiles_at: Option<std::time::Instant>,
+    /// When to read the tiles again after the game wrote a market: the database stores it a moment later.
+    tiles_again: Option<std::time::Instant>,
+    /// A market just opened, or asked for again while open: its tile lights up for a moment.
+    tile_flash: Option<(u64, std::time::Instant)>,
+    /// Markets opened this run whose names the Recent list doesn't have yet.
+    tiles_fresh: Vec<u64>,
+    /// Station tab: the goods filter above the tiles.
+    tile_filter: String,
+    /// Station tab: a station or carrier being looked for, and what the database found.
+    station_find: String,
+    station_found: Slot<Res<StationInfo>>,
+    station_found_for: String,
+    /// The market of the station you're docked at (the Station tab keeps its tile when eight are open).
+    docked_market: Option<u64>,
     routes: Slot<Res<TradeRoute>>,
     /// The station the shown routes start at (`None`: routes around you).
     routes_from: Option<String>,
@@ -356,9 +427,13 @@ pub struct MarketUi {
     pins_key: Option<(Vec<u64>, i64)>,
     pins_at: Option<std::time::Instant>,
     plan: Slot<Result<RunPlan, String>>,
-    /// Station tab: the database's view of the carriers listed here (by callsign), and the ones it places here.
-    carriers: Slot<Result<CarrierView, String>>,
-    carriers_key: Option<(u64, Vec<String>)>,
+    /// Station tab: the database's view of the carriers listed here (by callsign), and every station it places here.
+    here: Slot<Result<HereView, String>>,
+    here_key: Option<(u64, Vec<String>)>,
+    /// What the shown answer was asked for, and when: it's asked again every minute (the import or the live feed may
+    /// have added stations).
+    here_for: Option<(u64, Vec<String>)>,
+    here_at: Option<std::time::Instant>,
     plan_key: Option<String>,
     /// A run the commander chose to follow: the app moves it to the Navigation page.
     pub follow: Option<crate::pages::navigation::PlannedRoute>,
@@ -389,9 +464,17 @@ impl MarketUi {
             pick: None,
             detail: Slot::default(),
             detail_key: None,
-            station: None,
-            station_market: Slot::default(),
-            station_key: None,
+            tiles_live: Slot::default(),
+            tiles_key: None,
+            tiles_at: None,
+            tiles_again: None,
+            tile_flash: None,
+            tiles_fresh: Vec::new(),
+            tile_filter: String::new(),
+            station_find: String::new(),
+            station_found: Slot::default(),
+            station_found_for: String::new(),
+            docked_market: None,
             routes: Slot::default(),
             routes_from: None,
             autorun: false,
@@ -410,8 +493,10 @@ impl MarketUi {
             pins_key: None,
             pins_at: None,
             plan: Slot::default(),
-            carriers: Slot::default(),
-            carriers_key: None,
+            here: Slot::default(),
+            here_key: None,
+            here_for: None,
+            here_at: None,
             plan_key: None,
             follow: None,
         }
@@ -492,10 +577,41 @@ impl MarketUi {
                 }
             }
             Nav::Station(id) => {
-                self.station = Some(id);
+                self.open_tile(id, false);
                 self.set_tab(Tab::Docked);
             }
         }
+    }
+
+    /// Opens a market on the Station tab beside the ones open, last (`front`: first, for the market you dock at). One
+    /// already open keeps its place and lights up. With eight open the oldest closes, never the one you're docked at.
+    fn open_tile(&mut self, id: u64, front: bool) {
+        if id == 0 {
+            return;
+        }
+        let keep = self.docked_market;
+        let tiles = &mut self.prefs.tiles;
+        match tiles.iter().position(|t| *t == id) {
+            Some(i) if front && i != 0 => {
+                tiles.remove(i);
+                tiles.insert(0, id);
+            }
+            Some(_) => {}
+            None => {
+                if tiles.len() >= MAX_TILES {
+                    // The previous docked market leaves first when a new one comes in front.
+                    let gone = if front { Some(0) } else { tiles.iter().position(|t| Some(*t) != keep) };
+                    tiles.remove(gone.unwrap_or(0));
+                }
+                if front {
+                    tiles.insert(0, id);
+                } else {
+                    tiles.push(id);
+                }
+                self.tiles_fresh.push(id);
+            }
+        }
+        self.tile_flash = Some((id, std::time::Instant::now()));
     }
 
     fn set_tab(&mut self, t: Tab) {
@@ -909,7 +1025,8 @@ fn vs_average(ui: &mut Ui, price: i64, average: Option<i64>, buying: bool) {
 pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut MarketUi, rt: &tokio::runtime::Handle, watches: &mut Vec<PriceWatch>) -> bool {
     st.page.tick();
     st.detail.tick();
-    st.station_market.tick();
+    st.tiles_live.tick();
+    st.station_found.tick();
     st.routes.tick();
     st.stations.tick();
     st.hotspots.tick();
@@ -918,7 +1035,20 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
     st.abn.tick();
     st.pins_live.tick();
     st.plan.tick();
-    st.carriers.tick();
+    // An answer is for the question asked last: no new one is asked while one runs.
+    if st.here.tick() {
+        st.here_for.clone_from(&st.here_key);
+    }
+    // The Station tab keeps the market you're docked at, and opens a market the moment you open it in the game.
+    st.docked_market = gs.location.station.as_ref().filter(|s| gs.location.docked && s.market_id != 0).map(|s| s.market_id);
+    if let Some(m) = gs.market.as_ref().filter(|m| m.market_id != 0)
+        && st.prefs.seen_docked != (m.market_id, m.timestamp.0)
+    {
+        st.prefs.seen_docked = (m.market_id, m.timestamp.0);
+        st.open_tile(m.market_id, true);
+        // The database stores the game's copy a moment after the game writes it: read the tiles again then too.
+        st.tiles_again = Some(std::time::Instant::now() + std::time::Duration::from_millis(1500));
+    }
 
     if let Some(t) = crate::widgets::tabs(
         ui,
@@ -936,10 +1066,6 @@ pub fn show(ui: &mut Ui, gs: &GameState, svc: &mut MarketService, st: &mut Marke
             (Tab::Database, "Database & feed"),
         ],
     ) {
-        // Station clicked again: back to the station you're docked at.
-        if t == Tab::Docked && st.tab == Tab::Docked {
-            st.station = None;
-        }
         st.set_tab(t);
     }
     ui.add_space(12.0);
@@ -2451,86 +2577,6 @@ fn pins_panel(ui: &mut Ui, gs: &GameState, st: &mut MarketUi) -> Option<Nav> {
     nav
 }
 
-/// The carriers the game listed in this system since you arrived, against what the database knows.
-fn carriers_card(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Option<Nav> {
-    let listed = carriers_here(gs);
-    let key = (gs.location.system_address, listed.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>());
-    if st.carriers_key.as_ref() != Some(&key) && !st.carriers.busy() {
-        st.carriers_key = Some(key.clone());
-        let db = db.clone();
-        let job = key.clone();
-        st.carriers.run(ui.ctx(), move || {
-            let mut known = FxHashMap::default();
-            for c in &job.1 {
-                if let Some(s) = db.find_stations(c, 4).map_err(|e| e.to_string())?.into_iter().find(|s| s.is_carrier && s.name.eq_ignore_ascii_case(c)) {
-                    known.insert(c.clone(), s);
-                }
-            }
-            let recorded = db.stations_in_system(job.0).map_err(|e| e.to_string())?.into_iter().filter(|s| s.is_carrier).collect();
-            Ok((known, recorded))
-        });
-    }
-    // Only this system's answer (right after a jump the last one is still the previous system's).
-    if st.carriers.busy() || st.carriers_key.as_ref() != Some(&key) {
-        return None;
-    }
-    let Some(Ok((known, recorded))) = &st.carriers.last else { return None };
-    let gone: Vec<&nexus_galaxy::StationInfo> = recorded.iter().filter(|s| !listed.iter().any(|(_, c)| c.eq_ignore_ascii_case(&s.name))).collect();
-    if listed.is_empty() && gone.is_empty() {
-        return None;
-    }
-    let mut nav = None;
-    let title = format!("{} Fleet carriers in {} · {} listed since you arrived", icon::ANCHOR, gs.location.system, listed.len());
-    egui::CollapsingHeader::new(RichText::new(title).font(display(size::CALLOUT)).color(pal::TEXT)).id_salt("carriers-here").default_open(true).show(ui, |ui| {
-        egui::ScrollArea::vertical().id_salt("carriers-here-list").max_height(180.0).show(ui, |ui| {
-            Grid::new("carriers-grid").num_columns(3).striped(true).spacing([14.0, 4.0]).max_col_width(ui.available_width()).show(ui, |ui| {
-                for (name, cs) in &listed {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!("{} {name}", icon::CHECK_CIRCLE)).color(pal::TEXT));
-                        if let Some(s) = known.get(cs) {
-                            access_badge(ui, s.carrier_docking_access.as_deref());
-                        }
-                    });
-                    match known.get(cs) {
-                        Some(s) if s.market_updated_unix > 0 => {
-                            if nav_label(ui, RichText::new(format!("{} goods on its market", s.commodity_count)).color(pal::ACCENT_SOFT), "Click for its whole market") {
-                                nav = Some(Nav::Station(s.market_id));
-                            }
-                            let (a, c) = age(s.market_updated_unix);
-                            ui.label(RichText::new(format!("reported {a} ago")).color(c));
-                        }
-                        _ => {
-                            ui.label(RichText::new("market not in the database").color(pal::FAINT));
-                            ui.label("");
-                        }
-                    }
-                    ui.end_row();
-                }
-                for s in &gone {
-                    // Missing from a list the game has made: probably gone. With no list yet, nothing is known.
-                    let (mark, tip) = if listed.is_empty() {
-                        (icon::QUESTION, "The database places this carrier here; the game hasn't listed any carrier yet this visit.")
-                    } else {
-                        (icon::X_CIRCLE, "The database places this carrier here, but the game hasn't listed it since you arrived: it has probably jumped away.")
-                    };
-                    ui.label(RichText::new(format!("{mark} {}", s.name)).color(pal::DIM)).on_hover_text(tip);
-                    if nav_label(ui, RichText::new("database only").color(pal::DIM), "Click for its last known market") {
-                        nav = Some(Nav::Station(s.market_id));
-                    }
-                    let (a, _) = age(s.updated_unix.max(s.market_updated_unix));
-                    ui.label(RichText::new(format!("last reported here {a} ago")).color(pal::FAINT));
-                    ui.end_row();
-                }
-            });
-        });
-        if listed.is_empty() {
-            crate::widgets::footnote(ui, "The game lists a system's carriers as they show up in your navigation panel: on arrival, or when you drop out of supercruise. None has been listed yet this visit.");
-        }
-    });
-    ui.add_space(6.0);
-    nav
-}
-
 // ---------------------------------------------------------------------------------------------
 // Run planner
 // ---------------------------------------------------------------------------------------------
@@ -2962,148 +3008,794 @@ fn results_hotspots(ui: &mut Ui, slot: &Slot<Res<HotspotHit>>) {
     });
 }
 
-/// The Station tab: a market opened from a list, or the one you're docked at.
-fn station_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Option<Nav> {
-    let Some(id) = st.station else {
-        let carriers = carriers_card(ui, gs, db, st);
-        return docked_market(ui, gs).or(carriers);
+// ---------------------------------------------------------------------------------------------
+// Station: markets side by side
+// ---------------------------------------------------------------------------------------------
+
+/// Width of the Station tab's list of markets.
+const LIST_W: f32 = 300.0;
+/// A market tile's width with room for long commodity names, the narrowest it gets, and the lowest before the tiles
+/// scroll.
+const TILE_GOOD_W: f32 = 400.0;
+const TILE_MIN_W: f32 = 300.0;
+const TILE_MIN_H: f32 = 220.0;
+
+/// How many columns `n` market tiles take in `w` × `h`: side by side as long as each keeps a comfortable width (markets
+/// are long lists, so tall narrow tiles beat short wide ones), then more and narrower while the rows would get too
+/// low, never below [`TILE_MIN_W`].
+fn tile_columns(n: usize, w: f32, h: f32, gap: f32) -> usize {
+    let width = |cols: usize| (w - gap * (cols as f32 - 1.0)) / cols as f32;
+    let height = |cols: usize| {
+        let rows = n.div_ceil(cols) as f32;
+        (h - gap * (rows - 1.0)) / rows
     };
-    if st.station_key != Some(id) && !st.station_market.busy() {
-        st.station_key = Some(id);
+    let n = n.max(1);
+    let mut cols = (1..=n).rev().find(|c| width(*c) >= TILE_GOOD_W).unwrap_or(1);
+    while cols < n && height(cols) < TILE_MIN_H && width(cols + 1) >= TILE_MIN_W {
+        cols += 1;
+    }
+    cols
+}
+/// How often the open markets are read again from the database while the Station tab shows.
+const TILES_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
+/// How long a market just opened stays lit.
+const FLASH: f32 = 1.6;
+
+/// The Station tab: on the left a list of markets to open (a search, the station you're docked at, this system's
+/// stations and carriers, the ones opened lately); on the right up to eight markets side by side, tiled to the window.
+fn station_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Option<Nav> {
+    refresh_tiles(ui.ctx(), db, st);
+    let full = ui.available_rect_before_wrap();
+    let gap = crate::widgets::GAP;
+    let list = st.prefs.tiles_list;
+    let list_w = LIST_W.min(full.width() * 0.45);
+    if list {
+        let rect = egui::Rect::from_min_size(full.min, egui::vec2(list_w, full.height()));
+        let mut c = ui.new_child(egui::UiBuilder::new().id_salt("station-list").max_rect(rect).layout(egui::Layout::top_down(egui::Align::Min)));
+        market_list(&mut c, gs, db, st);
+    }
+    let tiles = if list { egui::Rect::from_min_max(egui::pos2(full.left() + list_w + gap, full.top()), full.max) } else { full };
+    let mut c = ui.new_child(egui::UiBuilder::new().id_salt("station-tiles").max_rect(tiles).layout(egui::Layout::top_down(egui::Align::Min)));
+    let nav = market_tiles(&mut c, gs, st);
+    ui.advance_cursor_after_rect(full);
+    nav
+}
+
+/// Reads the open markets again when they change and every few seconds (sooner after the game writes a market: see
+/// [`show`]).
+fn refresh_tiles(ctx: &egui::Context, db: &GalaxyDb, st: &mut MarketUi) {
+    if st.prefs.tiles.is_empty() {
+        return;
+    }
+    let ids = st.prefs.tiles.clone();
+    let now = std::time::Instant::now();
+    let stale = st.tiles_at.is_none_or(|t| t.elapsed() > TILES_EVERY);
+    let again = st.tiles_again.is_some_and(|t| t <= now);
+    if let Some(t) = st.tiles_again.filter(|t| *t > now) {
+        ctx.request_repaint_after(t - now);
+    }
+    if (st.tiles_key.as_ref() != Some(&ids) || stale || again) && !st.tiles_live.busy() {
+        if again {
+            st.tiles_again = None;
+        }
+        st.tiles_key = Some(ids.clone());
+        st.tiles_at = Some(now);
         let db = db.clone();
-        st.station_market.run(ui.ctx(), move || db.station_market(id).map_err(|e| e.to_string()));
-    }
-    if gs.market.is_some() && crate::widgets::button(ui, &format!("{} The station you're docked at", icon::ARROW_LEFT)).clicked() {
-        st.station = None;
-        return None;
-    }
-    let current = st.station_key == Some(id) && !st.station_market.busy();
-    match (&st.station_market.last, current) {
-        (Some(Ok(Some(m))), true) => {
-            let (nav, pin) = db_market(ui, m, gs.location.star_pos, &st.prefs);
-            if let Some(p) = pin {
-                st.prefs.toggle_pin(p);
+        st.tiles_live.run(ctx, move || {
+            let mut out = FxHashMap::default();
+            for id in ids {
+                out.insert(id, db.station_market(id).map_err(|e| e.to_string())?);
             }
-            nav
+            Ok(out)
+        });
+    }
+    ctx.request_repaint_after(TILES_EVERY);
+}
+
+/// A small heading in the Station tab's list, with room for a button on its right.
+fn list_heading(ui: &mut Ui, text: &str, right: impl FnOnce(&mut Ui)) {
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(text).font(display(size::FOOTNOTE)).color(pal::DIM));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
+    });
+}
+
+/// One market in the Station tab's list: its name (a carrier's with who may dock, when `access` is given: `Some(None)`
+/// for never reported), a line under it, and a tick when its market is open. `open_able`: it has a market to open;
+/// otherwise it's listed dimmed and doesn't react.
+fn list_row(ui: &mut Ui, name: &str, carrier: bool, access: Option<Option<&str>>, detail: &[(String, Color32)], open: bool, open_able: bool) -> egui::Response {
+    let sense = if open_able { egui::Sense::click() } else { egui::Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 46.0), sense);
+    let resp = match access {
+        Some(a) => resp.on_hover_text(match a {
+            Some(a) => format!("Docking: {}, as last reported with its market. Its owner can change that at any time.", carrier_access(a)),
+            None => "Who may dock was never reported for this carrier.".to_string(),
+        }),
+        None => resp,
+    };
+    let resp = if open_able { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp };
+    if !ui.is_rect_visible(rect) {
+        return resp;
+    }
+    let p = ui.painter();
+    if open {
+        p.rect_filled(rect, egui::CornerRadius::same(8), Color32::from_white_alpha(12));
+    } else if open_able && resp.hovered() {
+        p.rect_filled(rect, egui::CornerRadius::same(8), Color32::from_white_alpha(8));
+    }
+    let mark = if open {
+        Some((icon::CHECK_CIRCLE, pal::ACCENT))
+    } else if open_able && resp.hovered() {
+        Some((icon::PLUS_CIRCLE, pal::DIM))
+    } else {
+        None
+    };
+    if let Some((glyph, col)) = mark {
+        p.text(egui::pos2(rect.right() - 16.0, rect.center().y), egui::Align2::CENTER_CENTER, glyph, egui::FontId::proportional(17.0), col);
+    }
+    let left = rect.left() + 10.0;
+    let room = (rect.right() - 34.0 - left).max(40.0);
+    // The badge first, so the name gives up room before it does.
+    let badge = access.map(|a| {
+        let (text, col) = access_badge_text(a);
+        (p.layout_no_wrap(text.to_string(), display(size::CAPTION), col), col)
+    });
+    let badge_w = badge.as_ref().map_or(0.0, |(g, _)| g.size().x + 16.0 + 6.0);
+    // Single lines that end in "…" where they don't fit, each part in its own colour.
+    let line = |parts: &[(String, Color32)], size: f32, width: f32| {
+        let mut job = egui::text::LayoutJob::default();
+        for (text, col) in parts {
+            job.append(text, 0.0, egui::TextFormat::simple(egui::FontId::proportional(size), *col));
         }
-        (Some(Ok(None)), true) => {
-            empty(ui, icon::STOREFRONT, "Station not in the database", "It may have been a fleet carrier that has since been decommissioned.");
-            None
+        job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+        p.layout_job(job)
+    };
+    let col = if open_able { pal::TEXT } else { pal::DIM };
+    let title = line(&[(if carrier { format!("{} {name}", icon::ANCHOR) } else { name.to_string() }, col)], size::CALLOUT, room - badge_w);
+    let sub = line(detail, size::CAPTION, room);
+    let top = rect.center().y - (title.size().y + 2.0 + sub.size().y) / 2.0;
+    let title_w = title.size().x;
+    let title_h = title.size().y;
+    p.galley(egui::pos2(left, top), title, col);
+    if let Some((g, bcol)) = badge {
+        let pad = egui::vec2(8.0, 2.0);
+        let r = egui::Rect::from_min_size(egui::pos2(left + title_w + 6.0, top + (title_h - g.size().y) / 2.0 - pad.y), g.size() + pad * 2.0);
+        p.rect_filled(r, egui::CornerRadius::same(255), bcol.gamma_multiply(0.18));
+        p.galley(r.min + pad, g, bcol);
+    }
+    p.galley(egui::pos2(left, top + title_h + 2.0), sub, pal::DIM);
+    resp
+}
+
+/// What a market says under its name in the list after `lead` (its kind, a note): how many goods it trades and how old
+/// its prices are, the age in its colour from fresh to stale.
+fn market_line(lead: &str, s: &StationInfo) -> Vec<(String, Color32)> {
+    if s.market_updated_unix <= 0 {
+        return vec![(format!("{lead}no market in the database"), pal::FAINT)];
+    }
+    let (a, col) = age(s.market_updated_unix);
+    vec![(format!("{lead}{} goods · ", s.commodity_count), pal::DIM), (format!("reported {a} ago"), col)]
+}
+
+/// A plain line under a name in the list.
+fn plain(text: &str) -> Vec<(String, Color32)> {
+    vec![(text.to_string(), pal::DIM)]
+}
+
+/// The Station tab's list: a search for any station or carrier, the station you're docked at, this system's stations and
+/// carriers (only those with a market in the database unless asked), and the markets opened lately. A click opens one.
+fn market_list(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) {
+    let mut open: Vec<u64> = Vec::new();
+    let mut open_here: Option<Vec<u64>> = None;
+    egui::Frame::new().fill(pal::CARD).corner_radius(egui::CornerRadius::same(14)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+        ui.set_min_size(ui.available_size());
+        if let Some(id) = station_search(ui, db, st) {
+            open.push(id);
         }
-        (Some(Err(e)), true) => {
-            ui.label(RichText::new(e).color(pal::BAD));
-            None
+        egui::ScrollArea::vertical().id_salt("station-list-scroll").auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            let tiles = &st.prefs.tiles;
+            // The station you're docked at, or else the last market the game showed you.
+            let docked = gs.location.station.as_ref().filter(|s| gs.location.docked && s.market_id != 0);
+            match (docked, &gs.market) {
+                (Some(s), _) => {
+                    list_heading(ui, "Docked at", |_| {});
+                    let carrier = s.station_type.eq_ignore_ascii_case("FleetCarrier");
+                    if list_row(ui, &s.name, carrier, None, &plain(&gs.location.system), tiles.contains(&s.market_id), true).clicked() {
+                        open.push(s.market_id);
+                    }
+                }
+                (None, Some(m)) if m.market_id != 0 => {
+                    list_heading(ui, "Last market you opened", |_| {});
+                    let when = format!("{} · {}", m.star_system, m.timestamp.to_local_string("%d %b %H:%M"));
+                    if list_row(ui, &m.station_name, false, None, &plain(&when), tiles.contains(&m.market_id), true).clicked() {
+                        open.push(m.market_id);
+                    }
+                }
+                _ => {}
+            }
+            here_list(ui, gs, db, st, docked.map(|s| s.market_id), &mut open, &mut open_here);
+            if !st.prefs.recent_markets.is_empty() {
+                list_heading(ui, "Opened lately", |_| {});
+                for r in &st.prefs.recent_markets {
+                    if list_row(ui, &r.name, r.carrier, None, &plain(&r.system), st.prefs.tiles.contains(&r.market_id), true).clicked() {
+                        open.push(r.market_id);
+                    }
+                }
+            }
+            ui.add_space(10.0);
+            crate::widgets::footnote(ui, "A station's name anywhere on the Market page opens its market here too.");
+        });
+    });
+    if let Some(ids) = open_here {
+        // In place of the markets open now: the one you're docked at, then this system's.
+        let mut tiles: Vec<u64> = st.docked_market.into_iter().collect();
+        for id in ids {
+            if tiles.len() >= MAX_TILES {
+                break;
+            }
+            if !tiles.contains(&id) {
+                tiles.push(id);
+            }
         }
-        _ => {
-            ui.spinner();
-            None
-        }
+        st.tiles_fresh.extend(tiles.iter().filter(|t| !st.prefs.tiles.contains(t)));
+        st.prefs.tiles = tiles;
+    }
+    for id in open {
+        st.open_tile(id, false);
     }
 }
 
-/// A station's market from the database: every good it trades, against the galactic average.
-fn db_market(ui: &mut Ui, m: &StationMarket, origin: Option<[f64; 3]>, prefs: &MarketPrefs) -> (Option<Nav>, Option<Pin>) {
-    let s = &m.station;
-    ui.add_space(4.0);
-    ui.horizontal_wrapped(|ui| {
-        let name = if s.is_carrier { format!("{} {}", icon::ANCHOR, s.name) } else { s.name.clone() };
-        ui.label(RichText::new(name).font(display(size::TITLE3)).color(pal::TEXT));
-        if ui.link(&s.system).on_hover_text("Click to copy the system").clicked() {
-            ui.ctx().copy_text(s.system.clone());
+/// The search at the top of the Station tab's list: any station or carrier the database knows, by the start of its name
+/// (a carrier goes by its ID, such as J7F-10F). Returns the market picked.
+fn station_search(ui: &mut Ui, db: &GalaxyDb, st: &mut MarketUi) -> Option<u64> {
+    let typed = st.station_find.trim().to_string();
+    if typed.chars().count() >= 2 && typed != st.station_found_for && !st.station_found.busy() {
+        st.station_found_for.clone_from(&typed);
+        let db = db.clone();
+        st.station_found.run(ui.ctx(), move || db.find_stations(&typed, 12).map_err(|e| e.to_string()));
+    }
+    let found: &[StationInfo] = match &st.station_found.last {
+        Some(Ok(v)) => v,
+        _ => &[],
+    };
+    let width = ui.available_width();
+    // Names repeat across systems: each suggestion carries its system, so the one picked is the one opened.
+    let label = |s: &StationInfo| format!("{} ({})", s.name, s.system);
+    let c = crate::widgets::autocomplete(ui, "station-find", &mut st.station_find, "Open a station or carrier ID…", width, |t| {
+        let q = t.trim().to_lowercase();
+        if q.chars().count() < 2 {
+            return Vec::new();
+        }
+        found
+            .iter()
+            .filter(|s| s.name.to_lowercase().starts_with(&q))
+            .map(|s| {
+                let what = if s.market_updated_unix > 0 { format!("{} goods", s.commodity_count) } else { "no market".to_string() };
+                Suggestion { text: label(s), detail: what, starred: false }
+            })
+            .collect()
+    });
+    let picked = c.picked.and_then(|p| found.iter().find(|s| label(s) == p).map(|s| s.market_id));
+    if picked.is_some() {
+        st.station_find.clear();
+    }
+    picked
+}
+
+/// The list's section for this system: its stations, then the carriers the game listed since you arrived, then those the
+/// database still places here. Only markets the database has are listed until asked for the rest. "Open all" (and a
+/// screenshot run's first frame) asks for this system's markets side by side, through `open_here`.
+fn here_list(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi, docked: Option<u64>, open: &mut Vec<u64>, open_here: &mut Option<Vec<u64>>) {
+    let listed = carriers_here(gs);
+    let key = (gs.location.system_address, listed.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>());
+    let stale = st.here_at.is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(60));
+    if (st.here_key.as_ref() != Some(&key) || stale) && !st.here.busy() {
+        st.here_key = Some(key.clone());
+        st.here_at = Some(std::time::Instant::now());
+        let db = db.clone();
+        let job = key.clone();
+        st.here.run(ui.ctx(), move || {
+            let mut known = FxHashMap::default();
+            for c in &job.1 {
+                if let Some(s) = db.find_stations(c, 4).map_err(|e| e.to_string())?.into_iter().find(|s| s.is_carrier && s.name.eq_ignore_ascii_case(c)) {
+                    known.insert(c.clone(), s);
+                }
+            }
+            let recorded = db.stations_in_system(job.0).map_err(|e| e.to_string())?;
+            Ok((known, recorded))
+        });
+    }
+    let system = if gs.location.system.is_empty() { "this system".to_string() } else { gs.location.system.clone() };
+    // Only this system's answer (right after a jump the last one is still the previous system's); while the same question
+    // is asked again, the answer before stays.
+    let view = match &st.here.last {
+        Some(Ok(v)) if st.here_for.as_ref() == Some(&key) => Some(v),
+        _ => None,
+    };
+    let Some((known, recorded)) = view else {
+        list_heading(ui, &format!("In {system}"), |ui| {
+            ui.spinner();
+        });
+        return;
+    };
+    let has_market = |s: &StationInfo| s.market_updated_unix > 0;
+    let mut stations: Vec<&StationInfo> = recorded.iter().filter(|s| !s.is_carrier && Some(s.market_id) != docked).collect();
+    stations.sort_by(|a, b| has_market(b).cmp(&has_market(a)).then_with(|| cmp_text(&a.name, &b.name)));
+    let gone: Vec<&StationInfo> = recorded.iter().filter(|s| s.is_carrier && !listed.iter().any(|(_, c)| c.eq_ignore_ascii_case(&s.name))).collect();
+    let mut carriers: Vec<(&str, Option<&StationInfo>)> = listed.iter().map(|(name, cs)| (name.as_str(), known.get(cs))).collect();
+    carriers.sort_by(|a, b| a.1.is_some_and(has_market).cmp(&b.1.is_some_and(has_market)).reverse().then_with(|| cmp_text(a.0, b.0)));
+    // The markets that can be opened here, in list order.
+    let openable: Vec<u64> = stations
+        .iter()
+        .copied()
+        .chain(carriers.iter().filter_map(|c| c.1))
+        .chain(gone.iter().copied())
+        .filter(|s| has_market(s))
+        .map(|s| s.market_id)
+        .collect();
+    let unknown = stations.iter().filter(|s| !has_market(s)).count() + carriers.iter().filter(|c| !c.1.is_some_and(has_market)).count();
+    if std::mem::take(&mut st.autorun) {
+        // A screenshot run of the Station tab: four markets side by side, this system's first, then the nearest stations'.
+        let mut ids: Vec<u64> = openable.iter().copied().take(4).collect();
+        if let Some(origin) = gs.location.star_pos.filter(|_| ids.len() < 4) {
+            let q = StationQuery { origin, services: Services::MARKET, limit: 12, ..Default::default() };
+            for h in db.stations_near(&q).unwrap_or_default() {
+                if ids.len() < 4 && h.station.commodity_count > 5 && !ids.contains(&h.station.market_id) {
+                    ids.push(h.station.market_id);
+                }
+            }
+        }
+        *open_here = Some(ids);
+    }
+    let all = st.prefs.tiles_unknown;
+    list_heading(ui, &format!("In {system}"), |ui| {
+        if openable.len() >= 2 && crate::widgets::button(ui, "Open all").on_hover_text("This system's markets side by side, up to eight, in place of the ones open now (the one you're docked at stays)").clicked() {
+            *open_here = Some(openable.clone());
         }
     });
+    let tiles = &st.prefs.tiles;
+    for s in &stations {
+        if !all && !has_market(s) {
+            continue;
+        }
+        let kind = s.station_type.as_deref().map(|t| format!("{t} · ")).unwrap_or_default();
+        if list_row(ui, &s.name, false, None, &market_line(&kind, s), tiles.contains(&s.market_id), has_market(s)).clicked() {
+            open.push(s.market_id);
+        }
+    }
+    for (name, s) in &carriers {
+        match s {
+            Some(s) if all || has_market(s) => {
+                if list_row(ui, name, true, Some(s.carrier_docking_access.as_deref()), &market_line("", s), tiles.contains(&s.market_id), has_market(s)).clicked() {
+                    open.push(s.market_id);
+                }
+            }
+            None if all => {
+                list_row(ui, name, true, None, &[("market not in the database".to_string(), pal::FAINT)], false, false);
+            }
+            _ => {}
+        }
+    }
+    for s in gone.iter().filter(|s| has_market(s)) {
+        // Missing from a list the game has made: probably gone. With no list yet, nothing is known.
+        let lead = if listed.is_empty() { "not listed yet this visit · " } else { "not seen since you arrived · " };
+        let r = list_row(ui, &s.name, true, Some(s.carrier_docking_access.as_deref()), &market_line(lead, s), tiles.contains(&s.market_id), true);
+        let r = r.on_hover_text(if listed.is_empty() {
+            "The database places this carrier here; the game hasn't listed any carrier yet this visit."
+        } else {
+            "The database places this carrier here, but the game hasn't listed it since you arrived: it has probably jumped away. Its market is the last one reported."
+        });
+        if r.clicked() {
+            open.push(s.market_id);
+        }
+    }
+    if unknown > 0 {
+        ui.add_space(4.0);
+        let what = if all { "Hide those without a known market".to_string() } else { format!("{} {unknown} more without a known market", icon::CARET_DOWN) };
+        let tip = "Elite Nexus knows a market once a commander who shares data, or you, opened it (or the Spansh import had it). Without one there's nothing to open yet.";
+        if ui.add(egui::Button::new(RichText::new(what).size(size::FOOTNOTE).color(pal::ACCENT_SOFT)).frame(false).wrap_mode(egui::TextWrapMode::Truncate)).on_hover_text(tip).clicked() {
+            st.prefs.tiles_unknown = !all;
+        }
+    }
+    if stations.is_empty() && carriers.is_empty() && gone.is_empty() {
+        crate::widgets::footnote(ui, "The database knows no station here.");
+    }
+    if listed.is_empty() {
+        crate::widgets::footnote(ui, "The game lists a system's carriers as they show up in your navigation panel: on arrival, or when you drop out of supercruise. None has been listed yet this visit.");
+    }
+}
+
+/// The best price among the open markets for each good: the lowest to buy at and the highest to sell at, with how many
+/// open markets trade it that way (a best among one is no best).
+#[derive(Clone, Copy, Default)]
+struct Best {
+    buy: i64,
+    buys: u8,
+    sell: i64,
+    sells: u8,
+}
+
+fn best_prices(live: Option<&FxHashMap<u64, Option<StationMarket>>>, tiles: &[u64]) -> FxHashMap<String, Best> {
+    let mut out: FxHashMap<String, Best> = FxHashMap::default();
+    let Some(live) = live else { return out };
+    for id in tiles {
+        let Some(Some(m)) = live.get(id) else { continue };
+        for i in &m.items {
+            let b = out.entry(i.symbol.clone()).or_default();
+            if i.buy > 0 && i.stock > 0 {
+                b.buy = if b.buys == 0 { i.buy } else { b.buy.min(i.buy) };
+                b.buys = b.buys.saturating_add(1);
+            }
+            if i.sell > 0 && i.demand > 0 {
+                b.sell = b.sell.max(i.sell);
+                b.sells = b.sells.saturating_add(1);
+            }
+        }
+    }
+    out
+}
+
+/// What every market tile needs to know besides its own market.
+struct TileCtx<'a> {
+    origin: Option<[f64; 3]>,
+    prefs: &'a MarketPrefs,
+    /// The goods filter, lower case.
+    filter: &'a str,
+    best: &'a FxHashMap<String, Best>,
+    docked: Option<u64>,
+    /// The market just opened and how lit it still is (1 to 0).
+    flash: Option<(u64, f32)>,
+}
+
+enum TileAction {
+    Close,
+    Nav(Nav),
+    Pin(Pin),
+}
+
+/// The open markets side by side under a bar: show or hide the list, filter the goods, which of them, close them all.
+/// The tiles fill the room: as many columns as fit at [`TILE_MIN_W`], rows sharing the height, and a last row's tiles
+/// sharing its width.
+fn market_tiles(ui: &mut Ui, gs: &GameState, st: &mut MarketUi) -> Option<Nav> {
+    // The Recent list learns the names of the markets opened, once they have loaded.
+    if let Some(Ok(live)) = &st.tiles_live.last {
+        for id in std::mem::take(&mut st.tiles_fresh) {
+            match live.get(&id) {
+                Some(Some(m)) => st.prefs.remember_market(&m.station),
+                Some(None) => {}
+                // Not loaded yet; one closed before it loaded is forgotten.
+                None if st.prefs.tiles.contains(&id) => st.tiles_fresh.push(id),
+                None => {}
+            }
+        }
+    }
+    let n = st.prefs.tiles.len();
+    let mut close_all = false;
+    // The count and Close all on the right: on the same line where there's room, under it in a narrow window.
+    let right = |ui: &mut Ui, close_all: &mut bool| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if n > 0 && crate::widgets::button(ui, "Close all").clicked() {
+                *close_all = true;
+            }
+            ui.label(RichText::new(format!("{n} of {MAX_TILES} open")).size(size::CAPTION).color(pal::FAINT));
+        });
+    };
+    let wide = ui.available_width() >= 700.0;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        let tip = if st.prefs.tiles_list { "Hide the list of markets" } else { "Show the list of markets" };
+        if crate::widgets::icon_button(ui, icon::SIDEBAR_SIMPLE, tip).clicked() {
+            st.prefs.tiles_list = !st.prefs.tiles_list;
+        }
+        crate::widgets::search_field(ui, &mut st.tile_filter, "Filter goods", 190.0).on_hover_text("Shows only the goods whose name or category holds this, in every market");
+        if wide {
+            crate::widgets::segmented(ui, &mut st.prefs.tiles_show, &[(TileShow::All, "All goods"), (TileShow::Sells, "Buy here"), (TileShow::Buys, "Sell here")]);
+        }
+        right(ui, &mut close_all);
+    });
+    if !wide {
+        ui.add_space(6.0);
+        crate::widgets::segmented(ui, &mut st.prefs.tiles_show, &[(TileShow::All, "All goods"), (TileShow::Sells, "Buy here"), (TileShow::Buys, "Sell here")]);
+    }
+    if close_all {
+        st.prefs.tiles.clear();
+    }
+    ui.add_space(8.0);
+    if n == 0 {
+        empty(
+            ui,
+            icon::STOREFRONT,
+            "No market open",
+            "Pick one in the list, search for a station or carrier, or click a station's name anywhere on the Market page. Up to eight open side by side, and a market you open in the game opens here by itself.",
+        );
+        return None;
+    }
+    let live = match &st.tiles_live.last {
+        Some(Ok(l)) => Some(l),
+        _ => None,
+    };
+    if let Some(Err(e)) = &st.tiles_live.last {
+        ui.label(RichText::new(e).color(pal::BAD));
+    }
+    let tiles = st.prefs.tiles.clone();
+    let best = best_prices(live, &tiles);
+    let filter = st.tile_filter.trim().to_lowercase();
+    let flash = st.tile_flash.and_then(|(id, t)| {
+        let left = 1.0 - t.elapsed().as_secs_f32() / FLASH;
+        (left > 0.0).then_some((id, left))
+    });
+    if flash.is_some() {
+        ui.ctx().request_repaint();
+    }
+    let cx = TileCtx { origin: gs.location.star_pos, prefs: &st.prefs, filter: &filter, best: &best, docked: st.docked_market, flash };
+    let area = ui.available_rect_before_wrap();
+    let gap = 12.0;
+    let cols = tile_columns(n, area.width(), area.height(), gap);
+    let rows = n.div_ceil(cols);
+    let tile_h = ((area.height() - gap * (rows as f32 - 1.0)) / rows as f32).max(TILE_MIN_H);
+    let content_h = tile_h * rows as f32 + gap * (rows as f32 - 1.0);
+    let mut sort = TableSort::load(ui, "db-market");
+    let mut acted: Option<(u64, TileAction)> = None;
+    // Too many rows for the height: the tiles keep a usable height and the area scrolls.
+    egui::ScrollArea::vertical().id_salt("station-tiles-scroll").auto_shrink([false, false]).show(ui, |ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(area.width(), content_h), egui::Sense::hover());
+        for (i, id) in tiles.iter().enumerate() {
+            let (r, c) = (i / cols, i % cols);
+            let in_row = (n - r * cols).min(cols);
+            let w = (rect.width() - gap * (in_row as f32 - 1.0)) / in_row as f32;
+            let at = egui::pos2(rect.left() + c as f32 * (w + gap), rect.top() + r as f32 * (tile_h + gap));
+            let tile = egui::Rect::from_min_size(at, egui::vec2(w, tile_h));
+            let mut child = ui.new_child(egui::UiBuilder::new().id_salt(("market-tile", i)).max_rect(tile).layout(egui::Layout::top_down(egui::Align::Min)));
+            // Nothing a tile holds spills onto its neighbours.
+            child.set_clip_rect(tile.expand(1.0).intersect(ui.clip_rect()));
+            if let Some(a) = market_tile(&mut child, *id, live.and_then(|l| l.get(id)), &cx, &mut sort) {
+                acted = Some((*id, a));
+            }
+        }
+    });
+    match acted {
+        Some((id, TileAction::Close)) => {
+            st.prefs.tiles.retain(|t| *t != id);
+            None
+        }
+        Some((_, TileAction::Pin(p))) => {
+            st.prefs.toggle_pin(p);
+            None
+        }
+        Some((_, TileAction::Nav(n))) => Some(n),
+        None => None,
+    }
+}
+
+/// One open market: its name, where it is and how fresh, and its goods in a table that scrolls inside the tile. The
+/// best price among the open markets stands out on a tinted capsule.
+fn market_tile(ui: &mut Ui, id: u64, m: Option<&Option<StationMarket>>, cx: &TileCtx, sort: &mut TableSort) -> Option<TileAction> {
+    let lit = cx.flash.filter(|(f, _)| *f == id).map(|(_, left)| left);
+    let stroke = match lit {
+        Some(left) => egui::Stroke::new(1.5, pal::ACCENT.gamma_multiply(left)),
+        None => egui::Stroke::new(1.0, Color32::from_white_alpha(10)),
+    };
+    let mut action = None;
+    egui::Frame::new()
+        .fill(pal::CARD)
+        .stroke(stroke)
+        .corner_radius(egui::CornerRadius::same(14))
+        .inner_margin(egui::Margin { left: 12, right: 6, top: 6, bottom: 8 })
+        .show(ui, |ui| {
+            ui.set_min_size(ui.available_size());
+            match m {
+                Some(Some(m)) => {
+                    tile_header(ui, m, cx, &mut action);
+                    ui.add_space(2.0);
+                    tile_table(ui, m, cx, sort, &mut action);
+                }
+                Some(None) => {
+                    tile_close_only(ui, &mut action);
+                    tile_note(ui, "Not in the database", "No market with this id is stored: it may have been a fleet carrier that has since been decommissioned.");
+                }
+                None => {
+                    tile_close_only(ui, &mut action);
+                    ui.add_space(40.0);
+                    ui.vertical_centered(|ui| ui.spinner());
+                }
+            }
+        });
+    action
+}
+
+/// Why a tile shows no goods, small and centred so it fits a low tile.
+fn tile_note(ui: &mut Ui, title: &str, hint: &str) {
+    ui.add_space((ui.available_height() * 0.25).clamp(8.0, 60.0));
+    ui.vertical_centered(|ui| {
+        ui.label(RichText::new(icon::STOREFRONT).size(26.0).color(pal::FAINT));
+        ui.label(RichText::new(title).font(display(size::HEADLINE)).color(pal::TEXT));
+        ui.scope(|ui| {
+            ui.set_max_width(ui.available_width().min(360.0));
+            ui.add(egui::Label::new(RichText::new(hint).size(size::FOOTNOTE).color(pal::DIM)).wrap().halign(egui::Align::Center));
+        });
+    });
+}
+
+/// A tile's close button on its own (while it loads, or when there's nothing to show).
+fn tile_close_only(ui: &mut Ui, action: &mut Option<TileAction>) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+        if crate::widgets::icon_button(ui, icon::X, "Close this market").clicked() {
+            *action = Some(TileAction::Close);
+        }
+    });
+}
+
+/// A tile's head: the station (a carrier with who may dock), Docked when you are, the close button; then its system
+/// (click to copy), how far, its pad, its distance from the star and how old its prices are.
+fn tile_header(ui: &mut Ui, m: &StationMarket, cx: &TileCtx, action: &mut Option<TileAction>) {
+    let s = &m.station;
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if crate::widgets::icon_button(ui, icon::X, "Close this market").clicked() {
+                *action = Some(TileAction::Close);
+            }
+            if cx.docked == Some(s.market_id) {
+                badge(ui, "Docked", pal::GOOD).on_hover_text("You're docked here");
+            }
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let title = RichText::new(if s.is_carrier { format!("{} {}", icon::ANCHOR, s.name) } else { s.name.clone() }).font(display(size::HEADLINE)).color(pal::TEXT);
+                if s.is_carrier {
+                    named_with_access(ui, title, s.carrier_docking_access.as_deref(), |ui, t| {
+                        ui.add(egui::Label::new(t).truncate());
+                    });
+                } else {
+                    ui.add(egui::Label::new(title).truncate());
+                }
+            });
+        });
+    });
     let mut facts = Vec::new();
-    if let Some(t) = &s.station_type {
-        facts.push(t.clone());
+    if let (Some(o), Some(p)) = (cx.origin, s.pos) {
+        facts.push(format!("{:.1} ly", ((o[0] - p[0]).powi(2) + (o[1] - p[1]).powi(2) + (o[2] - p[2]).powi(2)).sqrt()));
     }
     if let Some(p) = s.max_pad {
         facts.push(format!("{p} pad"));
     }
     if let Some(ls) = s.dist_ls {
-        facts.push(format!("{ls:.0} ls from arrival"));
+        facts.push(format!("{} ls", nexus_data::names::group_digits(ls.round() as i64)));
     }
-    if let (Some(o), Some(p)) = (origin, s.pos) {
-        facts.push(format!("{:.1} ly from you", ((o[0] - p[0]).powi(2) + (o[1] - p[1]).powi(2) + (o[2] - p[2]).powi(2)).sqrt()));
-    }
-    if s.market_updated_unix > 0 {
-        facts.push(format!("market updated {} ago", age(s.market_updated_unix).0));
-    }
-    if s.is_carrier {
-        facts.push(format!("docking: {}", s.carrier_docking_access.as_deref().map(carrier_access).unwrap_or("unknown")));
-    }
-    ui.label(RichText::new(facts.join(" · ")).color(pal::DIM));
-    if !m.prohibited.is_empty() {
-        ui.add(egui::Label::new(RichText::new(format!("Prohibited: {}", m.prohibited.join(", "))).size(size::FOOTNOTE).color(pal::DIM)).wrap());
-    }
-    ui.add_space(8.0);
-    let items: Vec<_> = m.items.iter().filter(|i| (i.buy > 0 && i.stock > 0) || (i.sell > 0 && i.demand > 0)).collect();
-    if items.is_empty() {
-        empty(ui, icon::STOREFRONT, "No market data", "The database has no prices for this station yet.");
-        return (None, None);
-    }
-    let mut nav = None;
-    let mut pin = None;
-    const TABLE: &str = "db-market";
-    let mut sort = TableSort::load(ui, TABLE);
-    let table = TableBuilder::new(ui)
-        .id_salt("db-market")
-        .striped(true)
-        .resizable(false)
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(24.0))
-        .column(Column::remainder().at_least(160.0).clip(true))
-        .column(Column::initial(140.0).clip(true))
-        .column(Column::initial(96.0))
-        .column(Column::initial(76.0))
-        .column(Column::initial(96.0))
-        .column(Column::initial(76.0))
-        .column(Column::initial(60.0))
-        .header(30.0, |mut h| {
-            let heads: Heads = vec![
-                ("", None),
-                ("Commodity", Some((0, false))),
-                ("Category", Some((1, false))),
-                ("Buy for", Some((2, false))),
-                ("Stock", Some((3, true))),
-                ("Sell for", Some((4, true))),
-                ("Demand", Some((5, true))),
-                ("vs avg", Some((6, true))),
-            ];
-            headings(&mut h, &heads, &mut sort, TABLE);
-        });
-    let desc = sort.descending;
-    // A price the station doesn't trade at: last whichever way the column is sorted.
-    let price = move |v: i64, qty: i64| if v > 0 && qty > 0 { Some(v as f64) } else if desc { Some(f64::NEG_INFINITY) } else { None };
-    // How far its price is from the galactic average, on the side it trades (good for you = high).
-    let deal = |i: &&nexus_galaxy::MarketRow| {
-        if i.mean <= 0 {
-            None
-        } else if i.buy > 0 && i.stock > 0 {
-            Some((i.mean - i.buy) as f64 / i.mean as f64)
-        } else {
-            Some((i.sell - i.mean) as f64 / i.mean as f64)
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 2.0);
+        if nav_label(ui, RichText::new(&s.system).size(size::FOOTNOTE).color(pal::DIM), "Click to copy the system") {
+            ui.ctx().copy_text(s.system.clone());
         }
-    };
-    let order = sort.order(&items, |a, b, c| match c {
-        0 => cmp_text(&a.name, &b.name),
-        1 => cmp_text(&a.category, &b.category).then_with(|| cmp_text(&a.name, &b.name)),
-        2 => cmp_opt(price(a.buy, a.stock), price(b.buy, b.stock)),
-        3 => a.stock.cmp(&b.stock),
-        4 => cmp_opt(price(a.sell, a.demand), price(b.sell, b.demand)),
-        5 => a.demand.cmp(&b.demand),
-        _ => cmp_opt(deal(a).or(if desc { Some(f64::NEG_INFINITY) } else { None }), deal(b).or(if desc { Some(f64::NEG_INFINITY) } else { None })),
+        if !facts.is_empty() {
+            ui.label(RichText::new(format!("· {}", facts.join(" · "))).size(size::FOOTNOTE).color(pal::DIM));
+        }
+        if s.market_updated_unix > 0 {
+            let (a, col) = age(s.market_updated_unix);
+            ui.label(RichText::new(format!("· {a} ago")).size(size::FOOTNOTE).color(col)).on_hover_text("When this market was last reported");
+        }
+        if !m.prohibited.is_empty() {
+            ui.label(RichText::new(format!("· {} {} prohibited", icon::PROHIBIT, m.prohibited.len())).size(size::FOOTNOTE).color(pal::DIM))
+                .on_hover_text(format!("Prohibited here: {}", m.prohibited.join(", ")));
+        }
     });
-    table
-        .body(|body| {
-            body.rows(32.0, items.len(), |mut row| {
-                let i = items[order[row.index()]];
-                let sells = i.buy > 0 && i.stock > 0;
-                let buys = i.sell > 0 && i.demand > 0;
+}
+
+/// A price in a market tile: a tinted capsule when it's the best among the open markets.
+fn tile_price(ui: &mut Ui, v: i64, col: Color32, best: bool) -> egui::Response {
+    let text = nexus_data::names::group_digits(v);
+    if !best {
+        return ui.label(RichText::new(text).color(col));
+    }
+    let g = ui.painter().layout_no_wrap(text, display(size::CALLOUT), col);
+    let pad = egui::vec2(7.0, 2.0);
+    let (rect, r) = ui.allocate_exact_size(g.size() + pad * 2.0, egui::Sense::hover());
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(rect, egui::CornerRadius::same(255), col.gamma_multiply(0.2));
+        ui.painter().galley(rect.min + pad, g, col);
+    }
+    r
+}
+
+/// A tile's goods: what it sells (Buy) and buys (Sell), with stock, demand and the galactic average when it's wide
+/// enough. Sorted as every tile is (a heading sorts them all), filtered by the bar above the tiles.
+fn tile_table(ui: &mut Ui, m: &StationMarket, cx: &TileCtx, sort: &mut TableSort, action: &mut Option<TileAction>) {
+    let s = &m.station;
+    let trades = |i: &nexus_galaxy::MarketRow| ((i.buy > 0 && i.stock > 0), (i.sell > 0 && i.demand > 0));
+    let rows: Vec<&nexus_galaxy::MarketRow> = m
+        .items
+        .iter()
+        .filter(|i| {
+            let (sells, buys) = trades(i);
+            let side = match cx.prefs.tiles_show {
+                TileShow::All => sells || buys,
+                TileShow::Sells => sells,
+                TileShow::Buys => buys,
+            };
+            side && (cx.filter.is_empty() || i.name.to_lowercase().contains(cx.filter) || i.category.to_lowercase().contains(cx.filter))
+        })
+        .collect();
+    if rows.is_empty() {
+        let any = m.items.iter().any(|i| {
+            let (a, b) = trades(i);
+            a || b
+        });
+        let (title, hint) = if any {
+            ("Nothing to show", "None of its goods matches the filter above.")
+        } else if !m.items.is_empty() {
+            ("Nothing for sale or wanted", "Its latest report lists goods, but none in stock and none wanted: a fleet carrier often has no orders set.")
+        } else {
+            ("No prices yet", "The database has no prices for this market. They arrive when a commander who shares data opens it, or when you do.")
+        };
+        tile_note(ui, title, hint);
+        return;
+    }
+    // Narrow tiles keep the prices; stock, demand and the average come back as the tile widens.
+    let w = ui.available_width();
+    let layout = if w >= 520.0 { 2 } else if w >= 360.0 { 1 } else { 0 };
+    // Narrow, a long name takes two lines rather than ending in "…".
+    let (price_w, row_h) = if layout == 0 { (62.0, 38.0) } else { (76.0, 30.0) };
+    // Keyed by market: its widths and where it was scrolled stay with it when the tiles move.
+    crate::widgets::table(ui, &format!("market-tile/{}/{layout}", m.station.market_id), |t| {
+        // A low tile's table scrolls in what's left of it (egui_extras would take at least 200 points).
+        let mut t = t.vscroll(true).auto_shrink([false, false]).min_scrolled_height(0.0).column(Column::exact(22.0).resizable(false)).column(crate::widgets::flex_column(90.0)).column(Column::initial(price_w).at_least(50.0).clip(true));
+        if layout == 2 {
+            t = t.column(Column::initial(64.0).at_least(40.0).clip(true));
+        }
+        t = t.column(Column::initial(price_w).at_least(50.0).clip(true));
+        if layout == 2 {
+            t = t.column(Column::initial(64.0).at_least(40.0).clip(true));
+        }
+        if layout >= 1 {
+            t = t.column(Column::initial(54.0).at_least(40.0).clip(true));
+        }
+        // Sortable columns, as every tile has them: 0 commodity, 2 buy price, 3 stock, 4 sell price, 5 demand, 6 against
+        // the average.
+        let mut heads: Heads = vec![("", None), ("Commodity", Some((0, false))), ("Buy", Some((2, false)))];
+        if layout == 2 {
+            heads.push(("Stock", Some((3, true))));
+        }
+        heads.push(("Sell", Some((4, true))));
+        if layout == 2 {
+            heads.push(("Demand", Some((5, true))));
+        }
+        if layout >= 1 {
+            heads.push(("vs avg", Some((6, true))));
+        }
+        let t = t.header(26.0, |mut h| headings(&mut h, &heads, sort, "db-market"));
+        let desc = sort.descending;
+        // A price the station doesn't trade at: last whichever way the column is sorted.
+        let price = move |v: i64, qty: i64| if v > 0 && qty > 0 { Some(v as f64) } else if desc { Some(f64::NEG_INFINITY) } else { None };
+        // How far its price is from the galactic average, on the side it trades (good for you = high).
+        let deal = |i: &&nexus_galaxy::MarketRow| {
+            if i.mean <= 0 {
+                None
+            } else if i.buy > 0 && i.stock > 0 {
+                Some((i.mean - i.buy) as f64 / i.mean as f64)
+            } else {
+                Some((i.sell - i.mean) as f64 / i.mean as f64)
+            }
+        };
+        let none_last = move |v: Option<f64>| v.or(if desc { Some(f64::NEG_INFINITY) } else { None });
+        let order = sort.order(&rows, |a, b, c| match c {
+            0 => cmp_text(&a.name, &b.name),
+            2 => cmp_opt(price(a.buy, a.stock), price(b.buy, b.stock)),
+            3 => a.stock.cmp(&b.stock),
+            4 => cmp_opt(price(a.sell, a.demand), price(b.sell, b.demand)),
+            5 => a.demand.cmp(&b.demand),
+            6 => cmp_opt(none_last(deal(a)), none_last(deal(b))),
+            // Another tab's column (the category): the database's order, by category then name.
+            _ => std::cmp::Ordering::Equal,
+        });
+        t.body(|body| {
+            body.rows(row_h, rows.len(), |mut row| {
+                let i = rows[order[row.index()]];
+                let (sells, buys) = trades(i);
+                let best = cx.best.get(&i.symbol).copied().unwrap_or_default();
                 row.col(|ui| {
                     // Pins the side it trades (where it buys, when it does both).
-                    if pin_button(ui, prefs.is_pinned(s.market_id, &i.symbol, buys)) {
+                    if pin_button(ui, cx.prefs.is_pinned(s.market_id, &i.symbol, buys)) {
                         let (price, qty) = if buys { (i.sell, i.demand) } else { (i.buy, i.stock) };
-                        pin = Some(Pin {
+                        *action = Some(TileAction::Pin(Pin {
                             market_id: s.market_id,
                             station: s.name.clone(),
                             system: s.system.clone(),
@@ -3114,118 +3806,69 @@ fn db_market(ui: &mut Ui, m: &StationMarket, origin: Option<[f64; 3]>, prefs: &M
                             price,
                             qty,
                             ..Default::default()
-                        });
+                        }));
                     }
                 });
                 row.col(|ui| {
-                    if nav_label(ui, RichText::new(&i.name).color(pal::TEXT), "Where to buy and sell it, latest prices") {
-                        nav = Some(Nav::Commodity { name: i.symbol.clone(), side: None });
+                    let tip = format!("{} ({}): where to buy and sell it, latest prices", i.name, i.category);
+                    let clicked = if layout == 0 {
+                        let r = ui.add(egui::Label::new(RichText::new(&i.name).size(size::FOOTNOTE).color(pal::TEXT)).wrap().sense(egui::Sense::click()));
+                        let r = r.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip);
+                        if r.hovered() {
+                            ui.painter().hline(r.rect.x_range(), r.rect.bottom() - 1.0, egui::Stroke::new(1.0, pal::DIM));
+                        }
+                        r.clicked()
+                    } else {
+                        nav_label(ui, RichText::new(&i.name).color(pal::TEXT), &tip)
+                    };
+                    if clicked {
+                        *action = Some(TileAction::Nav(Nav::Commodity { name: i.symbol.clone(), side: None }));
                     }
                 });
-                row.col(|ui| {
-                    ui.label(RichText::new(&i.category).color(pal::DIM));
-                });
+                let avg = if i.mean > 0 { format!(" · galactic average {}", cr(i.mean)) } else { String::new() };
                 row.col(|ui| {
                     if sells {
-                        ui.label(RichText::new(cr(i.buy)).color(pal::CYAN));
+                        let top = best.buys >= 2 && best.buy == i.buy;
+                        let r = tile_price(ui, i.buy, pal::CYAN, top);
+                        let more = if top { "\nThe cheapest of the open markets" } else { "" };
+                        r.on_hover_text(format!("{} Cr · {} in stock{avg}{more}", nexus_data::names::group_digits(i.buy), nexus_data::names::group_digits(i.stock)));
                     }
                 });
-                row.col(|ui| {
-                    if sells {
-                        ui.label(RichText::new(nexus_data::names::group_digits(i.stock)).color(pal::DIM));
-                    }
-                });
+                if layout == 2 {
+                    row.col(|ui| {
+                        if sells {
+                            ui.label(RichText::new(nexus_data::names::group_digits(i.stock)).color(pal::DIM));
+                        }
+                    });
+                }
                 row.col(|ui| {
                     if buys {
-                        ui.label(RichText::new(cr(i.sell)).color(pal::GOOD));
+                        let top = best.sells >= 2 && best.sell == i.sell;
+                        let r = tile_price(ui, i.sell, pal::GOOD, top);
+                        let more = if top { "\nThe best price of the open markets" } else { "" };
+                        r.on_hover_text(format!("{} Cr · {} wanted{avg}{more}", nexus_data::names::group_digits(i.sell), nexus_data::names::group_digits(i.demand)));
                     }
                 });
-                row.col(|ui| {
-                    if buys {
-                        ui.label(RichText::new(nexus_data::names::group_digits(i.demand)).color(pal::DIM));
-                    }
-                });
-                row.col(|ui| {
-                    // Against the side the station trades: what it sells is judged as a purchase.
-                    if sells {
-                        vs_average(ui, i.buy, Some(i.mean), true);
-                    } else if buys {
-                        vs_average(ui, i.sell, Some(i.mean), false);
-                    }
-                });
+                if layout == 2 {
+                    row.col(|ui| {
+                        if buys {
+                            ui.label(RichText::new(nexus_data::names::group_digits(i.demand)).color(pal::DIM));
+                        }
+                    });
+                }
+                if layout >= 1 {
+                    row.col(|ui| {
+                        // Against the side the station trades: what it sells is judged as a purchase.
+                        if sells {
+                            vs_average(ui, i.buy, Some(i.mean), true);
+                        } else if buys {
+                            vs_average(ui, i.sell, Some(i.mean), false);
+                        }
+                    });
+                }
             });
         });
-    (nav, pin)
-}
-
-fn docked_market(ui: &mut Ui, gs: &GameState) -> Option<Nav> {
-    let Some(m) = &gs.market else {
-        empty(ui, icon::STOREFRONT, "No market opened yet", "Open a station's commodity market: its full price list appears here. Click a station anywhere on the Market page to see its market from the database.");
-        return None;
-    };
-    ui.label(RichText::new(format!("{} — {} · {}", m.station_name, m.star_system, m.timestamp.to_local_string("%d %b %H:%M"))).font(display(16.0)));
-    let mut items: Vec<_> = m.items.iter().filter(|i| i.buy_price > 0 || i.sell_price > 0).collect();
-    items.sort_by(|a, b| a.category_localised.cmp(&b.category_localised).then(a.name_localised.cmp(&b.name_localised)));
-    let mut nav = None;
-    const TABLE: &str = "docked-market";
-    let mut sort = TableSort::load(ui, TABLE);
-    let table = TableBuilder::new(ui)
-        .striped(true)
-        .resizable(false)
-        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(240.0))
-        .column(Column::initial(160.0))
-        .column(Column::initial(90.0))
-        .column(Column::initial(90.0))
-        .column(Column::initial(90.0))
-        .column(Column::remainder())
-        .header(30.0, |mut h| {
-            let heads: Heads = vec![("Commodity", Some((0, false))), ("Category", Some((1, false))), ("Buy", Some((2, false))), ("Sell", Some((3, true))), ("Stock", Some((4, true))), ("Demand", Some((5, true)))];
-            headings(&mut h, &heads, &mut sort, TABLE);
-        });
-    let desc = sort.descending;
-    let price = move |v: i64| if v > 0 { Some(v as f64) } else if desc { Some(f64::NEG_INFINITY) } else { None };
-    let name = |i: &&nexus_journal::companion::MarketItem| i.name_localised.clone().unwrap_or_else(|| i.symbol());
-    let order = sort.order(&items, |a, b, c| match c {
-        0 => cmp_text(&name(a), &name(b)),
-        1 => cmp_text(a.category_localised.as_deref().unwrap_or_default(), b.category_localised.as_deref().unwrap_or_default()),
-        2 => cmp_opt(price(a.buy_price), price(b.buy_price)),
-        3 => cmp_opt(price(a.sell_price), price(b.sell_price)),
-        4 => a.stock.cmp(&b.stock),
-        _ => a.demand.cmp(&b.demand),
     });
-    table
-        .body(|body| {
-            body.rows(32.0, items.len(), |mut row| {
-                let i = items[order[row.index()]];
-                row.col(|ui| {
-                    if nav_label(ui, RichText::new(i.name_localised.clone().unwrap_or_else(|| i.symbol())).color(pal::TEXT), "Where to buy and sell it, latest prices") {
-                        nav = Some(Nav::Commodity { name: i.symbol(), side: None });
-                    }
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(i.category_localised.clone().unwrap_or_default()).color(pal::DIM));
-                });
-                row.col(|ui| {
-                    if i.buy_price > 0 {
-                        ui.label(RichText::new(nexus_data::names::group_digits(i.buy_price)).color(pal::ACCENT_SOFT));
-                    }
-                });
-                row.col(|ui| {
-                    if i.sell_price > 0 {
-                        ui.label(RichText::new(nexus_data::names::group_digits(i.sell_price)).color(pal::GOLD));
-                    }
-                });
-                row.col(|ui| {
-                    ui.label(RichText::new(if i.stock > 0 { nexus_data::names::group_digits(i.stock) } else { String::new() }).color(pal::DIM));
-                });
-                row.col(|ui| {
-                    // Demand bracket 0 is the game's "no demand" (it lists its own goods with demand 1).
-                    ui.label(RichText::new(if i.demand > 0 && i.demand_bracket != 0 { nexus_data::names::group_digits(i.demand) } else { String::new() }).color(pal::DIM));
-                });
-            });
-        });
-    nav
 }
 
 fn mb(bytes: u64) -> String {
@@ -3930,5 +4573,40 @@ mod tests {
         let mut wider = p.clone();
         r.apply(&mut wider);
         assert_eq!((wider.max_dist, wider.min_qty, wider.carriers, wider.min_pad), (820.0, 45, true, Some('L')));
+    }
+
+    #[test]
+    fn market_tiles_stay_readable() {
+        // Side by side while each keeps a comfortable width: two or three markets in a 970 point area are two columns.
+        assert_eq!(tile_columns(1, 970.0, 800.0, 12.0), 1);
+        assert_eq!(tile_columns(2, 970.0, 800.0, 12.0), 2);
+        assert_eq!(tile_columns(3, 970.0, 800.0, 12.0), 2);
+        // Eight would be four rows too low to read: three narrower columns instead. Wider, three comfortable ones.
+        assert_eq!(tile_columns(8, 970.0, 800.0, 12.0), 3);
+        assert_eq!(tile_columns(8, 1284.0, 800.0, 12.0), 3);
+        // Too narrow for two: one column, and the tiles scroll.
+        assert_eq!(tile_columns(4, 600.0, 800.0, 12.0), 1);
+    }
+
+    #[test]
+    fn markets_open_side_by_side_up_to_eight() {
+        let mut st = MarketUi::default();
+        for id in 1..=8 {
+            st.open_tile(id, false);
+        }
+        assert_eq!(st.prefs.tiles, (1..=8).collect::<Vec<_>>());
+        st.open_tile(3, false);
+        assert_eq!(st.prefs.tiles.len(), 8, "one already open keeps its place");
+        st.open_tile(9, false);
+        assert_eq!(st.prefs.tiles, vec![2, 3, 4, 5, 6, 7, 8, 9], "the oldest closes");
+        // The market you're docked at stays when another opens.
+        st.docked_market = Some(2);
+        st.open_tile(10, false);
+        assert_eq!(st.prefs.tiles, vec![2, 4, 5, 6, 7, 8, 9, 10]);
+        // A market opened in the game comes first, in place of the one that was first.
+        st.open_tile(11, true);
+        assert_eq!(st.prefs.tiles, vec![11, 4, 5, 6, 7, 8, 9, 10]);
+        st.open_tile(0, false);
+        assert_eq!(st.prefs.tiles.len(), 8, "no market id, nothing to open");
     }
 }

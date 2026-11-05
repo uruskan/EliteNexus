@@ -167,6 +167,13 @@ release time that section becomes the new version and the release workflow publi
   such as a construction's, at cost), a chart by day of jumps, light years, credits or time, a card for each thing you
   did, and arrows against the period before. An empty period says why. **All statistics** replaces the old list of the game's raw names, mostly zeros:
   every figure in plain words, grouped, searchable, with the zeros put away.
+- **Market › Station** compares markets side by side: up to eight open at once, tiled to the window, each with a close
+  button, and still open next time. The list on the left uses the page's whole height: a search for any station or
+  carrier the database knows, the station you're docked at, your system's stations and carriers (only those with a
+  market in the database, unless you ask for the rest) and the markets you opened lately; **Open all** puts your
+  system's markets side by side. **Filter goods** narrows every market at once, **Buy here** and **Sell here** show one
+  side, and where several open markets trade a good, the cheapest to buy and the best to sell stand out. A market you
+  open in the game opens there by itself, and the open markets update as new reports arrive.
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
