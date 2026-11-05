@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS systems (
     controlling_power         TEXT,
     powerplay_state           TEXT,
     powers                    TEXT,
-    updated                   INTEGER NOT NULL DEFAULT 0
+    updated                   INTEGER NOT NULL DEFAULT 0,
+    -- When system_conflicts was last replaced for this system (unix seconds), NULL when its factions came without it.
+    conflicts_updated         INTEGER
 );
 CREATE INDEX IF NOT EXISTS systems_name_lower ON systems(name_lower);
 CREATE VIRTUAL TABLE IF NOT EXISTS systems_rtree USING rtree(id, min_x, max_x, min_y, max_y, min_z, max_z);
@@ -119,6 +121,23 @@ CREATE TABLE IF NOT EXISTS system_factions (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS system_factions_faction ON system_factions(faction);
 
+-- Wars, civil wars and elections: the game's own list (Conflicts[] of FSDJump / Location / CarrierJump), replaced with
+-- the system's factions. systems.conflicts_updated says when; NULL there means the stored factions came without the
+-- list, so their states are all there is. kind: war / civilwar / election; status: active / pending / ''.
+CREATE TABLE IF NOT EXISTS system_conflicts (
+    system_id64 INTEGER NOT NULL,
+    faction1    TEXT NOT NULL,
+    faction2    TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    stake1      TEXT,
+    stake2      TEXT,
+    won1        INTEGER NOT NULL DEFAULT 0,
+    won2        INTEGER NOT NULL DEFAULT 0,
+    updated     INTEGER NOT NULL,
+    PRIMARY KEY (system_id64, faction1, faction2)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS ring_signals (
     system_id64 INTEGER NOT NULL,
     body_name   TEXT NOT NULL,
@@ -179,8 +198,12 @@ CREATE INDEX IF NOT EXISTS bodies_name ON bodies(name);
 "#;
 
 /// Columns added to existing tables after they were first created: (table, column, type).
-const ADDED_COLUMNS: &[(&str, &str, &str)] =
-    &[("bodies", "checked_online", "INTEGER"), ("stations", "history_since", "INTEGER"), ("stations", "history_at", "INTEGER")];
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("bodies", "checked_online", "INTEGER"),
+    ("stations", "history_since", "INTEGER"),
+    ("stations", "history_at", "INTEGER"),
+    ("systems", "conflicts_updated", "INTEGER"),
+];
 
 /// What earlier versions created and nothing reads any more: `market_goods`, a view whose rare goods queries read
 /// the whole market table.
@@ -194,6 +217,7 @@ DROP TABLE IF EXISTS station_rtree;
 DROP TABLE IF EXISTS commodities;
 DROP TABLE IF EXISTS market;
 DROP TABLE IF EXISTS system_factions;
+DROP TABLE IF EXISTS system_conflicts;
 DROP TABLE IF EXISTS ring_signals;
 DROP TABLE IF EXISTS price_history;
 DROP TABLE IF EXISTS bodies;

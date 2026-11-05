@@ -137,6 +137,104 @@ pub struct SystemDetails {
     pub powers: Vec<String>,
     /// `Some` replaces the stored faction list of the system; `None` leaves it alone.
     pub factions: Option<Vec<FactionUpdate>>,
+    /// The game's own list of the system's wars, civil wars and elections, when the report carries it whole (empty:
+    /// none). It goes with `factions`: a report that replaces the factions with `None` here (a Spansh dump) forgets
+    /// the stored conflicts, which are then worked out from the faction states ([`ConflictHit::detailed`]).
+    pub conflicts: Option<Vec<ConflictUpdate>>,
+}
+
+/// One war, civil war or election in a system (`Conflicts[]` of `FSDJump`, `Location` and `CarrierJump`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConflictUpdate {
+    pub kind: ConflictKind,
+    pub status: ConflictStatus,
+    pub sides: [ConflictSideUpdate; 2],
+}
+
+/// One side of a conflict as the game reports it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ConflictSideUpdate {
+    pub faction: String,
+    /// The asset it stands to lose (a station or settlement); `None` when nothing is at stake.
+    pub stake: Option<String>,
+    pub won_days: u32,
+}
+
+/// What kind of conflict: wars and civil wars are fought in conflict zones, elections aren't.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub enum ConflictKind {
+    #[default]
+    War,
+    CivilWar,
+    Election,
+}
+
+impl ConflictKind {
+    /// The journal's `WarType` (`war`, `civilwar`, `election`) or a faction state (`War`, `Civil War`, `CivilWar`,
+    /// `Election`), in any case.
+    pub fn parse(raw: &str) -> Option<ConflictKind> {
+        let k: String = raw.chars().filter(|c| !c.is_whitespace() && *c != '_').collect::<String>().to_ascii_lowercase();
+        match k.as_str() {
+            "war" => Some(ConflictKind::War),
+            "civilwar" => Some(ConflictKind::CivilWar),
+            "election" => Some(ConflictKind::Election),
+            _ => None,
+        }
+    }
+
+    /// How it's stored and how the journal spells it.
+    pub fn token(self) -> &'static str {
+        match self {
+            ConflictKind::War => "war",
+            ConflictKind::CivilWar => "civilwar",
+            ConflictKind::Election => "election",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ConflictKind::War => "War",
+            ConflictKind::CivilWar => "Civil war",
+            ConflictKind::Election => "Election",
+        }
+    }
+
+    /// Fought with ships and on foot in conflict zones (wars and civil wars); an election is won without fighting.
+    pub fn is_fight(self) -> bool {
+        self != ConflictKind::Election
+    }
+}
+
+/// Where a conflict stands (`Conflicts[].Status`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+pub enum ConflictStatus {
+    /// Being fought: each day's winner is counted.
+    #[default]
+    Active,
+    /// Declared and about to start.
+    Pending,
+    /// Over: the game keeps listing it, with no status (`""`), while both factions recover from it (seen on EDDN,
+    /// 2026-11-05: every such conflict's factions had it among their recovering states).
+    Ended,
+}
+
+impl ConflictStatus {
+    /// `active`, `pending`; anything else (the game writes `""`) is [`ConflictStatus::Ended`].
+    pub fn parse(raw: &str) -> ConflictStatus {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "active" => ConflictStatus::Active,
+            "pending" => ConflictStatus::Pending,
+            _ => ConflictStatus::Ended,
+        }
+    }
+
+    pub fn token(self) -> &'static str {
+        match self {
+            ConflictStatus::Active => "active",
+            ConflictStatus::Pending => "pending",
+            ConflictStatus::Ended => "",
+        }
+    }
 }
 
 /// One faction present in a system.
@@ -546,6 +644,67 @@ pub struct FactionInfo {
     pub pending_states: Vec<String>,
     pub recovering_states: Vec<String>,
     pub updated_unix: i64,
+}
+
+/// Wars, civil wars and elections around a point, nearest first; ended ones are left out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ConflictQuery {
+    pub origin: [f64; 3],
+    /// `None` = the whole galaxy.
+    pub max_distance_ly: Option<f64>,
+    /// Leave out systems last reported before this (unix seconds).
+    pub since_unix: i64,
+    /// Elections too (they have no conflict zones).
+    pub elections: bool,
+    pub limit: usize,
+}
+
+/// What [`GalaxyDb::conflicts_near`](crate::GalaxyDb::conflicts_near) found.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ConflictScan {
+    /// Nearest first; at a system, active before pending.
+    pub hits: Vec<ConflictHit>,
+    /// How many were found before the query's `limit` cut the list.
+    pub total: usize,
+    /// Populated systems in range with a report since `since_unix`: what the list is based on.
+    pub systems_reported: usize,
+}
+
+/// A conflict in a system near the query's origin.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct ConflictHit {
+    pub system: String,
+    pub system_id64: u64,
+    pub pos: [f64; 3],
+    pub distance_ly: f64,
+    pub kind: ConflictKind,
+    pub status: ConflictStatus,
+    /// Two sides when `detailed`; from faction states alone, every faction in that state (usually two).
+    pub sides: Vec<ConflictSide>,
+    /// From the game's own list of the system's conflicts (who fights whom, stakes, days won). False when worked
+    /// out from faction states alone (a Spansh dump, or a report sent without the list): sides only.
+    pub detailed: bool,
+    /// When the system was last reported (unix seconds).
+    pub updated_unix: i64,
+    pub government: Option<String>,
+    pub security: Option<String>,
+    pub allegiance: Option<String>,
+    pub population: Option<u64>,
+    pub controlling_faction: Option<String>,
+}
+
+/// One side of a [`ConflictHit`].
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ConflictSide {
+    pub faction: String,
+    /// The asset it stands to lose (a station or settlement).
+    pub stake: Option<String>,
+    /// `None` when not reported (`detailed` is false).
+    pub won_days: Option<u32>,
+    /// 0..=1.
+    pub influence: Option<f64>,
+    pub allegiance: Option<String>,
+    pub government: Option<String>,
 }
 
 /// Nearest-station search with service filters.

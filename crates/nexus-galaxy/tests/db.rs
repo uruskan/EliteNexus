@@ -936,6 +936,70 @@ fn systems_and_factions() {
 }
 
 #[test]
+fn conflicts_follow_the_latest_report() {
+    let t = TempDb::new("conflicts");
+    let db = t.db();
+    let jump = |age: i64, with_list: bool| {
+        let mut v = json!({
+            "$schemaRef": "https://eddn.edcd.io/schemas/journal/1",
+            "header": {"uploaderID": "x", "softwareName": "test", "softwareVersion": "1"},
+            "message": {"timestamp": nexus_journal::Timestamp(now() - age).to_iso(), "event": "FSDJump",
+                "StarSystem": "Orrere", "SystemAddress": 77, "StarPos": [3.0, 4.0, 0.0], "Population": 3900014409u64,
+                "SystemGovernment": "$government_Anarchy;", "SystemSecurity": "$GAlAXY_MAP_INFO_state_anarchy;",
+                "Factions": [
+                    {"Name": "Orrere Energy Company", "FactionState": "CivilWar", "Government": "Corporate", "Influence": 0.35,
+                     "Allegiance": "Independent", "ActiveStates": [{"State": "CivilWar"}]},
+                    {"Name": "Union of Orrere", "FactionState": "CivilWar", "Government": "Democracy", "Influence": 0.36,
+                     "Allegiance": "Independent", "ActiveStates": [{"State": "CivilWar"}]}]}
+        });
+        if with_list {
+            v["message"]["Conflicts"] = json!([{"WarType": "civilwar", "Status": "active",
+                "Faction1": {"Name": "Orrere Energy Company", "Stake": "Kimbrough's Folly", "WonDays": 3},
+                "Faction2": {"Name": "Union of Orrere", "Stake": "Fahlbusch's Mine", "WonDays": 2}}]);
+        }
+        v
+    };
+    let near = |elections: bool| {
+        db.conflicts_near(&ConflictQuery { origin: [0.0; 3], max_distance_ly: Some(20.0), since_unix: now() - 86_400, elections, limit: 10 })
+            .expect("query")
+    };
+
+    // The game's list: who fights whom, the stakes and the score.
+    assert_eq!(db.ingest_eddn(&jump(600, true)), 1);
+    db.flush().expect("flush");
+    let scan = near(false);
+    assert_eq!(scan.systems_reported, 1);
+    let [hit] = scan.hits.as_slice() else { panic!("{scan:?}") };
+    assert!(hit.detailed);
+    assert_eq!((hit.system.as_str(), hit.kind, hit.status, hit.distance_ly), ("Orrere", ConflictKind::CivilWar, ConflictStatus::Active, 5.0));
+    assert_eq!(hit.government.as_deref(), Some("Anarchy"));
+    assert_eq!(hit.sides[0].stake.as_deref(), Some("Kimbrough's Folly"));
+    assert_eq!((hit.sides[0].won_days, hit.sides[1].won_days), (Some(3), Some(2)));
+    assert_eq!(hit.sides[1].influence, Some(0.36));
+
+    // An older report changes nothing; a newer one without the list (factions still at war) falls back to the states.
+    db.ingest_eddn(&jump(3_600, false));
+    db.flush().expect("flush");
+    assert!(near(false).hits[0].detailed);
+    db.ingest_eddn(&jump(60, false));
+    db.flush().expect("flush");
+    let scan = near(false);
+    let [hit] = scan.hits.as_slice() else { panic!("{scan:?}") };
+    assert!(!hit.detailed);
+    assert_eq!(hit.sides.iter().map(|s| (s.faction.as_str(), s.won_days)).collect::<Vec<_>>(), [("Union of Orrere", None), ("Orrere Energy Company", None)]);
+
+    // The war is over: a report with peaceful factions and no list clears it.
+    let mut peace = jump(10, false);
+    for f in peace["message"]["Factions"].as_array_mut().expect("factions") {
+        f["FactionState"] = json!("None");
+        f.as_object_mut().expect("faction").remove("ActiveStates");
+    }
+    db.ingest_eddn(&peace);
+    db.flush().expect("flush");
+    assert!(near(true).hits.is_empty());
+}
+
+#[test]
 fn factions_replace_on_newer_info() {
     let t = TempDb::new("factions");
     let db = t.db();

@@ -1,6 +1,6 @@
 //! Local galaxy / market database for Elite Nexus.
 //!
-//! A SQLite (WAL) database of systems, stations, markets, factions, ring hotspots and planets
+//! A SQLite (WAL) database of systems, stations, markets, factions and their conflicts, ring hotspots and planets
 //! (footfall / discovery flags, biological signals; see [`BodyUpdate`]), fed by EDDN
 //! ([`Ingest::from_eddn`]), the player's own journal ([`Ingest::from_journal_event`]) and Spansh
 //! dumps ([`GalaxyDb::import_spansh_dump`]).
@@ -31,6 +31,7 @@
 
 mod bodies;
 mod commodities;
+mod conflicts;
 mod convert;
 mod deals;
 mod error;
@@ -430,6 +431,12 @@ impl GalaxyDb {
     /// bodies of Sol, not of Solati), in name order.
     pub fn find_bodies(&self, prefix: &str, limit: usize) -> Result<Vec<BodyInfo>> {
         bodies::find(&*self.inner.pool.get()?, prefix, limit)
+    }
+
+    /// Wars, civil wars (and, if asked, elections) near a position, nearest first: the game's own conflict list where
+    /// the system's last report carried it, otherwise what its faction states say ([`ConflictHit::detailed`]).
+    pub fn conflicts_near(&self, q: &ConflictQuery) -> Result<ConflictScan> {
+        conflicts::conflicts_near(&*self.inner.pool.get()?, q)
     }
 
     /// Ring hotspots of one commodity near a position.

@@ -79,6 +79,7 @@ pub struct NexusApp {
     fleet: pages::fleet::FleetUi,
     eng: pages::engineering::EngineeringUi,
     missions: pages::missions::MissionsUi,
+    combat: pages::combat::CombatUi,
     log: pages::logbook::LogbookUi,
     map: pages::galaxy_map::MapUi,
     binds: pages::bindings::BindsUi,
@@ -204,6 +205,7 @@ impl NexusApp {
             fleet: pages::fleet::FleetUi::new(ov.tab.as_deref(), shot.is_some()),
             eng: pages::engineering::EngineeringUi::new(ov.tab.as_deref()),
             missions: pages::missions::MissionsUi::default(),
+            combat: pages::combat::CombatUi::new(ov.tab.as_deref()),
             log: Default::default(),
             map,
             binds: Default::default(),
@@ -658,6 +660,12 @@ impl NexusApp {
                 let sources = pages::where_to_get::Sources { db: self.market.db.as_ref(), spansh: &self.spansh, rt: self.rt.handle() };
                 market_goto = pages::missions::show(ui, gs, &mut self.missions, &sources);
             }
+            Page::Combat => {
+                let feed = self.settings.accounts.eddn_listen;
+                if let Some(pages::combat::CombatAction::PlotTo(s)) = pages::combat::show(ui, gs, self.market.db.as_ref(), feed, &mut self.combat) {
+                    map_action = Some(pages::galaxy_map::MapAction::PlotTo(s));
+                }
+            }
             Page::Bgs => settings_changed |= pages::bgs::show(ui, gs, &mut self.settings.bgs),
             Page::Logbook => pages::logbook::show(ui, gs, &mut self.log, &self.core.index),
             Page::Statistics => pages::stats::show(ui, gs),
@@ -1073,6 +1081,7 @@ fn page_heading(page: Page, gs: &nexus_model::GameState) -> (String, String) {
         Page::Exobiology => format!("Exobiologist: {}", gs.cmdr.rank_name(nexus_data::ranks::RankKind::Exobiologist)),
         Page::Fleet => format!("{} ships", gs.fleet.ships.len()),
         Page::Missions => format!("{} active", gs.missions.active.len()),
+        Page::Combat => format!("Combat rank: {}", gs.cmdr.rank_name(nexus_data::ranks::RankKind::Combat)),
         _ => String::new(),
     };
     (page.label().to_string(), sub)

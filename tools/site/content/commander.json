@@ -26,6 +26,10 @@
       "label": "Missions & BGS"
     },
     {
+      "id": "combat",
+      "label": "Combat"
+    },
+    {
       "id": "history",
       "label": "Logbook & statistics"
     },

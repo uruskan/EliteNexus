@@ -32,8 +32,8 @@ impl Ingest {
     /// Converts one EDDN envelope. Handles `commodity/3`, `journal/1` (`FSDJump`, `Location`,
     /// `CarrierJump`, `Docked`, `SAASignalsFound`, `Scan`), `fssbodysignals/1`, `scanorganic/1` and
     /// `approachsettlement/1`; returns nothing for `/test` schemas, other schemas and malformed
-    /// messages. Body data from Legacy-galaxy clients (game 3.x) is dropped: its discovery flags
-    /// belong to another galaxy.
+    /// messages. From Legacy-galaxy clients (game 3.x) body data is dropped and systems keep only
+    /// their position: discovery flags, factions and conflicts there belong to another galaxy.
     pub fn from_eddn(envelope: &Value) -> Vec<Ingest> {
         let Some(schema) = envelope.get("$schemaRef").and_then(Value::as_str) else {
             return Vec::new();
@@ -66,7 +66,14 @@ impl Ingest {
             .and_then(|h| get_str(h, "gameversion"))
             .is_some_and(is_legacy_galaxy)
         {
+            // Its bodies' flags and its systems' factions and conflicts belong to that galaxy: keep only where
+            // systems are.
             items.retain(|i| !matches!(i, Ingest::Body(_)));
+            for item in &mut items {
+                if let Ingest::System(s) = item {
+                    s.details = None;
+                }
+            }
         }
         items
     }
@@ -445,10 +452,11 @@ fn system_arrival(v: &Value, ts: i64) -> Option<SystemUpdate> {
         ),
         _ => (None, None),
     };
-    let factions = v
+    let factions: Option<Vec<FactionUpdate>> = v
         .get("Factions")
         .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(faction).collect());
+    let conflicts = factions.as_deref().and_then(|f| conflicts(v, f));
     let details = SystemDetails {
         population: get_i64(v, "Population")
             .filter(|p| *p >= 0)
@@ -464,6 +472,7 @@ fn system_arrival(v: &Value, ts: i64) -> Option<SystemUpdate> {
         powerplay_state: get_str(v, "PowerplayState").and_then(names::state),
         powers: get_strings(v, "Powers").unwrap_or_default(),
         factions,
+        conflicts,
     };
     Some(SystemUpdate {
         id64,
@@ -483,6 +492,39 @@ fn states(f: &Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// The system's conflicts from a report that lists its factions. The game writes `Conflicts` only when there are
+/// some, so no list means none, unless a faction has a war or election among its active or pending states: then the
+/// sender dropped the list and they're unknown (`None`, the faction states stand in). A faction's main state alone
+/// doesn't count: it can still say War while the war is only a recovering state.
+fn conflicts(v: &Value, factions: &[FactionUpdate]) -> Option<Vec<ConflictUpdate>> {
+    let list: Vec<ConflictUpdate> = v
+        .get("Conflicts")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(conflict).collect())
+        .unwrap_or_default();
+    let in_conflict = |f: &FactionUpdate| f.active_states.iter().chain(&f.pending_states).any(|s| ConflictKind::parse(s).is_some());
+    if list.is_empty() && factions.iter().any(in_conflict) {
+        return None;
+    }
+    Some(list)
+}
+
+fn conflict(c: &Value) -> Option<ConflictUpdate> {
+    let side = |key: &str| -> Option<ConflictSideUpdate> {
+        let f = c.get(key)?;
+        Some(ConflictSideUpdate {
+            faction: get_text(f, "Name")?,
+            stake: get_text(f, "Stake").map(|s| names::clean_station_name(&s)).filter(|s| !s.is_empty()),
+            won_days: get_i64(f, "WonDays").unwrap_or(0).clamp(0, 99) as u32,
+        })
+    };
+    Some(ConflictUpdate {
+        kind: ConflictKind::parse(get_str(c, "WarType")?)?,
+        status: ConflictStatus::parse(get_str(c, "Status").unwrap_or("")),
+        sides: [side("Faction1")?, side("Faction2")?],
+    })
 }
 
 fn faction(f: &Value) -> Option<FactionUpdate> {
@@ -789,6 +831,59 @@ pub(crate) mod tests {
         assert_eq!(f[0].happiness.as_deref(), Some("Happy"));
         assert_eq!(f[0].recovering_states, vec!["Public Holiday".to_string()]);
         assert_eq!(f[1].state.as_deref(), Some("Civil Liberty"));
+        // No conflict list and nobody at war: none.
+        assert_eq!(d.conflicts, Some(Vec::new()));
+    }
+
+    #[test]
+    fn conflicts_come_with_the_factions() {
+        // As the game writes it (a real civil war, Leesti, 2026-11-04).
+        let mut v = eddn_fsdjump();
+        v["message"]["Factions"][1]["ActiveStates"] = json!([{"State": "CivilWar"}]);
+        v["message"]["Factions"][0]["PendingStates"] = json!([{"State": "War", "Trend": 0}]);
+        v["message"]["Conflicts"] = json!([
+            {"WarType": "civilwar", "Status": "active",
+             "Faction1": {"Name": "Leesti United Steelworks", "Stake": "Villeneuve Manufacturing Enterprise", "WonDays": 0},
+             "Faction2": {"Name": "Leesti Alliance Union", "Stake": "Pandey's Point", "WonDays": 2}},
+            {"WarType": "war", "Status": "pending",
+             "Faction1": {"Name": "Mother Gaia", "Stake": "", "WonDays": 0},
+             "Faction2": {"Name": "Federal Congress", "Stake": "Abraham Lincoln", "WonDays": 0}},
+            {"WarType": "duel", "Status": "active", "Faction1": {"Name": "A"}, "Faction2": {"Name": "B"}},
+            {"WarType": "war", "Status": "active", "Faction1": {"Name": "Only one side"}}
+        ]);
+        let out = Ingest::from_eddn(&v);
+        let Ingest::System(s) = &out[0] else { panic!() };
+        let c = s.details.as_ref().and_then(|d| d.conflicts.clone()).expect("conflicts");
+        assert_eq!(c.len(), 2, "an unknown kind and a one-sided entry are dropped: {c:?}");
+        assert_eq!((c[0].kind, c[0].status), (ConflictKind::CivilWar, ConflictStatus::Active));
+        assert_eq!(c[0].sides[1].faction, "Leesti Alliance Union");
+        assert_eq!(c[0].sides[1].stake.as_deref(), Some("Pandey's Point"));
+        assert_eq!((c[0].sides[0].won_days, c[0].sides[1].won_days), (0, 2));
+        assert_eq!((c[1].kind, c[1].status), (ConflictKind::War, ConflictStatus::Pending));
+        assert_eq!(c[1].sides[0].stake, None, "an empty stake is nothing at stake");
+
+        // Factions at war but no list: a sender dropped it, so the conflicts are unknown rather than none.
+        v["message"].as_object_mut().unwrap().remove("Conflicts");
+        let out = Ingest::from_journal_event("Location", &v["message"]);
+        let Ingest::System(s) = &out[0] else { panic!() };
+        assert_eq!(s.details.as_ref().map(|d| d.conflicts.is_none()), Some(true));
+
+        // A Legacy-galaxy client (game 3.x) reports another galaxy's wars: only the position is kept.
+        let mut legacy = v.clone();
+        legacy["header"]["gameversion"] = json!("3.8.0.407");
+        legacy["message"]["Conflicts"] = json!([{"WarType": "war", "Status": "active", "Faction1": {"Name": "A"}, "Faction2": {"Name": "B"}}]);
+        let out = Ingest::from_eddn(&legacy);
+        let Ingest::System(s) = &out[0] else { panic!("{out:?}") };
+        assert!(s.details.is_none() && s.pos.is_some(), "{s:?}");
+
+        // No factions at all (an unpopulated system): nothing to say about conflicts either.
+        v["message"].as_object_mut().unwrap().remove("Factions");
+        let out = Ingest::from_journal_event("FSDJump", &v["message"]);
+        let Ingest::System(s) = &out[0] else { panic!() };
+        assert_eq!(s.details.as_ref().map(|d| d.conflicts.is_none()), Some(true));
+        assert_eq!(ConflictStatus::parse(""), ConflictStatus::Ended);
+        assert_eq!(ConflictKind::parse("Civil War"), Some(ConflictKind::CivilWar));
+        assert_eq!(ConflictKind::parse("Expansion"), None);
     }
 
     #[test]
