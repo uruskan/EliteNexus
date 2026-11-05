@@ -63,7 +63,7 @@ Nothing in the app depends on it. o7
 
 ## Make the cockpit yours
 
-![Elite Dangerous HUD colour editor: an Empire blue theme in the live cockpit preview, with hostile contacts still red and friendly ones still green](docs/screenshots/hud-colours.png)
+![Elite Dangerous HUD colour editor: the Colour slider turning from the standard orange through every hue while the live cockpit preview recolours, with hostile contacts still red and friendly ones still green](docs/screenshots/hud-colours.webp)
 
 * **HUD colours**: an editor built on the game's own setting, with community themes (credited to their authors), a
   colour wheel, saturation and brightness, and a live cockpit preview that warns when friend and foe would look
