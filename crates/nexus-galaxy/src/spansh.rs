@@ -466,9 +466,11 @@ fn system_record(rec: DumpRecord, known: &FxHashSet<String>, out: &mut Parsed) {
                 })
                 .collect()
         }),
+        // Dumps carry faction states, not the game's conflict list.
+        conflicts: None,
     });
     out.counts.systems += 1;
-    out.ops.push(ImportOp::Ingest(Ingest::System(SystemUpdate {
+    out.ops.push(ImportOp::from(Ingest::System(SystemUpdate {
         id64,
         name: name.clone(),
         pos: rec.coords.as_ref().and_then(Coords::pos),
@@ -501,7 +503,7 @@ fn system_record(rec: DumpRecord, known: &FxHashSet<String>, out: &mut Parsed) {
             }
             out.counts.ring_signals += signals.len() as u64;
             out.ops
-                .push(ImportOp::Ingest(Ingest::RingSignals(RingSignalsUpdate {
+                .push(ImportOp::from(Ingest::RingSignals(RingSignalsUpdate {
                     system_id64: id64,
                     system_name: Some(name.clone()),
                     body_name,
@@ -546,7 +548,7 @@ fn station_ops(
     });
     out.counts.stations += 1;
     out.ops
-        .push(ImportOp::Ingest(Ingest::Station(StationUpdate {
+        .push(ImportOp::from(Ingest::Station(StationUpdate {
             market_id,
             name: name.clone(),
             system_id64: Some(system_id64),
@@ -612,7 +614,7 @@ fn station_ops(
     out.counts.markets += 1;
     out.counts.market_rows += items.len() as u64;
     out.ops
-        .push(ImportOp::Ingest(Ingest::Market(MarketSnapshot {
+        .push(ImportOp::from(Ingest::Market(MarketSnapshot {
             market_id,
             system_name: system_name.to_string(),
             station_name: name,
@@ -843,9 +845,10 @@ mod tests {
             (p.counts.systems, p.counts.stations, p.counts.markets),
             (1, 1, 1)
         );
-        let Some(ImportOp::Ingest(Ingest::System(s))) = p.ops.first() else {
+        let Some(ImportOp::Ingest(op)) = p.ops.first() else {
             panic!("{:?}", p.ops)
         };
+        let Ingest::System(s) = &**op else { panic!("{op:?}") };
         assert_eq!(s.pos, Some([1.0, 2.0, 3.5]));
         assert_eq!(
             s.details
@@ -854,9 +857,10 @@ mod tests {
                 .as_deref(),
             Some("F")
         );
-        let Some(ImportOp::Ingest(Ingest::Station(st))) = p.ops.get(1) else {
+        let Some(ImportOp::Ingest(op)) = p.ops.get(1) else {
             panic!()
         };
+        let Ingest::Station(st) = &**op else { panic!("{op:?}") };
         assert_eq!(st.dist_ls, Some(12.5));
         assert_eq!(st.faction.as_deref(), Some("F"));
     }

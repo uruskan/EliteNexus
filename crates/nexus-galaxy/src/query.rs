@@ -119,7 +119,7 @@ const SYSTEM_COLS: &str = "sy.id64, sy.name, sy.x, sy.y, sy.z, sy.population, sy
      sy.economy, sy.second_economy, sy.security, sy.controlling_faction, sy.controlling_faction_state, \
      sy.controlling_power, sy.powerplay_state, sy.powers, sy.updated";
 
-fn json_strings(s: Option<String>) -> Vec<String> {
+pub(crate) fn json_strings(s: Option<String>) -> Vec<String> {
     s.and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
 }
@@ -153,7 +153,7 @@ pub(crate) fn carrier_access(is_carrier: bool, raw: Option<String>) -> Option<St
 }
 
 /// SQL bounding box parameters for a sphere.
-fn bbox(o: [f64; 3], r: f64) -> [f64; 6] {
+pub(crate) fn bbox(o: [f64; 3], r: f64) -> [f64; 6] {
     [o[0] - r, o[0] + r, o[1] - r, o[1] + r, o[2] - r, o[2] + r]
 }
 

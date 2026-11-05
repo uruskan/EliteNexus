@@ -57,8 +57,15 @@ pub(crate) struct ImportBatch {
 
 #[derive(Debug)]
 pub(crate) enum ImportOp {
-    Ingest(Ingest),
+    /// Boxed: an `Ingest` is several times the size of a faction presence.
+    Ingest(Box<Ingest>),
     FactionPresence(FactionPresence),
+}
+
+impl From<Ingest> for ImportOp {
+    fn from(i: Ingest) -> ImportOp {
+        ImportOp::Ingest(Box::new(i))
+    }
 }
 
 /// Commodity metadata seen in a dump (fills in commodities missing from the seed list).
@@ -719,6 +726,26 @@ fn json_list(v: &[String]) -> Option<String> {
     (!v.is_empty()).then(|| serde_json::to_string(v).unwrap_or_default())
 }
 
+/// Replaces a system's conflicts along with its factions. `None` (a report without the game's list, such as a Spansh
+/// dump) forgets them, since the stored conflicts no longer go with the stored faction states.
+fn replace_conflicts(tx: &Transaction, id64: i64, conflicts: Option<&[ConflictUpdate]>, ts: i64) -> Result<()> {
+    tx.prepare_cached("DELETE FROM system_conflicts WHERE system_id64 = ?1")?.execute([id64])?;
+    tx.prepare_cached("UPDATE systems SET conflicts_updated = ?2 WHERE id64 = ?1")?.execute(params![id64, conflicts.map(|_| ts)])?;
+    let mut ins = tx.prepare_cached(
+        "INSERT OR REPLACE INTO system_conflicts (system_id64, faction1, faction2, kind, status, stake1, stake2, won1, won2, updated) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+    )?;
+    for c in conflicts.into_iter().flatten() {
+        let [a, b] = &c.sides;
+        let (fa, fb) = (a.faction.trim(), b.faction.trim());
+        if fa.is_empty() || fb.is_empty() || fa == fb {
+            continue;
+        }
+        ins.execute(params![id64, fa, fb, c.kind.token(), c.status.token(), a.stake, b.stake, a.won_days, b.won_days, ts])?;
+    }
+    Ok(())
+}
+
 fn price_changed(old: i64, new: i64, min_rel: f64) -> bool {
     if old == new {
         return false;
@@ -1147,6 +1174,9 @@ impl Ctx {
                         s.timestamp
                     ])?;
                 }
+            }
+            if d.factions.is_some() || d.conflicts.is_some() {
+                replace_conflicts(tx, id, d.conflicts.as_deref(), s.timestamp)?;
             }
         }
         Ok(changed)
