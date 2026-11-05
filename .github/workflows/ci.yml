@@ -1,9 +1,36 @@
 name: CI
 
+# A push or pull request that changes only the website or documents the app doesn't compile skips the build. The
+# README (the support card's thanks), docs/USER_GUIDE.md (Ask's knowledge) and data/ are compiled in, so changes to
+# them still run it. The website has its own check (pages.yml). Keep the two lists the same.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "site/**"
+      - "tools/site/**"
+      - ".github/workflows/pages.yml"
+      - "CHANGELOG.md"
+      - "AGENTS.md"
+      - "CONTRIBUTING.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/DESIGN.md"
+      - "docs/research/**"
+      - "docs/screenshots/**"
+      - "docs/social-preview.png"
   pull_request:
+    paths-ignore:
+      - "site/**"
+      - "tools/site/**"
+      - ".github/workflows/pages.yml"
+      - "CHANGELOG.md"
+      - "AGENTS.md"
+      - "CONTRIBUTING.md"
+      - "docs/ARCHITECTURE.md"
+      - "docs/DESIGN.md"
+      - "docs/research/**"
+      - "docs/screenshots/**"
+      - "docs/social-preview.png"
 
 jobs:
   test:

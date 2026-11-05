@@ -48,7 +48,10 @@ cargo test --workspace
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same clippy and tests on `windows-latest`, `ubuntu-latest` and
-`macos-latest` for every push to `main` and every pull request; keep them green.
+`macos-latest` for every push to `main` and every pull request; keep them green. A push that changes only the website
+or documents the app doesn't compile (`site/`, `tools/site/`, `CHANGELOG.md`, `AGENTS.md`, `CONTRIBUTING.md`,
+`docs/ARCHITECTURE.md`, `docs/DESIGN.md`, `docs/research/`, `docs/screenshots/`) skips it; the README,
+`docs/USER_GUIDE.md` and `data/` are compiled in, so changes to them still run it.
 
 * On Windows, `tools\dev\cargo.ps1 -Log build -CargoArgs "build -p nexus-app -j 4"` runs cargo at BelowNormal
   priority and writes the output to `target\cc\<Log>.log`, so a game running on the same PC keeps its frame rate.
