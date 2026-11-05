@@ -2273,15 +2273,16 @@ pub static TOOLS: &[Tool] = &[
     Tool {
         name: "engineering",
         title: "Engineering",
-        description: "Ship engineering, from the Engineering page's data. module: its blueprints, experimental effects and engineers. module and blueprint: what each grade takes against what the commander holds, what's short, material-trader swaps that cover it, and the engineers offering that grade (unlocked or not, how far, how to unlock). engineer: where they are, what they offer, how to unlock them.",
+        description: "Ship engineering, as the Engineering page plans it. module: its blueprints, experimental effects, engineers. With blueprint: each grade's materials against the commander's, what's short, trader swaps that cover it, who offers that grade (how far, how to unlock). engineer: where, what they offer, each step to unlock them.",
         params: || {
             schema(
                 json!({
                     "module": { "type": "string", "description": "e.g. Frame Shift Drive, Thrusters, Shield Booster." },
                     "blueprint": { "type": "string", "description": "e.g. Increased FSD Range, Dirty Drive Tuning." },
-                    "grade": { "type": "integer", "description": "Grade to reach. Default: the highest." },
-                    "from_grade": { "type": "integer", "description": "Default 1, or the grade the current ship's module has of that blueprint." },
-                    "rolls_per_grade": { "type": "integer", "description": "1 to 10. Default 3." },
+                    "grade": { "type": "integer", "description": "To reach. Default: the highest." },
+                    "from_grade": { "type": "integer", "description": "Default 1, or the grade of it the current ship's module has." },
+                    "rolls_per_grade": { "type": "integer", "description": "1-5, every grade. Default G1 1 to G5 5." },
+                    "modules": { "type": "integer", "description": "How many. Default 1." },
                     "experimental": { "type": "string", "description": "e.g. Mass Manager." },
                     "engineer": { "type": "string", "description": "An engineer's name." }
                 }),
@@ -3557,12 +3558,48 @@ mod tests {
         assert_eq!(done["verdict"], "Nothing to roll.", "{done}");
         assert!(done["notes"][0].as_str().unwrap().contains("already has it at G5, fully rolled"), "{done}");
         let fresh = tools.call("engineering", &json!({ "blueprint": "Increased FSD Range", "from_grade": 1 })).unwrap();        assert_eq!((&fresh["from_grade"], &fresh["per_roll"].as_array().unwrap().len()), (&json!(1), &5), "{fresh}");
-        // An engineer the commander hasn't heard of: where, and every step to unlock them.
+        // An engineer the commander hasn't heard of: where, and every step of the way to them, the first one next.
         let ram = tools.call("engineering", &json!({ "engineer": "Ram Tah" })).unwrap();
         assert_eq!(ram["system"], "Meene");
-        assert!(ram.get("status").is_none() && ram["to_unlock"].as_str().unwrap().contains("Classified Scan Databanks"), "{ram}");
+        let way = ram["way_to_them"].as_array().unwrap();
+        assert!(ram.get("status").is_none() && way.len() == 3 && way[0]["next"] == true && way[0]["how"].as_str().unwrap().contains("Lei Cheung"), "{ram}");
+        assert!(way[2]["how"].as_str().unwrap().contains("Classified Scan Databanks") && way[2].get("done").is_none(), "{ram}");
+        // Selene Jean comes through Tod McQuinn, then wants 500 t of ore mined and 10 Painite (GitHub issue #4).
+        let selene = tools.call("engineering", &json!({ "engineer": "Selene Jean" })).unwrap();
+        let how: Vec<&str> = selene["way_to_them"].as_array().unwrap().iter().map(|s| s["how"].as_str().unwrap()).collect();
+        assert!(how[0].contains("Tod 'The Blaster' McQuinn") && how[1].contains("500 tons of ore") && how[2].contains("10 units of Painite"), "{selene}");
+        // An unlocked engineer needs no way.
+        assert!(tools.call("engineering", &json!({ "engineer": "Felicity Farseer" })).unwrap().get("way_to_them").is_none());
         assert!(tools.call("engineering", &json!({})).is_err());
         assert!(tools.call("engineering", &json!({ "blueprint": "Overcharged" })).unwrap_err().contains("module="));
+    }
+
+    /// Each grade its own rolls (the top rank's unless asked), and several modules at once.
+    #[test]
+    fn engineering_counts_each_grades_rolls_on_every_module() {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = model_tools(commander(), &rt);
+        let need = |p: &Value, symbol: &str| {
+            let name = nexus_data::materials::material(symbol).unwrap().name.clone();
+            p["needed"].as_array().unwrap().iter().find(|r| r["name"] == name).map(|r| r["need"].as_u64().unwrap())
+        };
+        // Increased FSD Range from G4: 4 rolls of manganese at G4, 5 of datamined wake exceptions at G5, on two drives.
+        let two = tools.call("engineering", &json!({ "module": "fsd", "blueprint": "increased range", "from_grade": 4, "modules": 2 })).unwrap();
+        assert_eq!(two["rolls_at_each_grade"], json!({ "G4": 4, "G5": 5 }), "{two}");
+        assert_eq!((two["modules"].as_u64(), need(&two, "manganese"), need(&two, "dataminedwake")), (Some(2), Some(8), Some(10)), "{two}");
+        assert!(two["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("covers 2 modules")), "{two}");
+        // The same count at every grade when asked, kept within the 5 a grade can take.
+        let asked = tools.call("engineering", &json!({ "module": "fsd", "blueprint": "increased range", "from_grade": 4, "rolls_per_grade": 9 })).unwrap();
+        assert_eq!((asked["rolls_at_each_grade"].clone(), asked.get("modules")), (json!({ "G4": 5, "G5": 5 }), None), "{asked}");
+        assert_eq!(need(&asked, "manganese"), Some(5));
+        // Each module gets its own experimental effect.
+        let one = tools.call("engineering", &json!({ "module": "fsd", "blueprint": "increased range", "from_grade": 1, "experimental": "Mass Manager" })).unwrap();
+        let three = tools.call("engineering", &json!({ "module": "fsd", "blueprint": "increased range", "from_grade": 1, "experimental": "Mass Manager", "modules": 3 })).unwrap();
+        for row in one["needed"].as_array().unwrap() {
+            let name = row["name"].as_str().unwrap();
+            let theirs = three["needed"].as_array().unwrap().iter().find(|r| r["name"] == name).unwrap();
+            assert_eq!(theirs["need"].as_u64().unwrap(), row["need"].as_u64().unwrap() * 3, "{name}");
+        }
     }
 
     #[test]

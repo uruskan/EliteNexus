@@ -750,7 +750,7 @@ impl NexusApp {
             }
             Page::Engineering => {
                 let sources = pages::where_to_get::Sources { db: self.market.db.as_ref(), spansh: &self.spansh, rt: self.rt.handle() };
-                let (changed, goto) = pages::engineering::show(ui, gs, &mut self.eng, &mut self.settings.wishlist, &sources);
+                let (changed, goto) = pages::engineering::show(ui, gs, &mut self.eng, &mut self.settings.wishlist, &mut self.settings.engineering, &sources);
                 settings_changed |= changed;
                 market_goto = goto;
             }

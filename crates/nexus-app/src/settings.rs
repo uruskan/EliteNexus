@@ -38,6 +38,8 @@ pub struct Settings {
     pub welcomed: bool,
     /// Engineering wishlist (blueprint planner).
     pub wishlist: Vec<WishItem>,
+    /// Engineering: the rolls the Blueprint planner plans at each grade.
+    pub engineering: crate::pages::engineering::EngineeringPrefs,
     /// Market price alerts, checked against every live market update.
     pub price_watches: Vec<PriceWatch>,
     /// The "Ask" assistant's model service.
@@ -96,7 +98,7 @@ impl AiSettings {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WishItem {
     pub label: String,
@@ -104,8 +106,26 @@ pub struct WishItem {
     pub module: String,
     pub from: u8,
     pub to: u8,
+    /// The same rolls at every grade, as items were planned before each grade had its own; read for those. New items
+    /// keep their largest grade's here, so an older Elite Nexus reading the file plans enough.
     pub rolls: u32,
+    /// Rolls at each grade, G1 first; all 0 in items saved before each grade had its own.
+    pub grade_rolls: [u32; 5],
+    /// How many modules get the blueprint (four hull reinforcement packages); 0 in items saved before, meaning one.
+    pub modules: u32,
     pub experimental: Option<String>,
+}
+
+impl WishItem {
+    /// The rolls planned at each grade, G1 first.
+    pub fn rolls_by_grade(&self) -> [u32; 5] {
+        if self.grade_rolls.iter().any(|&n| n > 0) { self.grade_rolls } else { [self.rolls.max(1); 5] }
+    }
+
+    /// How many modules get it.
+    pub fn module_count(&self) -> u32 {
+        self.modules.max(1)
+    }
 }
 
 /// "Tell me when …": a market rule checked against every live market update.
@@ -208,6 +228,7 @@ impl Default for Settings {
             accounts: Accounts { eddn_listen: true, ..Default::default() },
             welcomed: false,
             wishlist: Vec::new(),
+            engineering: Default::default(),
             price_watches: Vec::new(),
             ai: AiSettings::default(),
             hud_themes: Vec::new(),
