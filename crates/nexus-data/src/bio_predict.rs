@@ -1,19 +1,20 @@
 //! Exobiology species prediction: which genera, species and colours a body probably hosts, with
-//! likelihoods and human-readable reasons (the job of Observatory BioInsights, EDMC-BioScan and SrvSurvey).
+//! likelihoods and human-readable reasons.
 //!
 //! # Model
 //!
-//! 1. **Species fit.** Every species is scored against each of its BioScan rule sets
-//!    ([`crate::exobio::Species::rulesets`]) and keeps its best one. Limits are *soft*: they are observed extremes,
+//! 1. **Species fit.** Every species is scored against each of its rule sets ([`crate::exobio::Species::rulesets`]:
+//!    the conditions it has been found in) and keeps its best one. Limits are *soft*: they are observed extremes,
 //!    so a value just outside one costs `exp(-distance / tolerance)` instead of rejecting the species; categorical
-//!    mismatches (atmosphere type, unrelated body class) cost `exp(-8)`. A field that BioScan rejects but SrvSurvey's
-//!    Canonn-derived criteria explicitly accept costs only `exp(-V_WIDENED)` (≈ 0.3, or ≈ 0.09 when SrvSurvey's
-//!    flattened criteria mix several atmospheres). Widening only applies to rule sets for the body's own atmosphere
-//!    (BioScan writes one rule set per atmosphere, so borrowing another atmosphere's limits would be meaningless);
-//!    the atmosphere itself is widened only when no rule set covers it (e.g. Electricae Radialem on methane).
+//!    mismatches (atmosphere type, unrelated body class) cost `exp(-8)`. A field the rule set rejects but the
+//!    species' wider cross-check criteria ([`crate::exobio::Species::crosscheck`]) explicitly accept costs only
+//!    `exp(-V_WIDENED)` (≈ 0.3, or ≈ 0.09 when those flattened criteria mix several atmospheres). Widening only
+//!    applies to rule sets for the body's own atmosphere (each rule set is written for its own atmosphere, so
+//!    borrowing another atmosphere's limits would be meaningless); the atmosphere itself is widened only when no rule
+//!    set covers it (e.g. Electricae Radialem on methane).
 //!    Constraints that cannot be checked (region, nebula, other stars …) multiply the score by a prior instead.
 //! 2. **Colour availability.** Star-coloured species need a known variant for one of the body's parent stars and
-//!    element-coloured species one of their elements in `Scan.Materials` (SrvSurvey's criteria are built per
+//!    element-coloured species one of their elements in `Scan.Materials` (the cross-check criteria are built per
 //!    variant); otherwise the score is penalised. The same pass yields the predicted colour.
 //! 3. **Genus odds.** Per genus, a noisy-OR of its species scores times a genus commonness prior; with the body's
 //!    biological signal count `N` these weights become inclusion probabilities that sum to `N` (each capped at
@@ -214,8 +215,8 @@ impl ParentRef {
 }
 
 /// Stars that can decide a star-coloured species' variant, nearest first: the stars of the body's `Parents`
-/// chain (for a barycentre, the stars orbiting it directly, brightest class first — SrvSurvey picks the brightest
-/// parent star), followed by the system's primary star (BioScan also considers it).
+/// chain (for a barycentre, the stars orbiting it directly, brightest class first: the brightest parent star is
+/// taken to decide), followed by the system's primary star (the rule sets' star requirements accept it too).
 pub fn resolve_parent_stars(parents: &[ParentRef], stars: &[SystemStar]) -> Vec<StarFacts> {
     fn push<'a>(picked: &mut Vec<&'a SystemStar>, star: &'a SystemStar) {
         if !picked.iter().any(|p| p.body_id == star.body_id) {
@@ -257,8 +258,8 @@ pub fn resolve_parent_stars(parents: &[ParentRef], stars: &[SystemStar]) -> Vec<
 
 /// Whether Vista Genomics will probably pay the first-logged bonus (×5 in total) for a species on a body.
 ///
-/// BioScan/SrvSurvey's rule: unpopulated system and nobody had landed yet (`Scan.WasFootfalled == false`, from
-/// the scan made before your own landing), and the species not logged there (`ScanOrganic.WasLogged`, the latest
+/// Likely when the system is unpopulated, nobody had landed on the body yet (`Scan.WasFootfalled == false`, from
+/// the scan made before your own landing), and the species is not logged there (`ScanOrganic.WasLogged`, the latest
 /// value seen for that species on that body; `None` before any scan).
 ///
 /// `WasLogged = false` proves nothing on its own: across one commander's sales (2026-10) it was false for 67 species
@@ -296,17 +297,18 @@ const MIN_SHARE: f64 = 0.03;
 /// Predictions below this likelihood are dropped (except the best species of a DSS-confirmed genus).
 const MIN_LIKELIHOOD: f64 = 0.01;
 
-/// Cost of a field BioScan rejects but SrvSurvey's criteria explicitly accept (exp(-1.2) ≈ 0.3).
+/// Cost of a field the rule set rejects but the cross-check criteria explicitly accept (exp(-1.2) ≈ 0.3).
 const V_WIDENED: f64 = 1.2;
-/// Same, when SrvSurvey's flattened criteria span several atmospheres: its limits then mix different leaves of its
-/// criteria tree (e.g. Osseus Discus' "no volcanism" comes from its water-atmosphere leaf), so they are weaker
-/// evidence for any one rule set (exp(-2.4) ≈ 0.09).
+/// Same, when the flattened cross-check criteria span several atmospheres: their limits then mix different leaves
+/// of the criteria tree (e.g. Osseus Discus' "no volcanism" comes from its water-atmosphere leaf), so they are
+/// weaker evidence for any one rule set (exp(-2.4) ≈ 0.09).
 const V_WIDENED_MIXED: f64 = 2.4;
 const V_HARD: f64 = 8.0;
-/// X vs X-rich atmosphere that neither BioScan nor SrvSurvey has seen for the species (exp(-3) ≈ 0.05).
+/// X vs X-rich atmosphere that neither the rule sets nor the cross-check criteria allow for the species
+/// (exp(-3) ≈ 0.05).
 const V_RICH: f64 = 3.0;
-/// Rocky vs HMC (or icy vs rocky-ice) that neither source has seen for the species (exp(-4.5) ≈ 0.01): tools
-/// disagree on these splits, which SrvSurvey widening already covers, so an unseen class is near-impossible.
+/// Rocky vs HMC (or icy vs rocky-ice) that neither source allows for the species (exp(-4.5) ≈ 0.01): the sources
+/// disagree on these splits, which widening already covers, so a class neither allows is near-impossible.
 const V_RELATED_BODY: f64 = 4.5;
 const V_VOLCANISM: f64 = 3.0;
 const V_REGION: f64 = 5.0;
@@ -343,7 +345,8 @@ fn tol_temp(limit: f64, width: Option<f64>) -> f64 {
     }
 }
 
-/// Gravity tolerance around a limit (g), same idea (BioScan 0.276 vs SrvSurvey 0.2817 differ by ~2 %).
+/// Gravity tolerance around a limit (g), same idea (the two sources' usual caps, 0.276 and 0.2817 g, differ by
+/// ~2 %).
 fn tol_gravity(limit: f64, width: Option<f64>) -> f64 {
     match width {
         Some(w) => 0.003 + 0.03 * w,
@@ -361,8 +364,8 @@ const TOL_DISTANCE_REL: f64 = 0.05;
 const AIRLESS_ATM: f64 = 1e-6;
 
 /// Genus commonness prior, used only to rank genera before DSS when a body has more candidate genera than
-/// biological signals. LOW certainty: community observation (Canonn/forum reports: Bacterium is the most
-/// widespread genus, Stratum and Fonticulua are very common, Horizons-era organics are rare); no published counts.
+/// biological signals. LOW certainty: Bacterium is the most widespread genus, Stratum and Fonticulua are very common
+/// and Horizons-era organics are rare, but there are no published counts.
 fn genus_prior(genus: &str) -> f64 {
     match genus {
         "Bacterium" | "Radicoida" => 1.0,
@@ -635,7 +638,7 @@ fn normalise_atmosphere(facts: &BodyFacts) -> String {
 struct Fit {
     v: f64,
     u: f64,
-    /// Cost of a field widened by SrvSurvey's criteria.
+    /// Cost of a field widened by the cross-check criteria.
     widen_cost: f64,
     explain: bool,
     misses: Vec<String>,
@@ -660,15 +663,16 @@ impl Fit {
         }
     }
 
-    /// A field BioScan's rule set rejects (`v_rule`); `v_srv` is the violation against SrvSurvey's criteria when
-    /// SrvSurvey explicitly constrains that field (None = SrvSurvey does not check it, so no evidence either way).
-    fn field(&mut self, v_rule: f64, v_srv: Option<f64>, why: impl FnOnce() -> String) {
+    /// A field the rule set rejects (`v_rule`); `v_cross` is the violation against the cross-check criteria when
+    /// they explicitly constrain that field (None = they don't check it, so no evidence either way).
+    fn field(&mut self, v_rule: f64, v_cross: Option<f64>, why: impl FnOnce() -> String) {
         if v_rule <= 0.0 {
             return;
         }
-        match v_srv {
-            Some(vs) if self.widen_cost + vs < v_rule => {
-                self.miss(self.widen_cost + vs, || format!("{} (BioScan; SrvSurvey has seen it)", why()));
+        match v_cross {
+            Some(vc) if self.widen_cost + vc < v_rule => {
+                // Outside the rule set but inside the wider criteria: a softer miss, and the reason says why.
+                self.miss(self.widen_cost + vc, || format!("{} (a wider set of limits allows it)", why()));
             }
             _ => self.miss(v_rule, why),
         }
@@ -708,10 +712,10 @@ impl Colour {
 struct Scored<'s> {
     species: &'s Species,
     score: f64,
-    /// Index of the best BioScan rule set.
+    /// Index of the best rule set.
     rule: usize,
-    /// SrvSurvey criteria used to widen that rule set, and the widening cost.
-    srv: Option<&'s RuleSet>,
+    /// Cross-check criteria used to widen that rule set, and the widening cost.
+    cross: Option<&'s RuleSet>,
     widen_cost: f64,
 }
 
@@ -722,7 +726,7 @@ impl Scored<'_> {
         let sp = self.species;
         let mut out = Vec::new();
         let mut fit = match sp.rulesets.get(self.rule) {
-            Some(rs) => eval_rule(rs, self.srv, self.widen_cost, ctx, true),
+            Some(rs) => eval_rule(rs, self.cross, self.widen_cost, ctx, true),
             None => Fit::new(self.widen_cost, true),
         };
         let colour = colour_for(sp, ctx);
@@ -730,9 +734,11 @@ impl Scored<'_> {
             fit.misses.push(why.clone());
         }
         if let Some(rs) = sp.rulesets.get(self.rule) {
+            // What the rule checks: the conditions the species has been found in. A fit is no find: the likelihood
+            // says how sure the prediction is.
             let n = sp.rulesets.len();
-            let verb = if fit.misses.is_empty() { "fits" } else { "closest" };
-            out.push(format!("{verb} BioScan rule {}/{n}: {}", self.rule + 1, summarise(rs)));
+            let verb = if fit.misses.is_empty() { "fits" } else { "closest to" };
+            out.push(format!("{verb} the conditions it has been found in (rule {} of {n}): {}", self.rule + 1, summarise(rs)));
         }
         if !fit.misses.is_empty() {
             out.push(format!("{}: {}", if weak { "no rule fits" } else { "near miss" }, fit.misses.join("; ")));
@@ -772,25 +778,26 @@ impl Scored<'_> {
 fn score_species<'s>(sp: &'s Species, ctx: &Ctx) -> Scored<'s> {
     let atmosphere_ok = |rs: &RuleSet| rs.atmospheres.as_ref().is_none_or(|l| v_atmosphere(l, ctx) == 0.0);
     let covered = sp.rulesets.iter().any(atmosphere_ok);
-    let widen_cost = match sp.srvsurvey.as_ref().and_then(|s| s.atmospheres.as_ref()) {
+    let widen_cost = match sp.crosscheck.as_ref().and_then(|s| s.atmospheres.as_ref()) {
         Some(list) if list.len() > 1 => V_WIDENED_MIXED,
         _ => V_WIDENED,
     };
-    let (rule, srv, mut fit) = sp
+    let (rule, cross, mut fit) = sp
         .rulesets
         .iter()
         .enumerate()
         .map(|(i, rs)| {
-            // SrvSurvey may widen the rule set for the body's atmosphere, or any rule set when none covers it.
-            let srv = sp.srvsurvey.as_ref().filter(|_| !covered || atmosphere_ok(rs));
-            (i, srv, eval_rule(rs, srv, widen_cost, ctx, false))
+            // The cross-check criteria may widen the rule set for the body's atmosphere, or any rule set when none
+            // covers it.
+            let cross = sp.crosscheck.as_ref().filter(|_| !covered || atmosphere_ok(rs));
+            (i, cross, eval_rule(rs, cross, widen_cost, ctx, false))
         })
         .max_by(|a, b| a.2.score().total_cmp(&b.2.score()).then(b.0.cmp(&a.0)))
         .unwrap_or((0, None, Fit { v: V_HARD, ..Fit::new(widen_cost, false) }));
     if colour_available(sp, ctx) == Some(false) {
         fit.miss(V_COLOUR, String::new);
     }
-    Scored { species: sp, score: fit.score(), rule, srv, widen_cost }
+    Scored { species: sp, score: fit.score(), rule, cross, widen_cost }
 }
 
 /// Cheap colour check used while scoring: `Some(false)` when none of the body's parent stars / materials has a
@@ -862,33 +869,33 @@ fn colour_for(sp: &Species, ctx: &Ctx) -> Colour {
     }
 }
 
-fn eval_rule(rs: &RuleSet, srv: Option<&RuleSet>, widen_cost: f64, ctx: &Ctx, explain: bool) -> Fit {
+fn eval_rule(rs: &RuleSet, cross: Option<&RuleSet>, widen_cost: f64, ctx: &Ctx, explain: bool) -> Fit {
     let f = ctx.facts;
     let mut fit = Fit::new(widen_cost, explain);
 
-    // Body-level fields: BioScan rule set, widened where SrvSurvey explicitly accepts the value.
+    // Body-level fields: the rule set, widened where the cross-check criteria explicitly accept the value.
     if let Some(list) = &rs.atmospheres {
         let v = v_atmosphere(list, ctx);
-        let vs = srv.and_then(|s| s.atmospheres.as_ref()).map(|l| v_atmosphere(l, ctx));
+        let vs = cross.and_then(|s| s.atmospheres.as_ref()).map(|l| v_atmosphere(l, ctx));
         fit.field(v, vs, || format!("{} atmosphere, needs {}", ctx.atmosphere, list.join("/")));
     }
     if let Some(list) = &rs.body_types {
         let v = v_body(list, &f.planet_class);
-        let vs = srv.and_then(|s| s.body_types.as_ref()).map(|l| v_body(l, &f.planet_class));
+        let vs = cross.and_then(|s| s.body_types.as_ref()).map(|l| v_body(l, &f.planet_class));
         let needs: Vec<&str> = list.iter().map(|b| body_abbrev(b)).collect();
         fit.field(v, vs, || format!("{}, needs {}", body_abbrev(&f.planet_class), needs.join("/")));
     }
     if let Some(g) = f.gravity_g {
-        range_field(&mut fit, g, (rs.min_gravity_g, rs.max_gravity_g), srv.map(|s| (s.min_gravity_g, s.max_gravity_g)), tol_gravity, "g", 3);
+        range_field(&mut fit, g, (rs.min_gravity_g, rs.max_gravity_g), cross.map(|s| (s.min_gravity_g, s.max_gravity_g)), tol_gravity, "g", 3);
     }
     if let Some(t) = f.temperature_k {
-        range_field(&mut fit, t, (rs.min_temp_k, rs.max_temp_k), srv.map(|s| (s.min_temp_k, s.max_temp_k)), tol_temp, "K", 1);
+        range_field(&mut fit, t, (rs.min_temp_k, rs.max_temp_k), cross.map(|s| (s.min_temp_k, s.max_temp_k)), tol_temp, "K", 1);
     }
     if let Some(p) = f.pressure_atm {
         let v = v_pressure(p, rs.min_pressure_atm, rs.max_pressure_atm);
         if v > 0.0 {
             let below = rs.min_pressure_atm.is_some_and(|m| p < m);
-            let vs = srv
+            let vs = cross
                 .filter(|s| if below { s.min_pressure_atm.is_some() } else { s.max_pressure_atm.is_some() })
                 .map(|s| v_pressure(p, s.min_pressure_atm, s.max_pressure_atm));
             let limits = match (rs.min_pressure_atm, rs.max_pressure_atm) {
@@ -902,7 +909,7 @@ fn eval_rule(rs: &RuleSet, srv: Option<&RuleSet>, widen_cost: f64, ctx: &Ctx, ex
         }
     }
     if !volcanism_ok(&rs.volcanism, &ctx.volcanism) {
-        let vs = srv
+        let vs = cross
             .filter(|s| s.volcanism != VolcanismRule::Any)
             .map(|s| if volcanism_ok(&s.volcanism, &ctx.volcanism) { 0.0 } else { V_VOLCANISM });
         let has = if ctx.volcanism.is_empty() { "no volcanism" } else { ctx.volcanism.as_str() };
@@ -911,7 +918,7 @@ fn eval_rule(rs: &RuleSet, srv: Option<&RuleSet>, widen_cost: f64, ctx: &Ctx, ex
     if let Some(rule) = &rs.regions {
         match ctx.region {
             Some(id) if !region_ok(rule, id) => {
-                let vs = srv.and_then(|s| s.regions.as_ref()).map(|r| if region_ok(r, id) { 0.0 } else { V_REGION });
+                let vs = cross.and_then(|s| s.regions.as_ref()).map(|r| if region_ok(r, id) { 0.0 } else { V_REGION });
                 fit.field(V_REGION, vs, || format!("not found in {}", exobio::region_name(id).unwrap_or("this region")));
             }
             Some(_) => {}
@@ -928,7 +935,7 @@ fn eval_rule(rs: &RuleSet, srv: Option<&RuleSet>, widen_cost: f64, ctx: &Ctx, ex
         }
     }
 
-    // System-level and special requirements (BioScan only).
+    // System-level and special requirements (rule sets only: the cross-check criteria have none).
     for (gas, min) in &rs.min_atmosphere_pct {
         if f.atmosphere_composition.is_empty() {
             fit.unknown(U_COMPOSITION, || format!("atmosphere composition unknown (needs {gas} ≥ {min}%)"));
@@ -1040,12 +1047,13 @@ fn v_range(x: f64, min: Option<f64>, max: Option<f64>, tol: Tolerance) -> f64 {
 /// Tolerance around a numeric limit, given the rule's range width when both limits exist.
 type Tolerance = fn(f64, Option<f64>) -> f64;
 
-/// Numeric field with SrvSurvey widening; SrvSurvey only counts as evidence on the side it constrains.
+/// Numeric field with cross-check widening; the cross-check criteria count as evidence only on the side they
+/// constrain.
 fn range_field(
     fit: &mut Fit,
     x: f64,
     (min, max): (Option<f64>, Option<f64>),
-    srv: Option<(Option<f64>, Option<f64>)>,
+    cross: Option<(Option<f64>, Option<f64>)>,
     tol: Tolerance,
     unit: &str,
     decimals: usize,
@@ -1055,9 +1063,9 @@ fn range_field(
         return;
     }
     let below = min.is_some_and(|m| x < m);
-    let vs = srv.and_then(|(smin, smax)| {
-        let explicit = if below { smin.is_some() } else { smax.is_some() };
-        explicit.then(|| v_range(x, smin, smax, tol))
+    let vs = cross.and_then(|(cmin, cmax)| {
+        let explicit = if below { cmin.is_some() } else { cmax.is_some() };
+        explicit.then(|| v_range(x, cmin, cmax, tol))
     });
     fit.field(v, vs, || {
         if below {
@@ -1068,7 +1076,7 @@ fn range_field(
     });
 }
 
-/// BioScan pressure semantics: `max` is exclusive; a `max` of 0 (SrvSurvey, Horizons-era organics) means airless.
+/// Pressure limits: `max` is exclusive; a `max` of 0 (the cross-check criteria's Horizons-era organics) means airless.
 fn v_pressure(p: f64, min: Option<f64>, max: Option<f64>) -> f64 {
     let mut v = 0.0;
     if let Some(min) = min.filter(|m| p < *m) {
@@ -1124,7 +1132,7 @@ fn strip_rich(atmosphere: &str) -> &str {
     atmosphere.strip_suffix("Rich").unwrap_or(atmosphere)
 }
 
-/// Body classes that tools disagree on for the same species (BioScan vs SrvSurvey).
+/// Body classes the rule sets and the cross-check criteria disagree on for the same species.
 fn related_body(a: &str, b: &str) -> bool {
     const PAIRS: &[(&str, &str)] = &[
         ("Rocky body", "High metal content body"),
@@ -1193,7 +1201,7 @@ fn describe_stars(reqs: &[StarReq]) -> String {
         .join("/")
 }
 
-/// BioScan star matching: giants/supergiants count as their class, `D`/`C`/`W` are prefixes, the rest exact;
+/// Star matching: giants/supergiants count as their class, `D`/`C`/`W` are prefixes, the rest exact;
 /// a luminosity requirement `IV` matches `IV`, `IVa`, `IVab` ….
 fn star_matches(req: &StarReq, star: &StarFacts) -> bool {
     let t = star.star_type.as_str();
@@ -1265,7 +1273,7 @@ fn dist(a: [f64; 3], b: [f64; 3]) -> f64 {
 }
 
 // ------------------------------------------------------------------------------------------------
-// Reference positions (EDMC-BioScan; see docs/research/exploration.md §2.6)
+// Reference positions (see docs/research/exploration.md §2.6)
 // ------------------------------------------------------------------------------------------------
 
 struct Bubble {
@@ -1273,7 +1281,7 @@ struct Bubble {
     radius_ly: f64,
 }
 
-/// Guardian-ruins bubbles required by Brain Trees (BioScan reference systems; SrvSurvey uses the same radii).
+/// Guardian-ruins bubbles required by Brain Trees: the system at the centre of each, and its radius.
 const GUARDIAN_BUBBLES: &[Bubble] = &[
     Bubble { pos: [-840.65625, -561.15625, 13361.8125], radius_ly: 750.0 },  // Hen 2-333
     Bubble { pos: [1099.21875, -146.6875, -133.59375], radius_ly: 750.0 },   // Gamma Velorum
@@ -1292,7 +1300,7 @@ struct TuberZone {
     max_ly: f64,
 }
 
-/// Sinuous-tuber zones: distance bands around zone centres (BioScan).
+/// Sinuous-tuber zones: distance bands around zone centres.
 const TUBER_ZONES: &[TuberZone] = &[
     TuberZone { name: "Arcadian Stream", pos: [8885.0, -20.0, 20535.0], min_ly: 200.0, max_ly: 600.0 },
     TuberZone { name: "Empyrean Straits", pos: [4325.0, 400.0, 21185.0], min_ly: 200.0, max_ly: 400.0 },
@@ -1387,7 +1395,11 @@ mod tests {
         assert!(preds.iter().all(|p| ["Bacterium", "Stratum", "Tubus", "Tussock"].contains(&p.genus.as_str())));
         let total: f32 = preds.iter().map(|p| p.likelihood).sum();
         assert!((total - 4.0).abs() < 0.05, "one species per known genus: {total}");
-        assert!(stratum.reasons.iter().any(|r| r.contains("BioScan rule")));
+        assert!(stratum.reasons.iter().any(|r| r.contains("the conditions it has been found in (rule ")), "{:?}", stratum.reasons);
+        // Reasons say what was checked, never which tool's rules they are.
+        for p in &preds {
+            assert!(p.reasons.iter().all(|r| !r.contains("BioScan") && !r.contains("SrvSurvey")), "{:?}", p.reasons);
+        }
     }
 
     #[test]
@@ -1471,7 +1483,20 @@ mod tests {
         assert!(preds.iter().all(|p| p.reasons.iter().any(|r| r.contains("SulphurDioxide"))), "{preds:?}");
         f.atmosphere_composition = vec![("CarbonDioxide".into(), 78.0), ("SulphurDioxide".into(), 22.0)];
         let preds = predict(&f, &names(&["Recepta"]));
-        assert!(preds[0].reasons.iter().any(|r| r.starts_with("fits BioScan")), "{preds:?}");
+        assert!(preds[0].reasons.iter().any(|r| r.starts_with("fits the conditions it has been found in")), "{preds:?}");
+    }
+
+    #[test]
+    fn widened_miss_says_why() {
+        // Outside the rule set but inside the cross-check criteria: the softer cost, and a reason that says so.
+        let mut fit = Fit::new(V_WIDENED, true);
+        fit.field(5.0, Some(0.0), || "0.285 g > max 0.276".to_string());
+        assert_eq!(fit.misses, vec!["0.285 g > max 0.276 (a wider set of limits allows it)".to_string()]);
+        assert!((fit.v - V_WIDENED).abs() < 1e-9);
+        // Outside both: the rule set's own cost, and the plain reason.
+        let mut fit = Fit::new(V_WIDENED, true);
+        fit.field(5.0, Some(V_HARD), || "0.9 g > max 0.276".to_string());
+        assert_eq!((fit.misses.as_slice(), fit.v), (&["0.9 g > max 0.276".to_string()][..], 5.0));
     }
 
     #[test]
@@ -1565,12 +1590,12 @@ mod tests {
 
     #[test]
     fn every_rule_set_is_satisfiable() {
-        // A body at the centre of each BioScan rule set must yield that species as a candidate of its genus.
+        // A body at the centre of each rule set must yield that species as a candidate of its genus.
         for sp in exobio::all_species().iter().filter(|s| !s.thargoid) {
             for (i, rs) in sp.rulesets.iter().enumerate() {
                 let f = synthetic_body(sp, rs);
                 let ctx = Ctx::new(&f);
-                let fit = eval_rule(rs, sp.srvsurvey.as_ref(), V_WIDENED, &ctx, true);
+                let fit = eval_rule(rs, sp.crosscheck.as_ref(), V_WIDENED, &ctx, true);
                 assert!(fit.misses.is_empty(), "{} rule {}: {:?}", sp.name, i + 1, fit.misses);
                 let preds = predict(&f, &[sp.genus.to_string()]);
                 assert!(preds.iter().any(|p| p.species == sp.name), "{} rule {} not predicted: {preds:?}", sp.name, i + 1);

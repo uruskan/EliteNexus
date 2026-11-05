@@ -992,7 +992,7 @@ impl NexusTools {
 // ---------------------------------------------------------------------------------------------
 
 /// `SurfaceGravity` per g and `SurfacePressure` per atmosphere as the galaxy database and Spansh
-/// use them; the exobiology rules use BioScan's slightly different constants.
+/// use them; the exobiology rules use slightly different ones (`nexus_data::exobio::JOURNAL_G_MS2`, `JOURNAL_ATM_PA`).
 pub(crate) const STANDARD_G: f64 = 9.80665;
 pub(crate) const STANDARD_ATM: f64 = 101_325.0;
 /// Bodies listed by `system_bodies` at most (fewer when they don't fit the caller's reply).
@@ -1000,7 +1000,7 @@ const MAX_BODIES: usize = 20;
 const SPANSH_TIMEOUT: Duration = Duration::from_secs(25);
 const SPANSH_CACHE_TTL: Duration = Duration::from_secs(600);
 
-const FOOTFALL_NOTE: &str = "Footfall (has anyone set foot on the body) is in no public database (Spansh, EDSM, Inara, EDAstro, Canonn). It comes from the game's WasFootfalled flag in scans since game 4.2.1 (Sept 2025): the commander's own journal (authoritative), scans other commanders shared over EDDN, and archived EDDN scans looked up on demand (EDGalaxyData). Only some tools upload the flag (EDMC, EDDI, GameGlass do; EDDiscovery and EDO Materials Helper don't), so \"unknown\" is common. It is the state when that scan was made: give its age, and remember that whoever scanned a body often landed right after. \"probably unclaimed\" is a rule of thumb: Spansh has no data on the body since before Odyssey (May 2021). First footfall is impossible in populated systems.";
+const FOOTFALL_NOTE: &str = "Footfall (has anyone set foot on the body) is in no public database. It comes from the game's WasFootfalled flag in scans since game 4.2.1 (Sept 2025): the commander's own journal (authoritative), scans other commanders shared over EDDN, and archived EDDN scans looked up on demand (EDGalaxyData). Not every program that shares scans keeps the flag, so \"unknown\" is common. It is the state when that scan was made: give its age, and remember that whoever scanned a body often landed right after. \"probably unclaimed\" is a rule of thumb: Spansh has no data on the body since before Odyssey (May 2021). First footfall is impossible in populated systems.";
 
 /// Recently fetched Spansh dumps (the model often asks about the same system twice).
 static SPANSH_SYSTEMS: Mutex<Vec<(u64, Instant, Arc<SpanshSystem>)>> = Mutex::new(Vec::new());
@@ -1354,7 +1354,7 @@ impl Footfall {
         }
     }
 
-    /// Step 5, a community rule of thumb: nobody has sent Spansh anything about the body since Odyssey
+    /// Step 5, a rule of thumb: nobody has sent Spansh anything about the body since Odyssey
     /// brought on-foot play, so probably nobody has walked on it.
     fn pre_odyssey(p: &Planet) -> Footfall {
         let seen_since = p.db.is_some_and(|d| d.updated_unix >= ODYSSEY_LAUNCH) || p.own.is_some();

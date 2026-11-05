@@ -9,7 +9,7 @@
 //! there (`ScanOrganic`, biology `CodexEntry`), runs `predict()` before DSS (signal count only) and after DSS
 //! (known genera), and reports per-body results plus recall@1/@3 per genus, genus-level precision/recall,
 //! false-positive rate, colour accuracy and the first-logged-bonus rule against `SellOrganicData`.
-//! A synthetic pass (one body at the centre of every BioScan rule set) checks rule coverage and ambiguity.
+//! A synthetic pass (one body at the centre of every rule set) checks rule coverage and ambiguity.
 
 use nexus_data::bio_predict::{self, BodyFacts, ParentRef, Prediction, StarFacts, SystemStar};
 use nexus_data::exobio::{self, ColourBasis, RuleSet, Species, VolcanismRule};
@@ -671,7 +671,7 @@ fn evaluate(j: &Journals, verbose: bool) {
 }
 
 // ------------------------------------------------------------------------------------------------
-// Synthetic coverage: one body at the centre of every BioScan rule set
+// Synthetic coverage: one body at the centre of every rule set
 // ------------------------------------------------------------------------------------------------
 
 fn synthetic(verbose: bool) {
@@ -691,7 +691,7 @@ fn synthetic(verbose: bool) {
             }
         }
     }
-    println!("\n================ Synthetic check (body at the centre of each BioScan rule set, genus known) ================");
+    println!("\n================ Synthetic check (body at the centre of each rule set, genus known) ================");
     println!("  all rule sets: {}", all.show());
     for (g, r) in &per_genus {
         println!("  {g:<18} {}", r.show());
@@ -796,7 +796,7 @@ fn synth_body(sp: &Species, rs: &RuleSet) -> BodyFacts {
     }
 }
 
-/// A point in the middle of a Sinuous-tuber zone's distance band (offset along +x from the BioScan centre).
+/// A point in the middle of a Sinuous-tuber zone's distance band (offset along +x from the zone's centre).
 fn zone_point(zone: &str) -> Option<[f64; 3]> {
     bio_predict::tuber_zone(zone).map(|(c, lo, hi)| [c[0] + (lo + hi) / 2.0, c[1], c[2]])
 }

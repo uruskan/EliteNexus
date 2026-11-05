@@ -333,7 +333,8 @@ pub struct OdysseyItem {
 
 impl OdysseyItem {
     /// Credits to upgrade to `grade` (2..=5): base price × 4 / 15 / 30 / 50. Matches every complete
-    /// row of the wiki tables; the journal `UpgradeSuit`/`UpgradeWeapon.Cost` is authoritative.
+    /// row of the known prices (`docs/research/engineering.md` §5.1); the journal `UpgradeSuit`/`UpgradeWeapon.Cost`
+    /// is authoritative.
     pub fn upgrade_credits(&self, grade: u8) -> Option<u64> {
         let mult = match grade {
             2 => 4,
