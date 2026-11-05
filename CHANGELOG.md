@@ -219,6 +219,12 @@ release time that section becomes the new version and the release workflow publi
   how old prices may be, the least stock or demand, fleet carriers and planetary ports, and the order. Click a number
   to type it, or step it with − and + through round values (50, 75, 100, 150 ly…); a reset button appears once a
   filter differs from the defaults.
+- **Market**: columns can be widened or narrowed: drag the edge between two headings (the pointer turns into ↔
+  there). One column in each list, such as the station, takes the room left, so the list still fits the window, and
+  each list remembers its widths between runs.
+- **Market › Sell my cargo**: its settings sit in a bar above the lists (how far to look for buyers, how old prices may
+  be, the pad your ship needs), and **Best buyer per commodity** is a table like Best single stop: the station,
+  system, distance and demand in columns of their own, sortable, with the next best buyers on the price's tooltip.
 
 ### Fixed
 - **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at
@@ -226,6 +232,9 @@ release time that section becomes the new version and the release workflow publi
 - **Overlay: Keep it when idle works with See-through off.** It kept nothing there: with nothing to say, the opaque
   panel hid anyway, and switching the setting on didn't bring it back. The small empty island now stays, as it does
   see-through, and so does the small island while a cockpit panel is open.
+- **Market › Sell my cargo**: commodity names in **Best buyer per commodity** no longer end in "…" while half the card
+  stands empty, and the "planned in … ms" note no longer hides behind the top of the card under it (it's at the end
+  of the settings bar now).
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
