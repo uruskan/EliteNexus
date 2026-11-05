@@ -57,7 +57,8 @@ impl Pips {
     }
 }
 
-/// What the commander sets while flying: pips, and what's in the hold and the tank.
+/// What the commander sets: pips and what's in the hold and the tank while flying, and what a station takes off its
+/// prices.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Setup {
     pub pips: Pips,
@@ -65,11 +66,14 @@ pub struct Setup {
     pub cargo: f64,
     /// Fuel carried, t; None: a full tank.
     pub fuel: Option<f64>,
+    /// A station's discount on its list prices, 0 to 1 (0.15: 15 % off): the hull's and modules' prices come down by
+    /// it, and with them the rebuy.
+    pub discount: f64,
 }
 
 impl Default for Setup {
     fn default() -> Self {
-        Setup { pips: Pips::default(), cargo: 0.0, fuel: None }
+        Setup { pips: Pips::default(), cargo: 0.0, fuel: None, discount: 0.0 }
     }
 }
 
@@ -217,6 +221,27 @@ pub struct PowerGroup {
     pub deployed: f64,
 }
 
+/// What a ship's weapons do to another ship: damage a second on its shields (through their resistances and its
+/// systems pips' share) and on its hull (through its hardness and resistances), and the seconds each takes. Every weapon
+/// firing and hitting at full damage, over time with reloads; the shields don't regenerate meanwhile.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Against {
+    pub shield_dps: f64,
+    pub hull_dps: f64,
+    /// Seconds to break the shields (None: it has none, or nothing gets through), then to destroy the hull.
+    pub shield_secs: Option<f64>,
+    pub hull_secs: Option<f64>,
+}
+
+/// `weapons` against a ship of `shield` (None: no shields), `armour` hull points, `hull_res` and `hardness`.
+pub fn against(weapons: &[Weapon], shield: Option<&super::Shield>, armour: f64, hull_res: &super::Resistances, hardness: f64) -> Against {
+    let through = |d: &DamageDist, r: &super::Resistances, caustic: bool| d.kinetic * (1.0 - r.kinetic) + d.thermal * (1.0 - r.thermal) + d.explosive * (1.0 - r.explosive) + d.absolute + d.caustic * if caustic { 1.0 - r.caustic } else { 1.0 };
+    let shield_dps = shield.map_or(0.0, |s| weapons.iter().map(|w| w.sustained_dps * through(&w.dist, &s.res, false)).sum::<f64>() * (1.0 - s.sys_res));
+    let hull_dps: f64 = weapons.iter().map(|w| w.sustained_dps * w.against_hardness(hardness) * through(&w.dist, hull_res, true)).sum();
+    let secs = |amount: f64, dps: f64| (dps > 1e-9 && amount.is_finite()).then(|| amount.max(0.0) / dps);
+    Against { shield_dps, hull_dps, shield_secs: shield.and_then(|s| secs(s.strength, shield_dps)), hull_secs: secs(armour, hull_dps) }
+}
+
 /// Seconds to put back `amount` MJ of shield at `rate` MJ/s while each MJ/s takes `draw` MW from a systems capacitor of
 /// `capacity` MJ refilling at `recharge`: from the capacitor while it lasts, then as fast as the pips refill it. None:
 /// never (no regeneration, or no pips to refill a drained capacitor).
@@ -292,5 +317,22 @@ mod tests {
         assert_eq!(w.at_distance(3500.0), 0.0);
         assert_eq!(w.against_hardness(40.0), 1.0);
         assert!((w.against_hardness(100.0) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn weapons_against_a_target() {
+        use super::super::{Resistances, Shield};
+        // 10 DPS, half thermal half kinetic, piercing 50, against 100 MJ of shields that stop 50 % of thermal and none
+        // of kinetic with a third more for two systems pips, and 200 hull points of hardness 100 that stop 20 % kinetic.
+        let w = Weapon { sustained_dps: 10.0, dist: DamageDist { kinetic: 0.5, thermal: 0.5, ..DamageDist::default() }, piercing: 50.0, ..Weapon::default() };
+        let shield = Shield { strength: 100.0, res: Resistances { thermal: 0.5, ..Resistances::default() }, sys_res: 1.0 / 3.0, ..Shield::default() };
+        let hull = Resistances { kinetic: 0.2, ..Resistances::default() };
+        let a = against(std::slice::from_ref(&w), Some(&shield), 200.0, &hull, 100.0);
+        // Shields: 10 × (0.5 + 0.25) × 2/3 = 5 a second, 20 s. Hull: 10 × 0.5 (hardness) × (0.4 + 0.5) = 4.5, 44.4 s.
+        assert!((a.shield_dps - 5.0).abs() < 1e-9 && (a.shield_secs.unwrap_or_default() - 20.0).abs() < 1e-9, "{a:?}");
+        assert!((a.hull_dps - 4.5).abs() < 1e-9 && (a.hull_secs.unwrap_or_default() - 200.0 / 4.5).abs() < 1e-9, "{a:?}");
+        // No shields: none to break. No weapons: never.
+        assert_eq!(against(&[w], None, 200.0, &hull, 100.0).shield_secs, None);
+        assert_eq!(against(&[], Some(&shield), 200.0, &hull, 100.0).hull_secs, None);
     }
 }

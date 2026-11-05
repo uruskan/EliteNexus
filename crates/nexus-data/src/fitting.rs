@@ -13,8 +13,8 @@ use std::sync::LazyLock;
 
 mod blueprints;
 mod combat;
-pub use blueprints::{Engineered, effect_damage, effect_has_figures, has_figures, planned};
-pub use combat::{Capacitor, Heat, Pips, PowerGroup, Setup, Weapon, weapon};
+pub use blueprints::{Engineered, effect_damage, effect_has_figures, has_figures, planned, planned_goal};
+pub use combat::{Against, Capacitor, Heat, Pips, PowerGroup, Setup, Weapon, against, weapon};
 
 const SHIPS_JSON: &str = include_str!("../../../data/coriolis/ships.json");
 const SLOTS_JSON: &str = include_str!("../../../data/coriolis/ship-slots.json");
@@ -567,13 +567,33 @@ pub struct Goal {
     pub roll: f64,
     /// The experimental effect's symbol.
     pub experimental: Option<String>,
+    /// Figures typed in exactly (to match a module the game rolled), by coriolis-data's name: they replace what the
+    /// roll works out.
+    pub exact: Vec<(String, f64)>,
 }
 
 impl Goal {
     /// A blueprint to `grade`, rolled all the way, with no experimental effect.
     pub fn new(blueprint: &str, grade: u8) -> Goal {
-        Goal { blueprint: blueprint.to_string(), grade, roll: 1.0, experimental: None }
+        Goal { blueprint: blueprint.to_string(), grade, roll: 1.0, experimental: None, exact: Vec::new() }
     }
+}
+
+/// The figures planned engineering changes on a module (or bulkheads) `item`, as (coriolis-data's name, what it comes
+/// to, exact values included, and the module's own), by name; empty when this data has no figures for the goal. The
+/// ends of a curve, which move with its middle, aren't listed.
+pub fn goal_figures(item: &str, goal: &Goal) -> Vec<(String, f64, f64)> {
+    let item = item.trim().to_ascii_lowercase();
+    let bulkhead = hulls().iter().flat_map(|h| h.bulkheads.iter()).find(|b| b.symbol == item);
+    let base = |k: &str| match (bulkhead, module(&item)) {
+        (Some(b), _) => bulkhead_figure(b, k),
+        (None, Some(m)) => m.base(k),
+        (None, None) => None,
+    };
+    let Some(e) = blueprints::planned_goal(&item, &base, goal) else { return Vec::new() };
+    let mut out: Vec<(String, f64, f64)> = e.stats.iter().filter(|(k, _)| !blueprints::is_curve_end(k)).filter_map(|(k, v)| Some((k.clone(), *v, base(k)?))).collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
 }
 
 /// Rolls planned per grade, as the Engineering page plans them by default.
@@ -658,10 +678,19 @@ impl Plan {
             let item = item.trim().to_ascii_lowercase();
             if slot.eq_ignore_ascii_case("Armour") {
                 let base = hull_ref(&plan.hull).and_then(|h| h.bulkheads.iter().find(|b| b.symbol == item));
-                if let (Some(e), Some(b)) = (m.get("Engineering"), base) {
-                    plan.bulkheads_engineered = engineered(&|k| bulkhead_figure(b, k), e);
+                match (m.get("Engineering"), base) {
+                    // Engineering planned in Elite Nexus comes back as planned.
+                    (Some(e), Some(b)) if goal_of(&b.symbol, &|k| bulkhead_figure(b, k), e).is_some() => {
+                        plan.bulkheads_goal = goal_of(&b.symbol, &|k| bulkhead_figure(b, k), e);
+                    }
+                    (Some(e), b) => {
+                        if let Some(b) = b {
+                            plan.bulkheads_engineered = engineered(&|k| bulkhead_figure(b, k), e);
+                        }
+                        plan.bulkheads_engineering = Some(e.clone());
+                    }
+                    (None, _) => {}
                 }
-                plan.bulkheads_engineering = m.get("Engineering").cloned();
                 plan.bulkheads = item;
                 continue;
             }
@@ -676,7 +705,11 @@ impl Plan {
             let mut f = Fitted::new(slot, &item);
             f.on = on;
             f.priority = m.get("Priority").and_then(Value::as_u64).unwrap_or(0).min(4) as u8;
-            if let Some(e) = m.get("Engineering") {
+            let planned = m.get("Engineering").zip(module(&f.item)).and_then(|(e, data)| goal_of(&f.item, &|k| data.base(k), e));
+            if planned.is_some() {
+                // Engineering planned in Elite Nexus comes back as planned.
+                f.goal = planned;
+            } else if let Some(e) = m.get("Engineering") {
                 f.blueprint = e.get("BlueprintName").and_then(Value::as_str).map(|b| (b.to_string(), e.get("Level").and_then(Value::as_u64).unwrap_or(0).min(5) as u8));
                 f.quality = e.get("Quality").and_then(Value::as_f64).filter(|q| q.is_finite()).map(|q| q.clamp(0.0, 1.0));
                 f.experimental = e.get("ExperimentalEffect").and_then(Value::as_str).map(str::to_string);
@@ -732,26 +765,153 @@ impl Plan {
         self.fitted.sort_by_key(|f| at(&f.slot));
     }
 
-    /// The build as a journal `Loadout` event, for EDSY, Coriolis and Where to buy, with the engineering the game
+    /// The build as a journal `Loadout` event, for Where to buy and saved builds, with the engineering the game
     /// reported (engineering planned here isn't in it: the game hasn't rolled it).
     pub fn to_loadout(&self) -> Value {
-        let entry = |slot: &str, item: &str, on: bool, priority: u8, engineering: Option<&Value>| {
+        self.loadout(false)
+    }
+
+    /// The build as a journal `Loadout` event with the engineering planned here written as the game writes engineering
+    /// (blueprint, grade, roll, experimental effect and each figure it changes), so EDSY and Coriolis show the plan.
+    /// Planned engineering this data has no figures for keeps what the game reported.
+    pub fn to_loadout_planned(&self) -> Value {
+        self.loadout(true)
+    }
+
+    fn loadout(&self, with_plans: bool) -> Value {
+        let entry = |slot: &str, item: &str, on: bool, priority: u8, engineering: Option<Value>| {
             let mut m = serde_json::json!({ "Slot": slot, "Item": item, "On": on, "Priority": priority });
             if let (Some(e), Some(o)) = (engineering, m.as_object_mut()) {
-                o.insert("Engineering".into(), e.clone());
+                o.insert("Engineering".into(), e);
             }
             m
         };
         let mut modules = Vec::new();
         if !self.bulkheads.is_empty() {
-            modules.push(entry("Armour", &self.bulkheads, true, 1, self.bulkheads_engineering.as_ref()));
+            let base = hull_ref(&self.hull).and_then(|h| h.bulkheads.iter().find(|b| b.symbol == self.bulkheads));
+            let goal = match (with_plans, &self.bulkheads_goal, base) {
+                (true, Some(g), Some(b)) => planned_engineering("bh", &b.symbol, &|k| bulkhead_figure(b, k), g),
+                _ => None,
+            };
+            modules.push(entry("Armour", &self.bulkheads, true, 1, goal.or_else(|| self.bulkheads_engineering.clone())));
         }
         modules.push(entry("CargoHatch", "modularcargobaydoor", self.hatch, self.hatch_priority, None));
         for f in &self.fitted {
-            modules.push(entry(&f.slot, &f.item, f.on, f.priority, f.engineering.as_ref()));
+            let goal = match (with_plans, &f.goal, module(&f.item)) {
+                (true, Some(g), Some(m)) => planned_engineering(&m.grp, &f.item, &|k| m.base(k), g),
+                _ => None,
+            };
+            modules.push(entry(&f.slot, &f.item, f.on, f.priority, goal.or_else(|| f.engineering.clone())));
         }
         serde_json::json!({ "event": "Loadout", "Ship": self.hull, "Modules": modules })
     }
+}
+
+/// The field that marks an `Engineering` written from a plan (the game never writes it).
+const PLANNED_MARK: &str = "EliteNexusPlanned";
+
+/// Engineering written from a plan ([`Plan::to_loadout_planned`]) as the goal it came from: the blueprint, grade, roll
+/// and effect, and as exact values the figures that differ from what those work out to (values typed in).
+fn goal_of(item: &str, base: &dyn Fn(&str) -> Option<f64>, e: &Value) -> Option<Goal> {
+    if e.get(PLANNED_MARK).and_then(Value::as_bool) != Some(true) {
+        return None;
+    }
+    let mut goal = Goal::new(e.get("BlueprintName")?.as_str()?, e.get("Level").and_then(Value::as_u64).unwrap_or(1).clamp(1, 5) as u8);
+    goal.roll = e.get("Quality").and_then(Value::as_f64).filter(|q| q.is_finite()).map_or(1.0, |q| q.clamp(0.0, 1.0));
+    goal.experimental = e.get("ExperimentalEffect").and_then(Value::as_str).map(str::to_string);
+    let rolled = planned_goal(item, base, &goal).map(|p| p.stats).unwrap_or_default();
+    let mut exact: Vec<(String, f64)> = engineered(base, e)
+        .into_iter()
+        .filter(|(k, v)| !blueprints::is_curve_end(k) && rolled.get(k).is_none_or(|r| (r - v).abs() > 1e-6 * r.abs().max(1.0)))
+        .collect();
+    exact.sort_by(|a, b| a.0.cmp(&b.0));
+    goal.exact = exact;
+    Some(goal)
+}
+
+/// Planned engineering as the game writes a module's `Engineering`: the blueprint, its grade, the roll as its quality,
+/// the experimental effect, and each figure it changes with the game's label, value and original value. None when this
+/// data has no figures for the blueprint at that grade.
+fn planned_engineering(grp: &str, item: &str, base: &dyn Fn(&str) -> Option<f64>, g: &Goal) -> Option<Value> {
+    let e = planned_goal(item, base, g)?;
+    let mut keys: Vec<&String> = e.stats.keys().collect();
+    keys.sort();
+    let modifiers: Vec<Value> = keys
+        .into_iter()
+        .filter_map(|k| {
+            let (label, scale, less_is_good) = journal_label(grp, k)?;
+            let (value, original) = (*e.stats.get(k)?, base(k)?);
+            ((value - original).abs() > 1e-9 && value.is_finite()).then(|| serde_json::json!({ "Label": label, "Value": value * scale, "OriginalValue": original * scale, "LessIsGood": u8::from(less_is_good) }))
+        })
+        .collect();
+    // Marked as planned, so a build pasted back reads it as planned again rather than as the game's own.
+    let mut out = serde_json::json!({ "BlueprintName": g.blueprint, "Level": g.grade, "Quality": g.roll.clamp(0.0, 1.0), "Modifiers": modifiers, PLANNED_MARK: true });
+    if let (Some(x), Some(o)) = (&g.experimental, out.as_object_mut()) {
+        o.insert("ExperimentalEffect".into(), Value::from(x.as_str()));
+        if let Some(name) = crate::engineering::experimental(x) {
+            o.insert("ExperimentalEffect_Localised".into(), Value::from(name.name.as_str()));
+        }
+    }
+    Some(out)
+}
+
+/// The game's label for a figure of a module of group `grp`, what to multiply the figure by to write it the game's
+/// way (resistances and boosts in percent), and whether less is better. The reverse of [`engineered`]; None for a
+/// figure the game doesn't list (a curve's ends, which move with its middle).
+fn journal_label(grp: &str, key: &str) -> Option<(&'static str, f64, bool)> {
+    let shield_generator = matches!(grp, "sg" | "bsg" | "psg");
+    Some(match key {
+        "mass" => ("Mass", 1.0, true),
+        "integrity" => ("Integrity", 1.0, false),
+        "power" => ("PowerDraw", 1.0, true),
+        "boot" => ("BootTime", 1.0, true),
+        "optmass" if grp == "fsd" => ("FSDOptimalMass", 1.0, false),
+        "optmass" if grp == "t" => ("EngineOptimalMass", 1.0, false),
+        "optmass" if shield_generator => ("ShieldGenOptimalMass", 1.0, false),
+        "optmul" if grp == "t" => ("EngineOptPerformance", 100.0, false),
+        "optmul" if shield_generator => ("ShieldGenStrength", 100.0, false),
+        "maxfuel" => ("MaxFuelPerJump", 1.0, false),
+        "pgen" => ("PowerCapacity", 1.0, false),
+        "eff" => ("HeatEfficiency", 1.0, true),
+        "engcap" => ("EnginesCapacity", 1.0, false),
+        "engrate" => ("EnginesRecharge", 1.0, false),
+        "wepcap" => ("WeaponsCapacity", 1.0, false),
+        "weprate" => ("WeaponsRecharge", 1.0, false),
+        "syscap" => ("SystemsCapacity", 1.0, false),
+        "sysrate" => ("SystemsRecharge", 1.0, false),
+        "kinres" => ("KineticResistance", 100.0, false),
+        "thermres" => ("ThermicResistance", 100.0, false),
+        "explres" => ("ExplosiveResistance", 100.0, false),
+        "causres" => ("CausticResistance", 100.0, false),
+        "shieldboost" => ("DefenceModifierShieldMultiplier", 100.0, false),
+        "shieldaddition" => ("DefenceModifierShieldAddition", 1.0, false),
+        "hullboost" => ("DefenceModifierHealthMultiplier", 100.0, false),
+        "hullreinforcement" => ("DefenceModifierHealthAddition", 1.0, false),
+        "regen" => ("RegenRate", 1.0, false),
+        "brokenregen" => ("BrokenRegenRate", 1.0, false),
+        "distdraw" if shield_generator => ("EnergyPerRegen", 1.0, true),
+        "distdraw" => ("DistributorDraw", 1.0, true),
+        "thermload" if grp == "scb" => ("ShieldBankHeat", 1.0, true),
+        "thermload" => ("ThermalLoad", 1.0, true),
+        "damage" => ("Damage", 1.0, false),
+        "rof" => ("RateOfFire", 1.0, false),
+        "clip" => ("AmmoClipSize", 1.0, false),
+        "ammo" => ("AmmoMaximum", 1.0, false),
+        "reload" => ("ReloadTime", 1.0, true),
+        "range" if grp != "s" => ("MaximumRange", 1.0, false),
+        "falloff" => ("DamageFalloffRange", 1.0, false),
+        "piercing" => ("ArmourPenetration", 1.0, false),
+        "shotspeed" => ("ShotSpeed", 1.0, false),
+        "jitter" => ("Jitter", 1.0, true),
+        "burst" => ("BurstSize", 1.0, false),
+        "burstrof" => ("BurstRateOfFire", 1.0, false),
+        "fuel" => ("FuelCapacity", 1.0, false),
+        "cargo" => ("CargoCapacity", 1.0, false),
+        "shieldreinforcement" => ("ShieldBankReinforcement", 1.0, false),
+        "duration" => ("ShieldBankDuration", 1.0, false),
+        "spinup" => ("ShieldBankSpinUp", 1.0, true),
+        _ => return None,
+    })
 }
 
 fn hull_ref(symbol: &str) -> Option<&'static Hull> {
@@ -936,6 +1096,12 @@ pub struct Figures {
     pub total_range: f64,
     /// The most fuel the frame shift drive burns in one jump, t.
     pub max_fuel_per_jump: f64,
+    /// What a Guardian FSD booster adds to every jump, ly (part of the ranges above).
+    pub booster: f64,
+    /// What a neutron star's cone multiplies the drive's range by (6 for the FSD Mk II, else 4), and a white dwarf's
+    /// (None: not known for this drive).
+    pub neutron_boost: f64,
+    pub white_dwarf_boost: Option<f64>,
     /// Four pips to engines, full tank, empty hold, m/s. 0: the thrusters can't move this mass.
     pub speed: f64,
     /// Top speed by pips to engines, 0 to 4, with the cargo and fuel of `setup`.
@@ -1037,7 +1203,7 @@ pub struct Live<'a> {
 
 impl<'a> Live<'a> {
     pub fn new(f: &'a Fitted, m: &'static ModuleData) -> Live<'a> {
-        let planned = f.goal.as_ref().and_then(|g| planned(&f.item, &|k| m.base(k), &g.blueprint, g.grade, g.roll, g.experimental.as_deref()));
+        let planned = f.goal.as_ref().and_then(|g| planned_goal(&f.item, &|k| m.base(k), g));
         Live { f, m, planned }
     }
 
@@ -1132,7 +1298,7 @@ pub fn figures_with(plan: &Plan, setup: &Setup) -> Option<Figures> {
     let bulkheads = hull.bulkheads.iter().find(|b| b.symbol == plan.bulkheads).or_else(|| hull.bulkheads.first());
     // Planned engineering on the bulkheads replaces what the game reported for them.
     let bulkheads_planned = match (bulkheads, &plan.bulkheads_goal) {
-        (Some(b), Some(g)) => planned(&b.symbol, &|k| bulkhead_figure(b, k), &g.blueprint, g.grade, g.roll, g.experimental.as_deref()),
+        (Some(b), Some(g)) => planned_goal(&b.symbol, &|k| bulkhead_figure(b, k), g),
         _ => None,
     };
     let bh = |key: &str, base: f64| match &bulkheads_planned {
@@ -1167,6 +1333,10 @@ pub fn figures_with(plan: &Plan, setup: &Setup) -> Option<Figures> {
         let (opt, maxfuel, mul, power) = (l.get("optmass"), l.get("maxfuel"), l.get("fuelmul"), l.get("fuelpower"));
         let booster = on().filter(|l| l.m.grp == "gfsb").map(|l| l.get("jumpboost")).fold(0.0, f64::max);
         out.max_fuel_per_jump = maxfuel;
+        out.booster = booster;
+        // The Caspian's FSD Mk II supercharges further; how far a white dwarf takes it isn't known.
+        let mk2 = l.f.item.contains("overchargebooster_mkii");
+        (out.neutron_boost, out.white_dwarf_boost) = if mk2 { (6.0, None) } else { (4.0, Some(1.5)) };
         if opt > 0.0 && mul > 0.0 && power > 0.0 && maxfuel > 0.0 {
             let range = |mass: f64, fuel: f64| if fuel > 0.0 { (fuel.min(maxfuel) / mul).powf(1.0 / power) * opt / mass + booster } else { 0.0 };
             let one = maxfuel.min(out.fuel);
@@ -1288,7 +1458,9 @@ pub fn figures_with(plan: &Plan, setup: &Setup) -> Option<Figures> {
     // Weapons and the weapons capacitor they draw on.
     out.weapons = on().filter(|l| is_hardpoint_slot(&l.f.slot)).filter_map(|l| combat::weapon(l)).collect();
     let (wepcap, weprate) = pd.map_or((0.0, 0.0), |p| (p.get("wepcap"), p.get("weprate") * Pips::recharge_share(pips.wep)));
-    out.wep = combat::capacitor(wepcap, weprate, out.weapons.iter().map(|w| w.sustained_eps).sum());
+    // Drained at what the weapons draw while firing: a capacitor empties within seconds, before a clip runs out and a
+    // reload pauses the draw.
+    out.wep = combat::capacitor(wepcap, weprate, out.weapons.iter().map(|w| w.eps).sum());
 
     // Heat: what the ship holds, what the power plant makes from what's drawn, and what firing and shield cells add.
     let eff = in_slot("PowerPlant").map_or(0.0, |l| l.get("eff"));
@@ -1301,8 +1473,10 @@ pub fn figures_with(plan: &Plan, setup: &Setup) -> Option<Figures> {
         sinks: on().filter(|l| l.m.grp == "hs").map(|l| (l.get("clip") + l.get("ammo")).max(0.0) as u32).sum(),
     };
 
-    out.hull_cost = hull.hull_cost + bulkheads.map_or(0.0, |b| b.cost);
-    out.modules_cost = lives.iter().map(|l| l.m.cost).sum();
+    // A station's discount takes its share off the hull and every module (and so off the rebuy), not the ammunition.
+    let keep = 1.0 - if setup.discount.is_finite() { setup.discount.clamp(0.0, 1.0) } else { 0.0 };
+    out.hull_cost = (hull.hull_cost + bulkheads.map_or(0.0, |b| b.cost)) * keep;
+    out.modules_cost = lives.iter().map(|l| l.m.cost).sum::<f64>() * keep;
     out.ammo_cost = lives.iter().map(|l| l.get("ammocost") * (l.get("clip") + l.get("ammo"))).sum();
     Some(out)
 }
@@ -1364,6 +1538,10 @@ mod tests {
         // Lightweight alloy takes 20 % more kinetic damage: a resistance can be below 0, never above 75 %.
         assert!((-1.0..=0.75).contains(&f.hull_res.kinetic) && f.hull_res.kinetic > -0.2, "{f:?}");
         assert!(f.module_protection > 0.0 && f.rebuy() > 0.0);
+        // A station's 15 % off takes 15 % off the hull and modules and the rebuy, and nothing else.
+        let off = figures_with(&plan, &Setup { discount: 0.15, ..Setup::default() }).expect("figures");
+        assert!((off.total_cost() - f.total_cost() * 0.85).abs() < 1.0 && (off.rebuy() - (off.total_cost() * 0.05).ceil()).abs() < 1e-9, "{} {}", off.total_cost(), f.total_cost());
+        assert_eq!((off.max_range, off.ammo_cost), (f.max_range, f.ammo_cost));
         // The plan goes back out as a Loadout with the same modules.
         let back = Plan::from_loadout(&plan.to_loadout()).expect("again");
         assert_eq!((back.hull.as_str(), back.fitted.len(), back.bulkheads.as_str()), ("smallcombat01_nx", 24, "smallcombat01_nx_armour_grade1"));
@@ -1435,6 +1613,60 @@ mod tests {
         sg.goal = Some(Goal::new("ShieldGenerator_Thermic", 5));
         let (a, b) = (before.shield.expect("shields"), figures(&shields).expect("figures").shield.expect("shields"));
         assert!(b.res.thermal > a.res.thermal, "{} vs {}", b.res.thermal, a.res.thermal);
+    }
+
+    #[test]
+    fn planned_engineering_goes_out_as_the_game_writes_it() {
+        // An FSD with Mass Manager, reinforced shields, dirty thrusters and heavy duty bulkheads, planned.
+        let mut plan = Plan::from_loadout(&serde_json::from_str(KESTREL).expect("json")).expect("plan");
+        for f in plan.fitted.iter_mut() {
+            f.goal = match f.item.as_str() {
+                i if i.starts_with("int_hyperdrive") => Some(Goal { roll: 0.5, experimental: Some("special_fsd_heavy".into()), ..Goal::new("FSD_LongRange", 5) }),
+                i if i.starts_with("int_shieldgenerator") => Some(Goal::new("ShieldGenerator_Reinforced", 4)),
+                i if i.starts_with("int_engine") => Some(Goal::new("Engine_Dirty", 3)),
+                _ => None,
+            };
+        }
+        plan.bulkheads_goal = Some(Goal::new("Armour_HeavyDuty", 5));
+        let out = plan.to_loadout_planned();
+        // As the game's journal has it: the blueprint, grade, roll, effect, and the figures it changes.
+        let fsd = out["Modules"].as_array().and_then(|m| m.iter().find(|m| m["Slot"] == "FrameShiftDrive")).expect("fsd");
+        let e = &fsd["Engineering"];
+        assert_eq!((e["BlueprintName"].as_str(), e["Level"].as_u64(), e["Quality"].as_f64(), e["ExperimentalEffect"].as_str()), (Some("FSD_LongRange"), Some(5), Some(0.5), Some("special_fsd_heavy")));
+        let labels: Vec<&str> = e["Modifiers"].as_array().expect("modifiers").iter().filter_map(|m| m["Label"].as_str()).collect();
+        assert!(labels.contains(&"FSDOptimalMass") && labels.contains(&"Mass"), "{labels:?}");
+        // Read as the game's own engineering (another app's, with no mark), it comes to what the plan does: the game's
+        // way of writing it loses nothing the sums use.
+        let mut unmarked = out.clone();
+        for m in unmarked["Modules"].as_array_mut().into_iter().flatten() {
+            if let Some(e) = m.get_mut("Engineering").and_then(Value::as_object_mut) {
+                e.remove(PLANNED_MARK);
+            }
+        }
+        let back = Plan::from_loadout(&unmarked).expect("read back");
+        assert!(back.module_in("FrameShiftDrive").is_some_and(|f| f.goal.is_none() && f.blueprint.is_some()), "the game's engineering");
+        let (planned, read) = (figures(&plan).expect("figures"), figures(&back).expect("figures"));
+        assert!((planned.max_range - read.max_range).abs() < 1e-6, "{} vs {}", planned.max_range, read.max_range);
+        assert!((planned.speed - read.speed).abs() < 1e-6 && (planned.armour - read.armour).abs() < 1e-6, "{planned:?} vs {read:?}");
+        let (s, r) = (planned.shield.expect("shields"), read.shield.expect("shields"));
+        assert!((s.strength - r.strength).abs() < 1e-6 && (s.res.kinetic - r.res.kinetic).abs() < 1e-9, "{s:?} vs {r:?}");
+        assert!((planned.hull_res.kinetic - read.hull_res.kinetic).abs() < 1e-9);
+        // Marked as planned, it comes back as the plan it was: the same goals.
+        let again = Plan::from_loadout(&out).expect("read back");
+        assert_eq!(again.module_in("FrameShiftDrive").and_then(|f| f.goal.clone()), plan.module_in("FrameShiftDrive").and_then(|f| f.goal.clone()));
+        assert_eq!(again.bulkheads_goal, plan.bulkheads_goal);
+        // The plain Loadout keeps only what the game reported.
+        assert!(plan.to_loadout()["Modules"].as_array().expect("modules").iter().all(|m| m.get("Engineering").is_none()));
+        // A figure typed in exactly goes out as typed, the figures list it, and it comes back typed.
+        let fsd = plan.fitted.iter_mut().find(|f| f.slot == "FrameShiftDrive").expect("fsd");
+        if let Some(g) = fsd.goal.as_mut() {
+            g.exact = vec![("optmass".into(), 900.0)];
+        }
+        let item = fsd.item.clone();
+        let listed = goal_figures(&item, fsd.goal.as_ref().expect("goal"));
+        assert!(listed.iter().any(|(k, v, base)| k == "optmass" && *v == 900.0 && *base > 0.0), "{listed:?}");
+        let typed = Plan::from_loadout(&plan.to_loadout_planned()).expect("read back");
+        assert_eq!(typed.module_in("FrameShiftDrive").and_then(|f| f.goal.as_ref()).map(|g| g.exact.clone()), Some(vec![("optmass".to_string(), 900.0)]));
     }
 
     #[test]
@@ -1536,7 +1768,7 @@ mod tests {
         let f = plan.fitted.iter_mut().find(|f| f.slot == "FrameShiftDrive").expect("fsd");
         f.experimental = Some("SPECIAL_FSD_HEAVY".into());
         f.blueprint = Some(("FSD_LongRange".into(), 5));
-        f.goal = Some(Goal { blueprint: "FSD_LongRange".into(), grade: 5, roll: 1.0, experimental: Some("special_fsd_heavy".into()) });
+        f.goal = Some(Goal { experimental: Some("special_fsd_heavy".into()), ..Goal::new("FSD_LongRange", 5) });
         assert!(goal_materials(&plan).is_empty(), "{:?}", goal_materials(&plan));
     }
 
@@ -1551,7 +1783,7 @@ mod tests {
         let total = |p: &Plan| goal_materials(p).iter().map(|(_, n)| *n).sum::<u32>();
         assert_eq!(total(&plan), 0, "no goals, nothing to gather");
         let f = plan.fitted.iter_mut().find(|f| f.slot == "FrameShiftDrive").expect("fsd");
-        f.goal = Some(Goal { blueprint: "FSD_LongRange".into(), grade: 5, roll: 1.0, experimental: Some("special_fsd_heavy".into()) });
+        f.goal = Some(Goal { experimental: Some("special_fsd_heavy".into()), ..Goal::new("FSD_LongRange", 5) });
         let experimental: u32 = x.cost.iter().map(|i| i.count).sum();
         assert_eq!(total(&plan), rolls(1) + experimental, "grades 1 to 5, three rolls each, and the experimental");
         // What the module has done already isn't gathered again.
