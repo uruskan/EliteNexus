@@ -189,6 +189,9 @@ release time that section becomes the new version and the release workflow publi
 - **Exploration** › Find valuable bodies shows its settings in a bar under the search, each once: Within, Stops, Jump
   range, Bodies worth at least, Furthest from the star, and Values (if you map them, or from the scan alone). Type a
   value or step it with − and +.
+- **Inara**: Developer mode is gone from Accounts & sync (Inara options). Elite Nexus no longer marks what it sends
+  as "in development", so Inara now takes the community goals you're part of, and your progress in them, as it does
+  from any approved app. A settings file that still has the switch reads as before.
 
 ### Fixed
 - **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at

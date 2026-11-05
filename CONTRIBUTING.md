@@ -125,7 +125,8 @@ hyphenated version (`v0.8.0-beta.1`) becomes a pre-release. The steps are in AGE
 ## Accounts and APIs
 
 * **Inara** only accepts whitelisted app names; it approved "Elite Nexus" on 2026-10-13, so a user's personal API key
-  is all sync needs. Developer mode (`isBeingDeveloped`) is still on by default; see `docs/research/inara.md`.
+  is all sync needs. It sends no `isBeingDeveloped`: test runs never upload, so what it sends is live play. Use an
+  Inara test account for development work that has to upload; see `docs/research/inara.md`.
 * **Frontier Companion API (CAPI)** needs a client ID approved by Frontier (`docs/research/capi.md`). Not supported
   yet; the journal provides almost everything.
 * **EDDN** uploads are validated against the schemas in `docs/research/eddn-schemas/` and must stay strictly

@@ -27,22 +27,18 @@ impl fmt::Debug for EdsmCredentials {
 }
 
 /// Inara personal API key (https://inara.cz/elite/cmdr-settings-api/).
+///
+/// No `isBeingDeveloped` is sent: Inara whitelisted "Elite Nexus" on 2026-10-13, and test runs
+/// never upload, so everything sent is a real commander's live play (community goals included).
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct InaraCredentials {
     pub api_key: String,
-    /// Sent as `isBeingDeveloped`: Inara then ignores global events (community goals) so test
-    /// data cannot pollute shared data. Inara whitelisted "Elite Nexus" on 2026-10-13; the app
-    /// keeps this on by default for the first weeks after.
-    pub is_being_developed: bool,
 }
 
 impl fmt::Debug for InaraCredentials {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("InaraCredentials")
-            .field("api_key", &redact(&self.api_key))
-            .field("is_being_developed", &self.is_being_developed)
-            .finish()
+        f.debug_struct("InaraCredentials").field("api_key", &redact(&self.api_key)).finish()
     }
 }
 
@@ -178,7 +174,7 @@ mod tests {
     fn credentials_must_be_complete() {
         let c = UplinkConfig {
             edsm: Some(EdsmCredentials { commander_name: "Jameson".into(), api_key: " ".into() }),
-            inara: Some(InaraCredentials { api_key: String::new(), is_being_developed: true }),
+            inara: Some(InaraCredentials { api_key: String::new() }),
             ..UplinkConfig::default()
         };
         assert!(!c.edsm_enabled());
@@ -199,7 +195,14 @@ mod tests {
     fn debug_redacts_keys() {
         let e = EdsmCredentials { commander_name: "X".into(), api_key: "secret123".into() };
         assert!(!format!("{e:?}").contains("secret123"));
-        let i = InaraCredentials { api_key: "secret456".into(), is_being_developed: false };
+        let i = InaraCredentials { api_key: "secret456".into() };
         assert!(!format!("{i:?}").contains("secret456"));
+    }
+
+    /// Credentials saved while Developer mode existed still read.
+    #[test]
+    fn old_inara_credentials_still_read() {
+        let i: InaraCredentials = serde_json::from_str(r#"{ "api_key": "k", "is_being_developed": true }"#).expect("old credentials");
+        assert_eq!(i.api_key, "k");
     }
 }
