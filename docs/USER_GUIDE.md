@@ -21,12 +21,15 @@ to EDDN only when you undock, so pausing while docked keeps a market you just fo
 **overlay** on and off: a small black island at the top of the game's screen (see [Overlay](#overlay)). While it's on,
 the lock beside it locks it (clicks go to the game) or unlocks it to move it.
 
-A crash leaves no Shutdown in the game's journal, so Elite Nexus also checks whether the game's program still runs on
-this computer (Windows and Linux): once it doesn't, the toolbar says Offline, and the overlay, Follow my flight, HUD &
-cockpit and Ask know the game has stopped, also when you start Elite Nexus after the crash. A journal folder shared
-from another computer, and a Mac, have no program to look at here: the game counts as stopped once neither its journal
-nor Status.json has been written for 15 minutes (docked and idle the game writes nothing, so it may show Offline until
-you move).
+A crash leaves no Shutdown in the game's journal, so Elite Nexus also looks for the game's program on this computer
+(Windows and Linux). Once it has seen the game running and the program is gone, the toolbar says Offline, and the
+overlay, Follow my flight, HUD & cockpit and Ask know the game has stopped. On Windows, with the journal folder Elite
+Nexus finds by itself, it also knows when you start it after a crash: a game whose program isn't running is Offline at
+once. Otherwise (a Mac, Linux, a journal folder shared from another computer), a game that has written nothing since
+Elite Nexus started counts as stopped once neither its journal nor Status.json has been written for 15 minutes, until
+it writes again (HUD & cockpit, which finishes a calibration of the cockpit lights when the game closes, waits for a
+sure sign instead); a game that writes while Elite Nexus runs counts as running until it closes normally (unless its
+program was seen here and has gone), because nothing else tells a crash from a long pause.
 
 Alerts appear as banners at the top right and are spoken if you enable voice. The **bell** at the far right of the
 toolbar keeps every alert since Elite Nexus started, newest first, with its time and what it said, so one you missed

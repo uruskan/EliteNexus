@@ -1,16 +1,17 @@
 //! Whether Elite Dangerous is still running when its journal didn't say it closed: a crash, or the game ended from the
-//! Task Manager, writes no `Shutdown`. Its process on this computer says so; for a game this computer hasn't seen (the
-//! journal folder of another PC, a Mac), the journal and Status.json going quiet do. The verdict goes into the model
-//! (`GameState::game_gone`), so pages, the overlay and Ask's tools all read it.
+//! Task Manager, writes no `Shutdown`. Its process on this computer says so where it can be seen; a journal that has been
+//! quiet since before Elite Nexus started says it likely. The verdict goes into the model (`GameState::game_gone`), so
+//! pages, the overlay and Ask's tools all read it.
 
 use nexus_journal::Timestamp;
-use nexus_model::GameState;
+use nexus_model::{GameGone, GameState};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::time::Duration;
 
-/// How long the journal and Status.json may stay quiet before a game this computer hasn't seen counts as gone. Docked
-/// and idle, the game writes nothing for as long as you're away, so it isn't any shorter.
+/// How long the journal and Status.json must have been quiet, when nothing has been written since Elite Nexus started,
+/// before a game not seen on this computer counts as gone. Docked and idle, the game writes nothing for as long as
+/// you're away, so it isn't any shorter.
 pub const QUIET_SECS: i64 = 15 * 60;
 
 /// How often the process list is looked at.
@@ -71,21 +72,44 @@ impl Drop for GameProcess {
     }
 }
 
-/// The game has ended without a `Shutdown`: its process isn't running here though it ran here earlier (`seen_here`);
-/// or, not seen here (another computer's journal folder, a Mac, the first look not made yet), neither the journal nor
-/// Status.json has been written for `QUIET_SECS`. A game that closed normally isn't gone: its `Shutdown` says so.
-pub fn gone(gs: &GameState, process: Option<bool>, seen_here: bool, now: Timestamp) -> bool {
+/// What the app knows besides the journal, for `gone`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Watch {
+    /// Whether the game's process runs on this computer: None before the first look, or where it can't be looked at.
+    pub process: Option<bool>,
+    /// The process has been seen running here since the journals were read.
+    pub seen_here: bool,
+    /// Its absence settles it: the process list shows every program here (Windows), and the journal folder is this
+    /// computer's own, the one Elite Nexus found by itself.
+    pub absence_final: bool,
+    /// The game has written something (a journal line, Status.json) since the journals were read.
+    pub live_lines: bool,
+}
+
+/// Whether, and how, the game has ended without a `Shutdown` (a game that closed normally isn't gone: its `Shutdown`
+/// says so):
+/// - its process ran here and has gone: `Process`, whatever was written;
+/// - it runs, or has written something since the journals were read: not gone. A game not seen here (a Mac, another
+///   computer's journal folder, a Linux sandbox) then counts as running until its `Shutdown`, as there's nothing else
+///   to go by;
+/// - quiet since the journals were read: `Process` when its absence settles it (`Watch::absence_final`), else `Quiet`
+///   once neither the journal nor Status.json has been written for `QUIET_SECS`: a game that ended before Elite Nexus
+///   started, most likely.
+pub fn gone(gs: &GameState, w: Watch, now: Timestamp) -> Option<GameGone> {
     if gs.game_closed {
-        return false;
+        return None;
     }
-    match process {
-        Some(true) => false,
-        Some(false) if seen_here => true,
-        _ => {
-            let last = gs.status.as_ref().map_or(gs.last_event, |s| s.timestamp.max(gs.last_event));
-            now.0 - last.0 > QUIET_SECS
-        }
+    if w.seen_here && w.process == Some(false) {
+        return Some(GameGone::Process);
     }
+    if w.live_lines || w.process == Some(true) {
+        return None;
+    }
+    if w.absence_final && w.process == Some(false) {
+        return Some(GameGone::Process);
+    }
+    let last = gs.status.as_ref().map_or(gs.last_event, |s| s.timestamp.max(gs.last_event));
+    (now.0 - last.0 > QUIET_SECS).then_some(GameGone::Quiet)
 }
 
 /// The game's program, by a process's name: `EliteDangerous64.exe`, with a folder before it or not, or the first 15
@@ -113,8 +137,13 @@ fn running_named(is: impl Fn(&str) -> bool) -> Option<bool> {
             return None;
         }
         let mut entry = PROCESSENTRY32W { dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32, ..Default::default() };
+        // A list that can't be read says nothing: not "not running".
+        if Process32FirstW(snapshot, &mut entry) == 0 {
+            CloseHandle(snapshot);
+            return None;
+        }
         let mut found = false;
-        let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+        let mut more = true;
         while more && !found {
             let len = entry.szExeFile.iter().position(|&c| c == 0).unwrap_or(entry.szExeFile.len());
             found = is(&String::from_utf16_lossy(&entry.szExeFile[..len]));
@@ -174,18 +203,28 @@ mod tests {
     fn gone_without_a_shutdown() {
         let now = Timestamp(1_800_000_000);
         let mut gs = GameState::default();
-        gs.last_event = Timestamp(now.0 - 60);
-        assert!(!gone(&gs, Some(true), true, now), "its process runs");
-        assert!(gone(&gs, Some(false), true, now), "its process ran here and has gone: a crash");
-        assert!(!gone(&gs, Some(false), false, now), "never seen here, and the journal was written a minute ago");
-        assert!(!gone(&gs, None, false, now));
+        let w = |process: Option<bool>, seen_here: bool, absence_final: bool, live_lines: bool| Watch { process, seen_here, absence_final, live_lines };
+        // Seen here, then gone: a crash, however much it wrote meanwhile.
+        gs.last_event = Timestamp(now.0 - 5);
+        assert_eq!(gone(&gs, w(Some(false), true, false, true), now), Some(GameGone::Process));
+        assert_eq!(gone(&gs, w(Some(true), true, false, true), now), None, "its process runs");
+        // Written to since the journals were read, never seen here (a Mac, another computer's folder, a Linux sandbox):
+        // running until its Shutdown, however long it's then quiet, and whatever another computer's clock says.
+        gs.last_event = Timestamp(now.0 - 3 * 3600);
+        assert_eq!(gone(&gs, w(None, false, false, true), now), None);
+        assert_eq!(gone(&gs, w(Some(false), false, false, true), now), None);
+        assert_eq!(gone(&gs, w(Some(false), false, true, true), now), None, "a line written now outweighs the process list");
+        // Quiet since the journals were read.
+        assert_eq!(gone(&gs, w(Some(false), false, true, false), now), Some(GameGone::Process), "Windows, this computer's own folder: crashed before");
+        assert_eq!(gone(&gs, w(None, false, false, false), now), Some(GameGone::Quiet), "the journal of a crashed game, read the next day");
+        assert_eq!(gone(&gs, w(Some(false), false, false, false), now), Some(GameGone::Quiet));
+        assert_eq!(gone(&gs, w(Some(true), false, false, false), now), None, "idle, but its process runs");
+        gs.last_event = Timestamp(now.0 - QUIET_SECS + 60);
+        assert_eq!(gone(&gs, w(None, false, false, false), now), None, "quiet for less than a quarter of an hour");
         gs.last_event = Timestamp(now.0 - QUIET_SECS - 1);
-        assert!(gone(&gs, None, false, now), "nothing written for a quarter of an hour");
-        assert!(gone(&gs, Some(false), false, now), "the journal of a crashed game, read the next day");
-        assert!(!gone(&gs, Some(true), false, now), "idle, but its process runs");
         gs.status = Some(std::sync::Arc::new(nexus_journal::companion::Status { timestamp: Timestamp(now.0 - 30), ..Default::default() }));
-        assert!(!gone(&gs, None, false, now), "Status.json was written half a minute ago");
+        assert_eq!(gone(&gs, w(None, false, false, false), now), None, "Status.json was written half a minute ago");
         gs.game_closed = true;
-        assert!(!gone(&gs, Some(false), true, now), "closed normally: the journal says so");
+        assert_eq!(gone(&gs, w(Some(false), true, true, false), now), None, "closed normally: the journal says so");
     }
 }

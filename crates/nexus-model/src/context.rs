@@ -251,16 +251,22 @@ mod tests {
         assert_eq!(context(&m), Context::default(), "the game closed");
     }
 
-    /// A crash writes no `Shutdown`: once the app finds the game gone, the last Status.json no longer counts.
+    /// A crash writes no `Shutdown`: once the app finds the game gone, the last Status.json no longer counts. Only a sure
+    /// verdict counts as stopped, though.
     #[test]
     fn a_game_gone_without_a_shutdown_is_not_in_game() {
+        use crate::state::GameGone;
         let mut m = logged_in();
         status(&mut m, SHIP | flags::SUPERCRUISE, 0, "");
         assert_eq!(activity(&m), Activity::Supercruise);
-        m.active_mut().expect("commander").game_gone = true;
-        assert_eq!(context(&m), Context::default());
-        assert!(!m.active().expect("commander").game_running());
-        m.active_mut().expect("commander").game_gone = false;
+        for gone in [GameGone::Process, GameGone::Quiet] {
+            m.active_mut().expect("commander").game_gone = Some(gone);
+            assert_eq!(context(&m), Context::default(), "{gone:?}");
+            let gs = m.active().expect("commander");
+            assert!(!gs.game_running());
+            assert_eq!(gs.game_stopped(), gone == GameGone::Process, "quiet isn't sure");
+        }
+        m.active_mut().expect("commander").game_gone = None;
         assert_eq!(activity(&m), Activity::Supercruise, "found running again");
     }
 

@@ -2893,7 +2893,7 @@ mod tests {
         assert!(p["powerplay"].is_null() && p["squadron"].is_null(), "not pledged, no squadron: {p}");
         // A crash writes no Shutdown: once the app has found the game gone, it isn't running either.
         let mut m = commander();
-        m.active_mut().unwrap().game_gone = true;
+        m.active_mut().unwrap().game_gone = Some(nexus_model::GameGone::Process);
         let p = model_tools(m, &rt).call("progress", &json!({})).unwrap();
         assert_eq!(p["game"]["running"], false);
     }

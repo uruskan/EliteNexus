@@ -91,9 +91,12 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
 * Alerts: `App::notify` shows each one as a banner and keeps it in `alert_history.rs`, the list behind the bell in the
   toolbar (this run's last 200, in memory; a repeat within 20 seconds is left out of both).
 * Whether the game runs: a crash writes no `Shutdown`, so `game_process.rs` looks for the game's process every 5 s
-  (Windows: the process list; Linux: /proc) and `App::watch_game` sets `GameState::game_gone` when it has gone, or,
-  for a game never seen on this computer (another PC's journal folder, a Mac), when the journal and Status.json have
-  been quiet for 15 minutes. `GameState::game_running` and `nexus_model::context` read it.
+  (Windows: the process list; Linux: /proc) and `App::watch_game` sets `GameState::game_gone` (`game_process::gone`):
+  `Process` when it was seen here and has gone, or, on Windows with the journal folder found automatically, isn't
+  running while the journal has been quiet since start; `Quiet` when nothing has been written since start and for
+  15 minutes; never once the game has written while Elite Nexus runs (other cases), nor in test runs.
+  `GameState::game_running` and `nexus_model::context` read it; `GameState::game_stopped` (a `Shutdown` or `Process`)
+  is what the cockpit lights' calibration waits for.
 * Follow my flight (`follow.rs`, Settings › Exploration): `Follower::step` reduces `nexus_model::context` to the
   page that fits (Navigation, Exploration, Exobiology) and names it when that changes, pure and tested; `App::logic`
   switches to it only while one of those pages is shown and the journal is followed live.

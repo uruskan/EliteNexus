@@ -156,9 +156,10 @@ release time that section becomes the new version and the release workflow publi
 - **After the game crashes, Elite Nexus no longer says it's running.** A crash leaves no Shutdown in the journal, so
   the toolbar kept saying Live, the overlay and Follow my flight went on as if you were in the game, HUD & cockpit
   said the game was running and Ask told you it was, even when you started Elite Nexus the next day. Elite Nexus now
-  checks whether the game's program runs on this computer (Windows and Linux). For a journal folder shared from
-  another computer, and on a Mac, the game counts as stopped once neither the journal nor Status.json has been
-  written for 15 minutes.
+  looks for the game's program on this computer (Windows and Linux): once it has seen the game running and it's gone,
+  the game has stopped, and on Windows, with the journal folder Elite Nexus finds by itself, a game that isn't running
+  when you start Elite Nexus has stopped too. Otherwise a game that has written nothing since Elite Nexus started
+  counts as stopped once its journal and Status.json have been quiet for 15 minutes.
 - **Copy the next system** no longer copies one by itself when you pick another journal folder or log in with
   another commander: when the journals read then held more jumps than a moment before, that counted as a jump just
   made, and the next system went on your clipboard.

@@ -120,6 +120,9 @@ pub struct NexusApp {
     game_process: crate::game_process::GameProcess,
     /// The game's process has been seen on this computer since the journals were read: when it goes, so has the game.
     game_seen_here: bool,
+    /// The journal folder in use is the one Elite Nexus found by itself, this computer's own (not one set in Settings or
+    /// on the command line): on Windows, the game's process missing then means the game isn't running.
+    own_journals: bool,
     clipboard: Option<arboard::Clipboard>,
     /// The overlay: the island at the top of the game's screen, in a window of its own.
     overlay: crate::overlay::window::Overlay,
@@ -155,6 +158,7 @@ impl NexusApp {
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("nexus-net").enable_all().build().expect("tokio runtime");
         let mut market = crate::market::MarketService::open(&data_dir, &cc.egui_ctx);
         market.set_watches(&settings.price_watches);
+        let own_journals = ov.journal_dir.is_none() && settings.journal_dir.is_none();
         let core = start_core(&cc.egui_ctx, ov.journal_dir.as_ref().or(settings.journal_dir.as_ref()), market.history_sink(), &settings.mining);
         market.attach(&core);
         market.set_listen(settings.accounts.eddn_listen, rt.handle());
@@ -251,6 +255,7 @@ impl NexusApp {
             // Test runs read journals nobody is writing: whether the game runs here says nothing about them.
             game_process: crate::game_process::GameProcess::start(live_run),
             game_seen_here: false,
+            own_journals,
             clipboard: None,
             overlay,
             xsoverlay: Default::default(),
@@ -319,16 +324,30 @@ impl NexusApp {
         }
     }
 
+    /// A run that follows the game: not a test run, which reads journals nobody is writing (`--journal-dir`, a replay,
+    /// screenshots).
+    fn live_run(&self) -> bool {
+        self.overrides.journal_dir.is_none() && self.shot.is_none()
+    }
+
     /// A crash writes no `Shutdown`, so the journal alone would have the game running forever: whether it still runs
-    /// comes from its process on this computer, or from the journal and Status.json going quiet
-    /// (`game_process::gone`). The verdict goes into the model, where pages, the overlay and Ask's tools read it.
+    /// comes from its process on this computer, or from a journal quiet since Elite Nexus started (`game_process::gone`).
+    /// The verdict goes into the model, where pages, the overlay and Ask's tools read it. Never in a test run.
     fn watch_game(&mut self) {
-        let process = self.game_process.running();
-        self.game_seen_here |= process == Some(true);
+        let watch = if self.live_run() {
+            let process = self.game_process.running();
+            self.game_seen_here |= process == Some(true);
+            // Read and let go before the model is locked: the core thread takes the two the other way round.
+            let live_lines = self.core.status.read().live_events > 0;
+            Some(crate::game_process::Watch { process, seen_here: self.game_seen_here, absence_final: cfg!(windows) && self.own_journals, live_lines })
+        } else {
+            None
+        };
+        let now = nexus_journal::Timestamp::now();
         let gone = {
             let model = self.core.model.read();
             let Some(gs) = model.active() else { return };
-            let gone = crate::game_process::gone(gs, process, self.game_seen_here, nexus_journal::Timestamp::now());
+            let gone = watch.and_then(|w| crate::game_process::gone(gs, w, now));
             if gone == gs.game_gone {
                 return;
             }
@@ -762,7 +781,9 @@ impl NexusApp {
             Page::Bindings => settings_changed |= pages::bindings::show(ui, &mut self.binds, &self.data_dir, &mut self.settings.game_dir),
             Page::Hud => {
                 let s = &mut self.settings;
-                settings_changed |= pages::hud::show(ui, &mut self.hud, &mut s.hud_themes, &mut s.game_dir, gs.game_running(), (&gs.cmdr.game_version, &gs.cmdr.game_build), self.rt.handle());
+                // Running unless surely stopped: a calibration of the cockpit lights finishes only once the game has closed,
+                // never on a journal that's merely quiet (`GameState::game_stopped`).
+                settings_changed |= pages::hud::show(ui, &mut self.hud, &mut s.hud_themes, &mut s.game_dir, !gs.game_stopped(), (&gs.cmdr.game_version, &gs.cmdr.game_build), self.rt.handle());
             }
             Page::Accounts => {
                 let name = gs.cmdr.name.clone();
@@ -898,6 +919,7 @@ impl NexusApp {
             self.flight = Default::default();
             // Another journal folder may be another computer's: the game seen here says nothing about it.
             self.game_seen_here = false;
+            self.own_journals = self.overrides.journal_dir.is_none() && self.settings.journal_dir.is_none();
             // Nor does the old count of jumps: one more in the journals read now isn't a jump just made.
             self.last_jump_count = None;
         }
@@ -1087,7 +1109,7 @@ fn jumped(last: &mut Option<(String, usize)>, fid: &str, jumps: usize) -> bool {
 /// last two minutes (`last_live`). A game found gone after a crash isn't live, however recent its last line.
 fn game_live(phase_live: bool, last_live: Option<Instant>, gs: Option<&nexus_model::GameState>) -> bool {
     let fresh = last_live.is_some_and(|t| t.elapsed() < Duration::from_secs(120));
-    phase_live && !gs.is_some_and(|g| g.game_gone) && (fresh || gs.is_some_and(|g| g.game_running()))
+    phase_live && !gs.is_some_and(|g| g.game_gone.is_some()) && (fresh || gs.is_some_and(|g| g.game_running()))
 }
 
 /// The number of alerts that came in since the alert history was last open, as a pill on the bell's top-right corner.
