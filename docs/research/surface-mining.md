@@ -52,7 +52,7 @@ No journal or Status.json line describes a deposit or a rig. While Elite Nexus r
 (`MiningRefined` in the SRV) is placed at the commander's Status.json position: the first starts a deposit, refines
 within 200 m (`SPOT_RADIUS_M`) belong to it, and those at least 20 m from the ones kept (`POINT_GAP_M`, at most 24)
 are kept as the places it refined. The Rhino collects at each rig, so with rigs at least 75 m apart those places
-show where the rigs stood. The outline drawn is the circle around them: the ground worked, which the deposit may
+most likely show where the rigs stood (an inference: no journal places a rig). The outline drawn is the circle around them: the ground worked, which the deposit may
 exceed.
 
 ## 4. What each ground holds: the survey behind Where to mine's odds

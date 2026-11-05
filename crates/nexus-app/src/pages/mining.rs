@@ -536,48 +536,50 @@ pub fn radar_view(gs: &GameState, prefs: &MiningPrefs) -> Option<RadarView> {
 }
 
 /// How far the surface radar reaches and where a mark sits on it, for the Mining page and the overlay's dial alike.
-/// It's scaled for the deposits near you, so one far away doesn't squeeze them into the middle: the reach takes in
-/// every mark up to three times as far as the nearest deposit, and anything within a kilometre, and is at least
-/// 250 m. Marks further out wait on the rim, in their direction.
+/// It's scaled for what's near you, so one deposit far away doesn't squeeze the rest into the middle: the reach takes
+/// in every mark up to three times as far as the nearest one (a deposit, your ship or where it landed), and anything
+/// within a kilometre, and is at least 250 m. Marks further out wait at the edge, in their direction.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct RadarScale {
     /// The distance the rim stands for, metres.
     pub(crate) reach_m: f64,
+    /// Marks further than this wait at the edge: the farthest mark near you (more on the smallest radar), metres.
+    edge_m: f64,
 }
 
 impl RadarScale {
-    /// Marks up to this many times as far as the nearest deposit are near.
+    /// Marks up to this many times as far as the nearest one are near.
     const SPREAD: f64 = 3.0;
-    /// So are marks within this many metres, however close the nearest deposit is.
+    /// So are marks within this many metres, however close the nearest one is.
     const NEAR_M: f64 = 1_000.0;
     /// The shortest reach, metres.
     const MIN_M: f64 = 250.0;
     /// Room between the farthest mark near you and the rim.
     const MARGIN: f64 = 1.15;
+    /// Where a mark beyond the reach sits, as a share of the radius: as far out as a mark near you can be, so the
+    /// overlay's dial keeps room for the number beside it. The Mining page draws those on the rim itself.
+    const EDGE: f64 = 1.0 / Self::MARGIN;
 
     pub(crate) fn of(v: &RadarView) -> RadarScale {
-        let deposits: Vec<f64> = v.marks.iter().filter(|m| m.kind == MarkKind::Deposit).map(|m| m.dist_m).collect();
-        let all: Vec<f64> = v.marks.iter().map(|m| m.dist_m).collect();
-        RadarScale::fit(&deposits, &all)
+        RadarScale::fit(&v.marks.iter().map(|m| m.dist_m).collect::<Vec<_>>())
     }
 
-    /// Scaled around the nearest of `deposits` (with none, the nearest of `all`), taking in every one of `all` near it.
-    fn fit(deposits: &[f64], all: &[f64]) -> RadarScale {
-        let nearest = |d: &[f64]| d.iter().copied().reduce(f64::min);
-        let near = nearest(deposits).or_else(|| nearest(all)).map_or(0.0, |d| d * Self::SPREAD).max(Self::NEAR_M);
-        let far = all.iter().copied().filter(|d| *d <= near).fold(0.0, f64::max);
-        RadarScale { reach_m: (far * Self::MARGIN).max(Self::MIN_M) }
+    /// Scaled around the nearest of marks `dists` metres away, taking in every one near it.
+    fn fit(dists: &[f64]) -> RadarScale {
+        let near = dists.iter().copied().reduce(f64::min).map_or(0.0, |d| d * Self::SPREAD).max(Self::NEAR_M);
+        let far = dists.iter().copied().filter(|d| *d <= near).fold(0.0, f64::max);
+        RadarScale { reach_m: (far * Self::MARGIN).max(Self::MIN_M), edge_m: far.max(Self::MIN_M / Self::MARGIN) }
     }
 
-    /// How far out from the centre a mark `dist_m` metres away sits, as a share of the radius: 1 on the rim, where the
-    /// marks beyond the reach wait.
+    /// How far out from the centre a mark `dist_m` metres away sits, as a share of the radius; one beyond the marks
+    /// near you at the edge ([`Self::EDGE`]).
     pub(crate) fn at(&self, dist_m: f64) -> f64 {
-        (dist_m / self.reach_m).min(1.0)
+        (dist_m / self.reach_m).min(Self::EDGE)
     }
 
-    /// Beyond the reach: on the rim, with its distance beside it.
+    /// Further than the marks near you: at the edge, and on the Mining page on the rim with its distance beside it.
     pub(crate) fn beyond(&self, dist_m: f64) -> bool {
-        dist_m > self.reach_m
+        dist_m > self.edge_m
     }
 }
 
@@ -620,11 +622,11 @@ pub fn surface_radar(ui: &mut Ui, v: &RadarView, prefs: &mut MiningPrefs) -> boo
     let changed = radar_list(ui, v, 8, prefs);
     footnote(
         ui,
-        "Up is the way you're facing; turn until your heading shows the bearing. The radar is scaled to the deposits near you: anything \
-         further out waits on the rim, in its direction, with its distance. Deposits are where the Rhino refined while Elite Nexus was running \
+        "Up is the way you're facing; turn until your heading shows the bearing. The radar is scaled to what's near you: anything further \
+         out waits on the rim, in its direction, with its distance. Deposits are where the Rhino refined while Elite Nexus was running \
          (the journal records no positions), numbered on each body in the order they were found; numbers and notes are kept between runs. \
-         Rigs aren't in the journal either: a deposit's ring is the ground the Rhino refined on there, so its rigs stood inside it, and the \
-         deposit may reach further.",
+         Rigs aren't in the journal either: a deposit's ring is the ground the Rhino refined on there, so your rigs most likely stood within \
+         it, and the deposit may reach further.",
     );
     changed
 }
@@ -637,7 +639,7 @@ fn in_rhino(gs: &GameState) -> bool {
 /// How far apart rigs go at the least: what commanders report (docs/research/surface-mining.md), as Frontier hasn't
 /// published it.
 const RIG_SPACING_M: f64 = 75.0;
-/// Rigs that work at once, at most.
+/// Rigs that work at once, at most, as commanders report it.
 const MAX_RIGS: u32 = 6;
 
 /// The narrowest round deposit that takes `rigs` rigs at least `spacing` metres apart: the best packing of that many
@@ -659,9 +661,12 @@ fn rig_guide(ui: &mut Ui, heading: bool) {
         ui.label(RichText::new("Placing rigs").font(display(size::HEADLINE)).color(pal::TEXT));
     }
     let spacing = distance_text(RIG_SPACING_M);
-    ui.add(egui::Label::new(RichText::new(format!("Rigs need about {spacing} between them, and up to {MAX_RIGS} work at once. A round deposit takes:")).color(pal::TEXT)).wrap());
+    ui.add(
+        egui::Label::new(RichText::new(format!("Rigs need about {spacing} between them, and commanders report up to {MAX_RIGS} working at once. A round deposit takes:")).color(pal::TEXT))
+            .wrap(),
+    );
     ui.add_space(2.0);
-    Grid::new("rigs-fit").num_columns(MAX_RIGS as usize).spacing(Vec2::new(14.0, 4.0)).show(ui, |ui| {
+    Grid::new("rigs-fit").num_columns(MAX_RIGS as usize).spacing(Vec2::new(14.0, 4.0)).max_col_width(ui.available_width()).show(ui, |ui| {
         th(ui, "Across");
         for n in 2..=MAX_RIGS {
             ui.label(RichText::new(distance_text(patch_width(n, RIG_SPACING_M).round())).color(pal::TEXT));
@@ -682,7 +687,7 @@ fn rig_guide(ui: &mut Ui, heading: bool) {
         ui,
         &format!(
             "Frontier hasn't published the spacing: about {spacing} is what commanders reported in September 2026 (their estimates ran from 75 to 100 m), \
-             and the game refuses a rig closer than that. Deposits run from a few metres to 300 m across (the game's codex, as commanders quote it), \
+             and they report that the game refuses a rig closer than that. Deposits run from a few metres to 300 m across (the game's codex, as commanders quote it), \
              and a rig extracts up to 12 chunks."
         ),
     );
@@ -726,8 +731,10 @@ fn minimap(ui: &mut Ui, v: &RadarView, scale: RadarScale, max_side: f32) {
         }
     }
     let mut labels = Vec::new();
+    let mut spots = Vec::with_capacity(near.len());
     for (m, (e, n)) in &near {
         let sp = at(*e, *n);
+        spots.push(Rect::from_center_size(sp, MAP_MARK_SIZE));
         match m.kind {
             MarkKind::Deposit => {
                 let diamond = [sp + Vec2::new(0.0, -6.0), sp + Vec2::new(5.0, 0.0), sp + Vec2::new(0.0, 6.0), sp + Vec2::new(-5.0, 0.0)];
@@ -760,6 +767,7 @@ fn minimap(ui: &mut Ui, v: &RadarView, scale: RadarScale, max_side: f32) {
     p.line_segment([b, b - Vec2::new(0.0, 5.0)], stroke);
     let bar = p.text(a - Vec2::new(0.0, 8.0), Align2::LEFT_BOTTOM, text, egui::FontId::proportional(size::CAPTION), pal::DIM);
     let mut taken = vec![Rect::from_center_size(me, Vec2::new(18.0, 18.0)), north, bar];
+    taken.extend(spots);
     for (sp, galley) in labels {
         let pos = place_label(sp, galley.size(), rect.shrink(4.0), 7.0, &mut taken);
         p.galley(pos, galley, pal::TEXT);
@@ -823,8 +831,9 @@ fn radar(ui: &mut Ui, v: &RadarView, max_side: f32) {
     marks.sort_by(|a, b| a.dist_m.total_cmp(&b.dist_m));
     let mut labels = Vec::with_capacity(marks.len());
     for m in marks {
+        // Marks further out than those near you go on the rim.
         let beyond = scale.beyond(m.dist_m);
-        let sp = at(scale.at(m.dist_m), m.bearing);
+        let sp = at(if beyond { 1.0 } else { scale.at(m.dist_m) }, m.bearing);
         let fade = if beyond { 0.6 } else { 1.0 };
         match m.kind {
             MarkKind::Deposit => {
@@ -843,12 +852,20 @@ fn radar(ui: &mut Ui, v: &RadarView, max_side: f32) {
     let me = [c + Vec2::new(0.0, -9.0), c + Vec2::new(6.0, 7.0), c + Vec2::new(-6.0, 7.0)];
     p.add(egui::Shape::convex_polygon(me.to_vec(), pal::TEXT, Stroke::NONE));
     let inside = rect.shrink(2.0);
+    // A label keeps off your arrow, the N, the scale and every mark, not just the labels placed before it.
     let mut taken = vec![Rect::from_center_size(c, Vec2::new(14.0, 18.0)), north, header];
+    taken.extend(labels.iter().map(|(sp, _)| Rect::from_center_size(*sp, MARK_SIZE)));
     for (sp, galley) in labels {
         let pos = place_label(sp, galley.size(), inside, 9.0, &mut taken);
         p.galley(pos, galley, pal::TEXT);
     }
 }
+
+/// The room a mark takes on the radar, which labels keep off: less than twice the gap between a mark and its label, so
+/// a label never counts as covering its own mark.
+const MARK_SIZE: Vec2 = Vec2::new(14.0, 16.0);
+/// The same on the minimap, whose marks are smaller and sit closer to their labels.
+const MAP_MARK_SIZE: Vec2 = Vec2::new(12.0, 14.0);
 
 /// A mark's label on the radar: a deposit's number, what the mark is, and the distance of one waiting on the rim.
 fn mark_label(p: &egui::Painter, m: &Mark, beyond: bool) -> std::sync::Arc<egui::Galley> {
@@ -1103,29 +1120,38 @@ mod tests {
         assert!(prefs.notes.is_empty(), "an emptied note is gone");
     }
 
-    /// The radar is scaled for the deposits near you; one far away waits on the rim instead of squeezing them together.
+    /// The radar is scaled for what's near you; a deposit far away waits at the edge instead of squeezing the rest
+    /// together.
     #[test]
-    fn the_radar_is_scaled_for_the_deposits_near_you() {
-        let reach = |deposits: &[f64], others: &[f64]| {
-            let all: Vec<f64> = deposits.iter().chain(others).copied().collect();
-            RadarScale::fit(deposits, &all).reach_m.round()
-        };
+    fn the_radar_is_scaled_for_what_is_near_you() {
+        let reach = |dists: &[f64]| RadarScale::fit(dists).reach_m.round();
         // At a deposit, two more a few hundred metres off, the ship 2 km away and another location's deposit 25 km away.
-        let s = RadarScale::fit(&[50.0, 300.0, 350.0, 25_000.0], &[50.0, 300.0, 350.0, 25_000.0, 2_000.0]);
+        let s = RadarScale::fit(&[50.0, 300.0, 350.0, 25_000.0, 2_000.0]);
         assert_eq!(s.reach_m.round(), 402.0, "350 m and a little room");
         assert!(s.beyond(2_000.0) && s.beyond(25_000.0) && !s.beyond(350.0));
-        assert_eq!((s.at(25_000.0), s.at(0.0)), (1.0, 0.0), "on the rim; you in the middle");
+        // At the edge, as far out as the farthest mark near you (the overlay keeps room for its number); you in the middle.
+        assert_eq!((s.at(25_000.0), s.at(0.0)), (RadarScale::EDGE, 0.0));
+        assert!((s.at(350.0) - RadarScale::EDGE).abs() < 1e-9);
         // Chequers2's two Iridium deposits (discussion 5), 1.8 and 4.4 km away: both near enough to show in place.
-        assert_eq!(reach(&[1_800.0, 4_400.0], &[]), 5_060.0);
+        assert_eq!(reach(&[1_800.0, 4_400.0]), 5_060.0);
         // A chain of deposits each about three times further: what's within a kilometre stays, the rest waits.
-        assert_eq!(reach(&[100.0, 250.0, 700.0, 2_000.0, 6_000.0], &[]), 805.0);
+        assert_eq!(reach(&[100.0, 250.0, 700.0, 2_000.0, 6_000.0]), 805.0);
         // Flying in: the cluster 30 km off is in view, a deposit on the far side of the body isn't.
-        assert_eq!(reach(&[30_000.0, 30_200.0, 30_500.0, 300_000.0], &[]), 35_075.0);
+        assert_eq!(reach(&[30_000.0, 30_200.0, 30_500.0, 300_000.0]), 35_075.0);
         // No deposit yet: the ship and its last landing.
-        assert_eq!(reach(&[], &[20.0, 600.0]), 690.0);
+        assert_eq!(reach(&[20.0, 600.0]), 690.0);
+        // In the Rhino at a new location, the body's only deposits 25 km off at another one: the ship (80 m) and the
+        // landing (300 m) set the scale instead of collapsing onto your arrow.
+        let rhino = RadarScale::fit(&[25_000.0, 25_200.0, 80.0, 300.0]);
+        assert_eq!(rhino.reach_m.round(), 345.0);
+        assert!(rhino.beyond(25_000.0) && !rhino.beyond(300.0));
+        // A mark past the farthest one near you but inside the rim waits at the edge too, not squeezed in at it.
+        let s = RadarScale::fit(&[100.0, 1_000.0, 1_100.0]);
+        assert_eq!(s.reach_m.round(), 1_150.0);
+        assert!(s.beyond(1_100.0) && !s.beyond(1_000.0));
         // Never under 250 m.
-        assert_eq!(reach(&[10.0], &[]), 250.0);
-        assert_eq!(reach(&[], &[]), 250.0);
+        assert_eq!(reach(&[10.0]), 250.0);
+        assert_eq!(reach(&[]), 250.0);
     }
 
     /// A label beside a mark near the right or the bottom edge turns or moves to stay inside the radar.

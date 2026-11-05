@@ -100,11 +100,11 @@ release time that section becomes the new version and the release workflow publi
   there to find, not how much, few locations were read on some grounds, and the game's own target panel shows what a
   location holds.
 - **Mining** › Surface radar helps with rigs. Each deposit gets a ring: the ground the Rhino refined on there, where
-  your rigs stood. A north-up minimap beside the radar frames the deposits near you with their rings, the places the
-  Rhino refined, your ship, where it landed and you. **Placing rigs** says how far apart rigs go and how many fit a
-  deposit: about 75 m apart and up to six at once, so a round deposit takes 2 from 75 m across and 6 from 150 m.
-  Frontier hasn't published the spacing, so the page says it's what commanders report. In the Rhino it shows before
-  your first deposit too.
+  your rigs most likely stood. A north-up minimap beside the radar frames the deposits near you with their rings, the
+  places the Rhino refined, your ship, where it landed and you. **Placing rigs** says how far apart rigs go and how
+  many fit a deposit: about 75 m apart and, commanders report, up to six at once, so a round deposit takes 2 from 75 m
+  across and 6 from 150 m. Frontier hasn't published these, so the page says they're what commanders report. In the
+  Rhino it shows before your first deposit too.
 - **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
   the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
   for later starts.
@@ -150,9 +150,10 @@ release time that section becomes the new version and the release workflow publi
   into each ingredient against what you have, instead of a run of "3× Vanadium (0)" in coloured brackets.
 - **Market**: the four lines of live-feed messages under every tab are gone, so each tab starts higher up. The
   **Live** badge stays, with the feed's rate and the database's size beside it.
-- **Mining** › Surface radar is scaled to the deposits near you, on the Mining page and the overlay alike: one deposit
-  far away no longer squeezes the near ones into the middle. Anything further out waits on the rim, in its direction,
-  with its distance, and labels by the edge stay inside the radar instead of being cut off (seen by Chequers2).
+- **Mining** › Surface radar is scaled to what's near you (deposits, your ship, where it landed): one deposit far away
+  no longer squeezes the rest into the middle. On the Mining page anything further out waits on the rim, in its
+  direction, with its distance, and labels stay inside the radar instead of being cut off (seen by Chequers2). The
+  overlay's radar uses the same scale and keeps anything further out at its edge.
 
 ### Fixed
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
