@@ -136,18 +136,24 @@ fn volcanism_arg(a: &Value) -> Result<Option<Volcanism>, String> {
     Ok(Some(v))
 }
 
-/// The material asked for, as the game names it ("monazite", "LTD", "low temp"); None for any.
+/// The material asked for, as the game names it: its name in any case ("monazite"), "LTD" or the survey's "Low Temp
+/// Diamonds", or the start of one name ("monaz"); a start several names share is refused with them. None for any.
 fn material_arg(a: &Value) -> Result<Option<&'static str>, String> {
     let Some(asked) = arg_str(a, "material").filter(|m| !matches!(m.trim().to_ascii_lowercase().as_str(), "" | "any" | "all")) else { return Ok(None) };
     let k = name_key(&asked);
     let all = ground_odds::materials();
-    all.iter()
-        .copied()
-        .find(|m| name_key(m) == k)
-        .or_else(|| matches!(k.as_str(), "ltd" | "ltds").then_some("Low Temperature Diamonds"))
-        .or_else(|| all.iter().copied().find(|m| !k.is_empty() && name_key(m).starts_with(&k)))
-        .map(Some)
-        .ok_or_else(|| format!("material must be one the Rhino mines: {}; not \"{asked}\".", all.join(", ")))
+    if let Some(m) = all.iter().copied().find(|m| name_key(m) == k) {
+        return Ok(Some(m));
+    }
+    if matches!(k.as_str(), "ltd" | "ltds" | "lowtempdiamond" | "lowtempdiamonds") {
+        return Ok(Some("Low Temperature Diamonds"));
+    }
+    let starts: Vec<&'static str> = all.iter().copied().filter(|m| !k.is_empty() && name_key(m).starts_with(&k)).collect();
+    match starts.as_slice() {
+        [one] => Ok(Some(one)),
+        [] => Err(format!("material must be one the Rhino mines: {}; not \"{asked}\".", all.join(", "))),
+        several => Err(format!("\"{asked}\" could be {}: give the whole name.", several.join(", "))),
+    }
 }
 
 /// "rocky bodies with rocky magma and 5 or more mining locations", as the Mining page says it.
@@ -167,8 +173,11 @@ fn what(q: &Query) -> String {
 /// many of its own locations would.
 fn add_odds(v: &mut Value, c: &Candidate, material: Option<&str>) {
     if let Some(s) = material.and_then(|m| c.odds(m)) {
+        // Two places under one location, so a rare listing doesn't round to none.
+        let likely = s.expected(c.locations);
+        let places = if likely < 1.0 { 100.0 } else { 10.0 };
         v["odds_pct"] = json!((s.pct() * 10.0).round() / 10.0);
-        v["likely_locations"] = json!((s.expected(c.locations) * 10.0).round() / 10.0);
+        v["likely_locations"] = json!((likely * places).round() / places);
     }
 }
 
@@ -243,7 +252,8 @@ fn shape_near(near: &str, q: &Query, found: &Found, list: &[&Candidate], most: b
         }
         let mut notes = vec![COUNTS.to_string(), NO_PROMISE.to_string(), ODDS.to_string()];
         if most {
-            notes.push(format!("The {n} with the most mining locations among the {} nearest are listed.", found.list.len()));
+            let order = q.material.map_or_else(|| "with the most mining locations".to_string(), |m| format!("likeliest to list {m}"));
+            notes.push(format!("The {n} {order} among the {} nearest are listed.", found.list.len()));
         } else if (n as u64) < found.matched {
             notes.push(format!("The {n} nearest are listed."));
         }
@@ -528,6 +538,11 @@ mod tests {
         let arg = |m: &str| material_arg(&json!({ "material": m }));
         assert_eq!((arg("ltd"), arg("monaz"), arg("helium-3"), arg("any")), (Ok(Some("Low Temperature Diamonds")), Ok(Some("Monazite")), Ok(Some("Helium-3")), Ok(None)));
         assert!(arg("Painite").is_err_and(|e| e.contains("Monazite")));
+        assert_eq!((arg("Low Temp Diamonds"), arg("helium")), (Ok(Some("Low Temperature Diamonds")), Ok(Some("Helium"))), "the survey's spelling; a whole name before one it starts");
+        assert!(arg("uran").is_err_and(|e| e.contains("Uraninite, Uranium")), "a start two names share is refused with both");
+        // Sorted by the odds, the note says so.
+        let most = shape_near("Alpha", &monazite, &found, &refs, true, &|_| 0, &[], 11_500);
+        assert!(most["notes"].as_array().unwrap().iter().any(|n| n == "The 1 likeliest to list Monazite among the 1 nearest are listed."), "{most}");
     }
 
     #[test]

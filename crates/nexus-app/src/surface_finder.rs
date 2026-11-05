@@ -246,7 +246,7 @@ pub async fn along(spansh: &Spansh, q: &Query, stretches: usize) -> Result<Found
         let Some(ends) = found.ends else {
             return Err("Spansh didn't say where the route starts and ends.".into());
         };
-        if !full || covered(&found.list, ends, stretches) {
+        if !full || covered(&found.list, ends, stretches, q.material) {
             break;
         }
     }
@@ -279,10 +279,11 @@ fn stretch(t: f64, n: usize) -> usize {
     ((t * n as f64) as usize).min(n.saturating_sub(1))
 }
 
-/// Every stretch has a body.
-fn covered(list: &[Candidate], (a, b): ([f64; 3], [f64; 3]), n: usize) -> bool {
+/// Every stretch has a body: with a material, one whose ground's surveyed locations listed it, so a search for a
+/// magma material reads on past stretches of bodies that won't have it.
+fn covered(list: &[Candidate], (a, b): ([f64; 3], [f64; 3]), n: usize, material: Option<&str>) -> bool {
     let mut seen = vec![false; n.max(1)];
-    for p in list.iter().filter_map(|c| c.system_pos) {
+    for p in list.iter().filter(|c| c.likely(material) > 0.0).filter_map(|c| c.system_pos) {
         seen[stretch(progress(a, b, p), n.max(1))] = true;
     }
     seen.iter().all(|s| *s)
@@ -697,8 +698,11 @@ mod tests {
     fn a_route_is_covered_when_every_stretch_has_a_body() {
         let ends = ([0.0; 3], [100.0, 0.0, 0.0]);
         let list = vec![body("A", "1", 10.0, 0.0, 1), body("B", "1", 60.0, 0.0, 1)];
-        assert!(covered(&list, ends, 2));
-        assert!(!covered(&list, ends, 3), "B at 60 ly is in the middle third: the last third is empty");
+        assert!(covered(&list, ends, 2, None));
+        assert!(!covered(&list, ends, 3, None), "B at 60 ly is in the middle third: the last third is empty");
+        // Looking for a material, a stretch counts only with a body whose ground listed it: both are rocky magma.
+        assert!(covered(&list, ends, 2, Some("Monazite")));
+        assert!(!covered(&list, ends, 2, Some("Platinum")), "no rocky magma location read listed Platinum: read on");
         assert_eq!(progress(ends.0, ends.1, [150.0, 5.0, 0.0]), 1.0, "past the end counts as the end");
         assert_eq!(progress(ends.0, ends.0, [5.0, 0.0, 0.0]), 0.0, "a route to where you are");
     }

@@ -273,7 +273,8 @@ fn material_grounds(ui: &mut Ui, st: &mut WhereUi) {
             let on = st.class == Some(g.class) && st.volcanism == g.volcanism;
             let tip = format!("{} of the {} locations read on {} listed it. Click to search this ground.", s.listed, s.of, g.label().to_lowercase());
             if widgets::pill(ui, on, &format!("{} {:.0}%", g.label(), s.pct())).on_hover_text(tip).clicked() {
-                (st.class, st.volcanism) = (Some(g.class), g.volcanism);
+                // The search below starts on this frame, or when the one running ends.
+                (st.class, st.volcanism, st.autorun) = (Some(g.class), g.volcanism, true);
             }
         }
     });
@@ -292,15 +293,12 @@ fn odds_cell(ui: &mut Ui, c: &Candidate, material: &str) {
         ui.spacing_mut().item_spacing.y = 0.0;
         match c.odds(material) {
             Some(s) if s.listed > 0 => {
-                let likely = s.expected(c.locations);
+                let likely = likely_text(s.expected(c.locations));
                 ui.label(RichText::new(format!("{:.0}%", s.pct())).font(display(size::CALLOUT)).color(pal::GOLD)).on_hover_text(format!(
-                    "{} of the {} locations read on its ground listed {material}; about {} of this body's {} would, if they're like those",
-                    s.listed,
-                    s.of,
-                    likely_text(likely),
-                    c.locations
+                    "{} of the {} locations read on its ground listed {material}; of this body's {}, {likely} would if they're like those",
+                    s.listed, s.of, c.locations
                 ));
-                ui.label(RichText::new(format!("≈ {} of {}", likely_text(likely), c.locations)).size(size::CAPTION).color(pal::DIM));
+                ui.label(RichText::new(format!("{likely} of {}", c.locations)).size(size::CAPTION).color(pal::DIM));
             }
             Some(s) => {
                 ui.label(RichText::new("0%").color(pal::FAINT)).on_hover_text(format!("None of the {} locations read on its ground listed {material}", s.of));
@@ -312,9 +310,15 @@ fn odds_cell(ui: &mut Ui, c: &Candidate, material: &str) {
     });
 }
 
-/// "8", or "0.4" under one.
+/// "≈ 8", "≈ 0.4" under one, "< 0.1" under a twentieth.
 fn likely_text(v: f64) -> String {
-    if v < 1.0 { format!("{v:.1}") } else { format!("{v:.0}") }
+    if v < 0.05 {
+        "< 0.1".to_string()
+    } else if v < 1.0 {
+        format!("≈ {v:.1}")
+    } else {
+        format!("≈ {v:.0}")
+    }
 }
 
 /// "Monazite 58% · Olivine 58% · Bastnasite 53%": what a ground's locations listed most, or the odds of `material`.
@@ -324,7 +328,7 @@ fn odds_line(ground: Option<Ground>, locations: u32, material: Option<&str>) -> 
     Some(match material {
         Some(m) => {
             let s = survey.share(m);
-            let likely = if locations > 0 && s.listed > 0 { format!(", ≈ {} of its {locations}", likely_text(s.expected(locations))) } else { String::new() };
+            let likely = if locations > 0 && s.listed > 0 { format!(", {} of its {locations}", likely_text(s.expected(locations))) } else { String::new() };
             format!("{m}: {} of {} read{likely}", share(s), s.of)
         }
         None => survey.listed.iter().take(3).map(|(m, _)| format!("{m} {}", share(survey.share(m)))).collect::<Vec<_>>().join(" · "),
@@ -363,7 +367,7 @@ fn near_you(ui: &mut Ui, gs: &GameState, st: &mut WhereUi, spansh: &nexus_spansh
         label(ui, "Within");
         widgets::segmented(ui, &mut st.radius, &[(25, "25 ly"), (50, "50 ly"), (100, "100 ly"), (250, "250 ly"), (500, "500 ly"), (1000, "1,000 ly")]);
         let busy = st.near.busy();
-        if (search_button(ui, busy, origin.is_some()) || std::mem::take(&mut st.autorun))
+        if (search_button(ui, busy, origin.is_some()) || (!busy && std::mem::take(&mut st.autorun)))
             && !busy
             && let Some(origin) = origin
         {
@@ -616,7 +620,7 @@ fn along_route(
         widgets::segmented(ui, &mut st.stops, &[(5, "5"), (10, "10"), (25, "25"), (50, "50")]);
         let busy = st.route.busy();
         let ready = !from.is_empty() && to.as_deref().is_some_and(|t| !t.eq_ignore_ascii_case(&from));
-        if (search_button(ui, busy, ready) || std::mem::take(&mut st.autorun))
+        if (search_button(ui, busy, ready) || (!busy && std::mem::take(&mut st.autorun)))
             && !busy
             && ready
             && let Some(to) = to.clone()
@@ -859,7 +863,10 @@ mod tests {
         assert_eq!(odds_line(magma, 14, Some("Platinum")).as_deref(), Some("Platinum: 0% of 36 read"));
         assert_eq!(odds_line(Some(Ground { class: Class::Rocky, volcanism: Volcanism::WaterGeysers }), 3, None), None, "a ground nobody read");
         assert_eq!(and_list(&["a".into(), "b".into(), "c".into()]), "a, b and c");
-        assert_eq!(likely_text(0.43), "0.4");
+        assert_eq!((likely_text(8.17), likely_text(0.43), likely_text(0.04)), ("≈ 8".to_string(), "≈ 0.4".to_string(), "< 0.1".to_string()));
+        // Sapphire on a rocky body without volcanism: 3 of 242 read, so of its 3 locations well under a tenth.
+        let rocky = Some(Ground { class: Class::Rocky, volcanism: Volcanism::Inactive });
+        assert_eq!(odds_line(rocky, 3, Some("Sapphire")).as_deref(), Some("Sapphire: 1% of 242 read, < 0.1 of its 3"));
     }
 
     #[test]

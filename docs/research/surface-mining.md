@@ -68,8 +68,10 @@ materials once it's targeted after a DSS scan (§2). A survey of what those pane
   without volcanism 242, rocky with metallic magma 99, rocky magma 36, silicate vapour geysers 139, rocky ice 47,
   icy 178. Rocky bodies with other volcanism weren't read.
 * **Counts:** `nexus_data::ground_odds` keeps, per ground, how many locations listed each material:
-  round(share × locations read). All 192 counts give back the published share to a tenth of a percent (checked
-  2026-11-05), so they are the survey's own counts. Materials are named as the game names the commodities ("Low Temp
+  round(share × locations read), 144 of them, one for each share the survey published (19 metal-rich, 19 high metal
+  content, 23 rocky without volcanism, 25 metallic magma, 22 rocky magma, 20 silicate vapour geysers, 10 rocky ice,
+  6 icy); a material it listed nowhere on a ground counts as 0 there. Each of the 144 gives back the published share
+  to a tenth of a percent (checked 2026-11-05), so they are the survey's own counts. Materials are named as the game names the commodities ("Low Temp
   Diamonds" there is Low Temperature Diamonds).
 * **What the page does with them:** the share per ground, "x of n read" wherever it matters (36 rocky magma
   locations make rough odds), and share × a body's own locations as "≈ n" (an average, which holds however the
