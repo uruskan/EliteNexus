@@ -3592,6 +3592,7 @@ mod tests {
         let asked = tools.call("engineering", &json!({ "module": "fsd", "blueprint": "increased range", "from_grade": 4, "rolls_per_grade": 9 })).unwrap();
         assert_eq!((asked["rolls_at_each_grade"].clone(), asked.get("modules")), (json!({ "G4": 5, "G5": 5 }), None), "{asked}");
         assert_eq!(need(&asked, "manganese"), Some(5));
+        assert!(asked["notes"].as_array().unwrap().iter().any(|n| n.as_str().unwrap().contains("at most 5")), "the cap is said: {asked}");
         // Each module gets its own experimental effect.
         let one = tools.call("engineering", &json!({ "module": "fsd", "blueprint": "increased range", "from_grade": 1, "experimental": "Mass Manager" })).unwrap();
         let three = tools.call("engineering", &json!({ "module": "fsd", "blueprint": "increased range", "from_grade": 1, "experimental": "Mass Manager", "modules": 3 })).unwrap();

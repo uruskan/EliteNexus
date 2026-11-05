@@ -188,7 +188,7 @@ fn to_unlock(e: &Engineer, status: Option<&str>) -> Option<String> {
 
 /// The whole way to an engineer, each step marked done or next, as the Engineers tab shows it.
 fn way_to(e: &Engineer, status: Option<&str>) -> Value {
-    let next = Step::next(status);
+    let next = e.next_step(status);
     let barred = status.is_some_and(|s| s.trim().eq_ignore_ascii_case("Barred"));
     Step::ALL
         .into_iter()
@@ -356,7 +356,9 @@ impl NexusTools {
         }
         // The rolls at each grade: the same count at every grade when asked, else the engineer's top rank's (1 at G1 up
         // to 5 at G5), as the Blueprint planner starts from. On how many modules.
-        let asked_rolls = arg_f64(a, "rolls_per_grade").map(|r| r.round().clamp(1.0, f64::from(eng::MAX_ROLLS)) as u32);
+        let raw_rolls = arg_f64(a, "rolls_per_grade").filter(|r| r.is_finite());
+        let asked_rolls = raw_rolls.map(|r| r.round().clamp(1.0, f64::from(eng::MAX_ROLLS)) as u32);
+        let capped = raw_rolls.is_some_and(|r| r.round() > f64::from(eng::MAX_ROLLS));
         let rolls = asked_rolls.map_or(eng::GRADE_ROLLS, |r| [r; 5]);
         let modules = arg_f64(a, "modules").map_or(1, |m| m.round().clamp(1.0, f64::from(MAX_MODULES)) as u32);
         let x = arg_str(a, "experimental").map(|e| find_experimental(t, &e)).transpose()?;
@@ -445,8 +447,9 @@ impl NexusTools {
         let engineers = by_reach(gs, bp.engineers_for_grade(to).filter_map(|g| eng::engineer_by_name(&g.engineer).map(|e| (e, g.max_grade))));
         let fitted: Vec<Value> = fitted.into_iter().map(fitted_row).collect();
         notes.push(match asked_rolls {
+            Some(n) if capped => format!("A roll takes one set of its grade's materials; needed counts {n} rolls at each grade: more were asked, but since the game's 2024 update a grade takes at most {n}, as commanders report."),
             Some(n) => format!("A roll takes one set of its grade's materials; needed counts {n} roll{} at each grade, as asked.", if n == 1 { "" } else { "s" }),
-            None => "A roll takes one set of its grade's materials. Since 2024 each roll fills a fixed share of its grade, set by the grade and the commander's rank with the engineer: needed counts the top rank's rolls (1 at G1 up to 5 at G5); at a lower rank a grade takes up to 5.".to_string(),
+            None => "A roll takes one set of its grade's materials. Since 2024 each roll fills a fixed share of its grade, set by the grade and the commander's rank with the engineer: needed counts the top rank's rolls (1 at G1 up to 5 at G5); at a lower rank commanders report up to 5 a grade.".to_string(),
         });
         if modules > 1 {
             notes.push(format!("needed covers {modules} modules, each rolled on its own and each with its own experimental effect."));
@@ -567,7 +570,12 @@ fn engineer_detail(gs: &GameState, e: &Engineer) -> Value {
     }
     strip_nulls(&mut v);
     if status.is_none() {
-        v["notes"] = json!(["No status: the commander's journal doesn't list this engineer yet, so they haven't heard of them."]);
+        let note = if e.public() {
+            "No status: the commander's journal doesn't list this engineer yet, though every commander knows of them from the start."
+        } else {
+            "No status: the commander's journal doesn't list this engineer yet, so they haven't heard of them."
+        };
+        v["notes"] = json!([note]);
     }
     v
 }

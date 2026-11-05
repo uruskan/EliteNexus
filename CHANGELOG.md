@@ -235,8 +235,8 @@ release time that section becomes the new version and the release workflow publi
   next two). Each grade now has its own number of rolls, shown as chips under the grade to reach.
   - Since the game's August 2024 update, every roll fills a fixed share of its grade, set by the grade and your rank
     with the engineer. The planner starts from an engineer's top rank: 1 roll at G1, 2 at G2, up to 5 at G5.
-  - The pen opens all five grades to change. At a lower rank a grade takes up to 5 rolls, and a button sets the counts
-    for the rank your journal reports with the engineer for the plan.
+  - The pen opens all five grades to change. At a lower rank a grade takes up to 5 rolls, as commanders report, and a
+    button sets the counts for the rank your journal reports with the engineer for the plan.
   - Your counts are kept for later plans.
 - **Engineering › Blueprint planner: number of modules**. Plan one blueprint for several modules at once, such as four
   hull reinforcement packages. The materials, Merc Coins and experimental effects count for every module, and so do the
@@ -277,8 +277,8 @@ release time that section becomes the new version and the release workflow publi
   and − and + step it by an amount that fits its size (1,000 Cr around 48,000 Cr, 100,000 Cr around 1.5 M Cr); **Within**
   can be **Anywhere**. Under it, the commodity's galactic average and the best price in the alert's range right now,
   with its filters, each set the price in one click. Your alerts are a list with a switch and a delete button on each.
-- **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
-  controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
+- **Engineering** › Blueprint planner is easier to read. Pick the grade to reach with plain controls, and it says at
+  once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
 - **Engineering** › Suits & weapons and Synthesis read the same way: each recipe (a grade, a modification, a
   synthesis) is one row that says Ready or how many materials you're short of, with its price or effect, and opens
@@ -348,7 +348,8 @@ release time that section becomes the new version and the release workflow publi
 
 ### Fixed
 - **Engineering › Engineers**, checked against every game update since August 2024 and current guides:
-  - Bill Turner comes through Selene Jean's referral; the list said every commander knows of him from the start.
+  - Bill Turner comes through Selene Jean's referral. The data, and so Ask, said every commander knows of him from
+    the start.
   - On-foot engineers no longer carry hand-ins from before 2024 (15 Settlement Defence Plans and the like) into what
     Ask says. The game's current, lower requirements were already shown.
   - On-foot engineers' modifications show by name instead of the game's codes (`suit_improvedarmourrating`).

@@ -107,7 +107,8 @@ pub struct WishItem {
     pub from: u8,
     pub to: u8,
     /// The same rolls at every grade, as items were planned before each grade had its own; read for those. New items
-    /// keep their largest grade's here, so an older Elite Nexus reading the file plans enough.
+    /// keep their largest grade's here, so an older Elite Nexus reading the file plans at least one module's rolls (it
+    /// doesn't know about `modules`).
     pub rolls: u32,
     /// Rolls at each grade, G1 first; all 0 in items saved before each grade had its own.
     pub grade_rolls: [u32; 5],
@@ -117,14 +118,18 @@ pub struct WishItem {
 }
 
 impl WishItem {
-    /// The rolls planned at each grade, G1 first.
+    /// The most rolls an item plans at a grade: the old planner went up to 10 (a grade takes at most 5 now).
+    const MOST_ROLLS: u32 = 10;
+
+    /// The rolls planned at each grade, G1 first, each from 1 to 10 (a hand-edited file may say anything).
     pub fn rolls_by_grade(&self) -> [u32; 5] {
-        if self.grade_rolls.iter().any(|&n| n > 0) { self.grade_rolls } else { [self.rolls.max(1); 5] }
+        let rolls = if self.grade_rolls.iter().any(|&n| n > 0) { self.grade_rolls } else { [self.rolls; 5] };
+        rolls.map(|n| n.clamp(1, Self::MOST_ROLLS))
     }
 
-    /// How many modules get it.
+    /// How many modules get it, from 1 to the planner's most.
     pub fn module_count(&self) -> u32 {
-        self.modules.max(1)
+        self.modules.clamp(1, crate::pages::engineering::MAX_MODULES)
     }
 }
 

@@ -258,10 +258,24 @@ impl Engineer {
         }
     }
 
+    /// Known to every commander from the start: no one refers them.
+    pub fn public(&self) -> bool {
+        self.referred_by.is_empty()
+    }
+
+    /// The step the commander is on with them ([`Step::next`]), past hearing of them for one known to all from the start
+    /// (the journal may not have listed any engineer yet).
+    pub fn next_step(&self, progress: Option<&str>) -> Option<Step> {
+        match Step::next(progress) {
+            Some(Step::Learn) if self.public() => Some(Step::Invitation),
+            s => s,
+        }
+    }
+
     /// The steps still ahead from where the commander stands with them (`progress` as for [`Step::next`]): all three for
     /// one they haven't heard of, none once they're unlocked.
     pub fn steps_from(&self, progress: Option<&str>) -> Vec<(Step, String)> {
-        let Some(next) = Step::next(progress) else { return Vec::new() };
+        let Some(next) = self.next_step(progress) else { return Vec::new() };
         Step::ALL.into_iter().filter(|s| *s >= next).map(|s| (s, self.step(s))).collect()
     }
 
@@ -269,7 +283,7 @@ impl Engineer {
     /// third of grade 4 with the engineer before), or an on-foot engineer's referral task (goods handed to the one
     /// before).
     fn learn(&self) -> String {
-        if self.referred_by.is_empty() {
+        if self.public() {
             return "Known to every commander from the start.".into();
         }
         if self.kind == EngineerKind::Ship {
@@ -868,15 +882,16 @@ pub fn blueprints_for_module(module_symbol_or_type: &str) -> Vec<&'static Bluepr
 /// The rolls that complete each grade (G1 first) at an engineer's top rank: 1 for G1 up to 5 for G5. Since the game's
 /// Update 18.08 (6 August 2024) a roll fills a fixed share of its grade, set by the grade and the commander's rank with
 /// the engineer ([`rolls_at_rank`]; `docs/research/engineering.md` §6.1 has the sources). The Blueprint planner and Ask
-/// start from these; Fleet's planner can read the commander's own from the Engineering page's settings.
+/// start from these, and the commander's own are in the Engineering page's settings, for Fleet's planner to read too.
 pub const GRADE_ROLLS: [u32; 5] = [1, 2, 3, 4, 5];
 
-/// The most rolls a grade takes: at the rank that opens it, a roll fills a fifth of it.
+/// The most rolls a grade takes, as commanders report it: at the rank that opens it, a roll fills a fifth of it.
 pub const MAX_ROLLS: u32 = 5;
 
-/// The rolls that complete `grade` (1–5) at `rank` with the engineer: 5 at the rank that opens the grade, one fewer
-/// for each rank above it, so 1 for G1 at rank 5. A grade above the rank counts at the rank that opens it, as the
-/// commander has to reach that first. 0 for a grade that doesn't exist.
+/// The rolls that complete `grade` (1–5) at `rank` with the engineer, as commanders report them (Frontier's notes say
+/// only that grade and rank set them): 5 at the rank that opens the grade, one fewer for each rank above it, so 1 for
+/// G1 at rank 5. A grade above the rank counts at the rank that opens it, as the commander has to reach that first. 0
+/// for a grade that doesn't exist.
 pub fn rolls_at_rank(grade: u8, rank: u8) -> u32 {
     if !(1..=5).contains(&grade) {
         return 0;
@@ -1159,9 +1174,13 @@ mod tests {
         assert_eq!(labels(Some("Invited")), vec![Step::Unlock]);
         assert_eq!(labels(Some("Acquainted")), vec![Step::Unlock]);
         assert!(labels(Some("Unlocked")).is_empty() && labels(Some("Barred")).is_empty());
-        // Known to all from the start; a Colonia engineer's referral; Bill Turner comes through Selene Jean.
+        // Known to all from the start, even before the journal lists them; a Colonia engineer's referral; Bill Turner
+        // comes through Selene Jean.
         let farseer = engineer_by_name("Felicity Farseer").unwrap();
         assert_eq!(farseer.step(Step::Learn), "Known to every commander from the start.");
+        assert_eq!((farseer.next_step(None), selene.next_step(None)), (Some(Step::Invitation), Some(Step::Learn)));
+        assert_eq!(farseer.steps_from(None).len(), 2, "nothing to learn about a public engineer");
+        assert_eq!(engineers().iter().filter(|e| e.public()).count(), 5 + 6, "five ship engineers and six on foot");
         assert_eq!(farseer.step(Step::Invitation), "Gain exploration rank Scout or higher.");
         assert_eq!(engineer_by_name("Mel Brandon").unwrap().step(Step::Learn), "Reach grade 3 and a third of the way to grade 4 with Elvira Martuuk.");
         let bill = engineer_by_name("Bill Turner").unwrap();

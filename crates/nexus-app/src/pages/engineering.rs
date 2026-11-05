@@ -18,14 +18,14 @@ use std::collections::HashMap;
 
 /// The most modules one plan rolls a blueprint on: more than any ship has slots of a kind, for a plan that covers two
 /// ships.
-const MAX_MODULES: u32 = 99;
+pub const MAX_MODULES: u32 = 99;
 
 /// The Blueprint planner's settings, kept between runs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EngineeringPrefs {
-    /// Rolls planned at each grade, G1 first: the top rank's counts until the commander changes them. Fleet › Plan a
-    /// loadout can plan with them too (through [`EngineeringPrefs::rolls`]).
+    /// Rolls planned at each grade, G1 first: the top rank's counts until the commander changes them. Read them through
+    /// [`EngineeringPrefs::rolls`]; Fleet › Plan a loadout still plans its own three a grade until it reads them too.
     pub rolls: [u32; 5],
 }
 
@@ -196,7 +196,7 @@ fn rolls_text(n: u32) -> String {
 
 /// The rolls a plan makes from grade `from` to `to` on one module.
 fn rolls_in(rolls: &[u32; 5], from: u8, to: u8) -> u32 {
-    (from.max(1)..=to.min(5)).map(|g| rolls[usize::from(g) - 1]).sum()
+    (from.max(1)..=to.min(5)).map(|g| rolls[usize::from(g) - 1]).fold(0, u32::saturating_add)
 }
 
 /// What an experimental effect takes on `modules` modules (each gets its own).
@@ -269,6 +269,8 @@ fn blueprint_card(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &Has
                 st.module = (*m).to_string();
                 st.blueprint = None;
                 st.experimental = None;
+                // Four hull reinforcement packages don't make four frame shift drives.
+                st.modules = 1;
             }
         }
     });
@@ -389,7 +391,7 @@ fn blueprint_card(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, inv: &Has
 }
 
 /// What a roll is, and why the counts differ by grade and rank.
-const ROLLS_TIP: &str = "A roll is one craft at the engineer: it takes one set of the grade's materials. Since the game's August 2024 update (18.08) each roll fills a fixed share of its grade, set by the grade and your rank with the engineer, so luck no longer comes into it. At an engineer's top rank, G1 takes 1 roll and G5 takes 5; at the rank that opens a grade, that grade takes 5. The pen changes the counts, and Elite Nexus keeps yours for your next plans.";
+const ROLLS_TIP: &str = "A roll is one craft at the engineer: it takes one set of the grade's materials. Since the game's August 2024 update (18.08) each roll fills a fixed share of its grade, set by the grade and your rank with the engineer, so luck no longer comes into it. At an engineer's top rank, G1 takes 1 roll and G5 takes 5. Below it, commanders report 5 rolls at the rank that opens a grade and one fewer for each rank above. The pen changes the counts, and Elite Nexus keeps yours for your next plans.";
 
 /// The rolls planned at each of the plan's grades, on chips, and a pen that opens all five to change: the commander's
 /// own counts, kept for later plans. Says when the journal's rank with the engineer for the plan needs more. Returns
@@ -443,12 +445,12 @@ fn rolls_editor(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi, prefs: &mut
             }
             if let Some((e, r)) = lead.filter(|(_, r)| *r < 5) {
                 let at = eng::grade_rolls_at_rank(r);
-                if at != rolls && crate::widgets::button(ui, &format!("For rank {r} with {}", e.name)).on_hover_text("Your rank with them, as your journal last reported it: until it climbs, grades take more rolls").clicked() {
+                if at != rolls && crate::widgets::button(ui, &format!("For rank {r} with {}", e.name)).on_hover_text("Your rank with them, as your journal last reported it, and the rolls commanders report at that rank: until it climbs, grades take more").clicked() {
                     rolls = at;
                 }
             }
         });
-        crate::widgets::footnote(ui, "Since the game's August 2024 update each roll fills a fixed share of its grade, set by your rank with the engineer rather than by luck. Your counts are kept for your next plans.");
+        crate::widgets::footnote(ui, "Since the game's August 2024 update each roll fills a fixed share of its grade, set by your rank with the engineer rather than by luck (Frontier's update notes). The counts below the top rank are as commanders report them. Your counts are kept for your next plans.");
     } else if let Some((e, r)) = lead.filter(|(_, r)| *r < 5 && short_at(*r, &rolls)) {
         crate::widgets::footnote(ui, &format!("Your rank with {} is {r} of 5: until it climbs, these grades take more rolls than at the top rank, up to 5 each. The pen sets the counts for rank {r}.", e.name));
     } else if lead.is_none() && !gs.cmdr.engineers.is_empty() && short_at(1, &rolls) {
@@ -627,13 +629,16 @@ fn engineer_row(g: &mut crate::widgets::Group<'_>, gs: &GameState, e: &eng::Engi
         Some(p) => format!("{} · {:.0} ly · up to G{max}", e.system, nexus_model::location::distance(p, e.pos)),
         None => format!("{} · up to G{max}", e.system),
     };
-    let progress = progress(gs, e);
-    let next = Step::next(progress).map(|s| format!("{}: {}", s.label(), e.step(s)));
-    let tint = if unlocked(gs, e) { pal::GOOD } else { pal::DIM };
+    // Nothing before the journal has listed the commander's engineers.
+    let listed = !gs.cmdr.engineers.is_empty();
+    let next = e.next_step(progress(gs, e)).filter(|_| listed).map(|s| format!("{}: {}", s.label(), e.step(s)));
     g.row(&e.name, &detail, |ui| {
-        let status = ui.label(RichText::new(progress.unwrap_or("Not known yet")).color(tint));
-        if let Some(next) = next {
-            status.on_hover_text(next);
+        if listed {
+            let (text, tint) = standing(gs, e);
+            let status = ui.label(RichText::new(text).color(if unlocked(gs, e) { tint } else { pal::DIM }));
+            if let Some(next) = next {
+                status.on_hover_text(next);
+            }
         }
     });
 }
@@ -905,11 +910,13 @@ fn engineers(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi) {
     ui.add_space(8.0);
     let selected = st.engineer.and_then(eng::engineer_by_id);
     const GAP: f32 = crate::widgets::GAP;
+    const DETAIL: f32 = 380.0;
     match selected {
         // Wide windows: the list with the engineer beside it, kept in view as the page scrolls past the list (never
-        // below its end); narrow: the engineer first, scrolled into view when picked.
-        Some(e) if ui.available_width() >= 1000.0 => {
-            let dw = 380.0;
+        // below its end), when the list's columns still fit beside it; narrow: the engineer first, scrolled into view
+        // when picked.
+        Some(e) if ui.available_width() >= ENGINEERS_TABLE + GAP + DETAIL => {
+            let dw = DETAIL;
             ui.horizontal_top(|ui| {
                 let tw = ui.available_width() - dw - GAP;
                 let table = ui
@@ -945,10 +952,16 @@ fn engineers(ui: &mut Ui, gs: &GameState, st: &mut EngineeringUi) {
     }
 }
 
+/// The Engineers table's columns: engineer, where, status, and the least the next step takes.
+const ENGINEER_COLUMNS: [f32; 4] = [190.0, 176.0, 162.0, 180.0];
+/// The narrowest the Engineers table fits: its columns and the spacing between them.
+const ENGINEERS_TABLE: f32 = ENGINEER_COLUMNS[0] + ENGINEER_COLUMNS[1] + ENGINEER_COLUMNS[2] + ENGINEER_COLUMNS[3] + 3.0 * 8.0;
+
 /// The engineers as a table: who, where, the commander's standing (a dot for each step on the way to them) and the next
 /// step in plain words, or what an unlocked one works on. A click picks one for the detail, a second click closes it.
 fn engineers_table(ui: &mut Ui, gs: &GameState, list: &[&'static Engineer], st: &mut EngineeringUi) {
     let mut clicked = None;
+    let [name_w, where_w, status_w, next_w] = ENGINEER_COLUMNS;
     egui_extras::TableBuilder::new(ui)
         .id_salt("engineers")
         .striped(true)
@@ -956,10 +969,10 @@ fn engineers_table(ui: &mut Ui, gs: &GameState, list: &[&'static Engineer], st: 
         .vscroll(false)
         .sense(egui::Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center))
-        .column(Column::exact(190.0).clip(true))
-        .column(Column::exact(176.0).clip(true))
-        .column(Column::exact(162.0).clip(true))
-        .column(Column::remainder().at_least(180.0).clip(true))
+        .column(Column::exact(name_w).clip(true))
+        .column(Column::exact(where_w).clip(true))
+        .column(Column::exact(status_w).clip(true))
+        .column(Column::remainder().at_least(next_w).clip(true))
         .header(28.0, |mut h| {
             for t in ["Engineer", "Where", "Status", "Next step"] {
                 h.col(|ui| crate::widgets::th(ui, t));
@@ -970,7 +983,7 @@ fn engineers_table(ui: &mut Ui, gs: &GameState, list: &[&'static Engineer], st: 
                 let e = list[row.index()];
                 row.set_selected(st.engineer == Some(e.id));
                 let p = progress(gs, e);
-                let next = Step::next(p);
+                let next = e.next_step(p);
                 let two_lines = |ui: &mut Ui, first: RichText, second: RichText| {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 1.0;
@@ -1001,6 +1014,7 @@ fn engineers_table(ui: &mut Ui, gs: &GameState, list: &[&'static Engineer], st: 
                     ui.add(egui::Label::new(RichText::new(text).color(tint)).truncate());
                 });
                 row.col(|ui| match next {
+                    _ if p == Some("Barred") => two_lines(ui, RichText::new("Your journal says they've barred you.").color(pal::BAD), RichText::new("Barred")),
                     Some(s) => two_lines(ui, RichText::new(e.step(s)).color(pal::TEXT), RichText::new(s.label())),
                     None => two_lines(ui, RichText::new(works_on(e).join(" · ")).color(pal::TEXT), RichText::new("Works on")),
                 });
@@ -1020,7 +1034,7 @@ fn engineers_table(ui: &mut Ui, gs: &GameState, list: &[&'static Engineer], st: 
 fn engineer_detail(ui: &mut Ui, gs: &GameState, e: &Engineer, st: &mut EngineeringUi) {
     let status = gs.cmdr.engineers.get(&e.id);
     let p = progress(gs, e);
-    let next = Step::next(p);
+    let next = e.next_step(p);
     let close = |ui: &mut Ui| {
         if crate::widgets::icon_button(ui, icon::X, "Close").clicked() {
             st.engineer = None;
@@ -1243,6 +1257,16 @@ mod tests {
         assert_eq!((new.rolls, new.module_count(), rolls_in(&new.rolls_by_grade(), new.from, new.to)), (5, 4, 2 + 3 + 4 + 5));
         let back: WishItem = serde_json::from_str(&serde_json::to_string(&new).unwrap()).unwrap();
         assert_eq!(back, new);
+    }
+
+    /// A hand-edited wishlist can't overflow the sums or plan no rolls.
+    #[test]
+    fn odd_wishlist_items_stay_sane() {
+        let odd: WishItem = serde_json::from_str(r#"{"blueprint":"FSD_LongRange","from":1,"to":5,"grade_rolls":[4294967295,0,3,0,0],"modules":4294967295}"#).unwrap();
+        assert_eq!((odd.rolls_by_grade(), odd.module_count()), ([10, 1, 3, 1, 1], MAX_MODULES));
+        let huge: WishItem = serde_json::from_str(r#"{"from":1,"to":5,"rolls":4294967295}"#).unwrap();
+        assert_eq!(rolls_in(&huge.rolls_by_grade(), 1, 5), 50);
+        assert_eq!(rolls_in(&[u32::MAX; 5], 1, 5), u32::MAX, "saturates");
     }
 
     #[test]
