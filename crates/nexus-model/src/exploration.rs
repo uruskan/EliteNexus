@@ -30,7 +30,10 @@ pub struct RingInfo {
 
 #[derive(Debug, Clone, Default)]
 pub struct OrganicSpecies {
+    /// As the game's language names it (`Genus_Localised`).
     pub genus: String,
+    /// The journal's codex symbol of the genus (`$Codex_Ent_Stratum_Genus_Name;`): the same in every language.
+    pub genus_symbol: String,
     pub species: String,
     pub variant: Option<String>,
     /// Codex symbol of the species (`$Codex_Ent_Stratum_07_Name;`).
@@ -41,15 +44,17 @@ pub struct OrganicSpecies {
 }
 
 impl OrganicSpecies {
-    /// The genus it belongs to, for counting genera: the exobiology data's genus for a known species (one name, whatever
-    /// the game's language, and right where the journal names the genus oddly, as for Stratum Araneamus), else the
-    /// journal's genus, else the species itself.
+    /// The genus it belongs to, for counting genera, the same in every language: the exobiology data's genus for a
+    /// known species (right where the journal names the genus oddly, as for Stratum Araneamus), else for the journal's
+    /// genus symbol, else that symbol itself, else the species' own.
     pub fn genus_key(&self) -> &str {
-        match nexus_data::exobio::species(&self.species_symbol) {
-            Some(s) => s.genus,
-            None if !self.genus.is_empty() => &self.genus,
-            None => &self.species_symbol,
+        if let Some(s) = nexus_data::exobio::species(&self.species_symbol) {
+            return s.genus;
         }
+        if let Some(g) = nexus_data::exobio::genus(&self.genus_symbol) {
+            return g.name;
+        }
+        if self.genus_symbol.is_empty() { &self.species_symbol } else { &self.genus_symbol }
     }
 }
 

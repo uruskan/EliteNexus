@@ -1078,4 +1078,24 @@ fn bio_done_counts_genera_not_species() {
     assert!(!done(&m), "one genus of two");
     feed(&mut m, &[analyse("2026-10-01T11:00:00Z", "$Codex_Ent_Stratum_Genus_Name;", "Stratum", "$Codex_Ent_Stratum_07_Name;", "Stratum Tectonicas").as_str()]);
     assert!(done(&m), "both genera");
+
+    // A game in another language names the genus in it. A species the exobiology data knows and one it doesn't (one
+    // added since) of the same genus are still one genus.
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 3", "BodyID":3, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":20.0, "PlanetClass":"Rocky body", "MassEM":0.05, "Landable":true, "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:05:00Z", "event":"FSSBodySignals", "BodyName":"Alpha 3", "BodyID":3, "SystemAddress":100, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biologisch", "Count":2 } ] }"#,
+        ],
+    );
+    feed(
+        &mut m,
+        &[
+            analyse("2026-10-01T10:20:00Z", "$Codex_Ent_Brancae_Name;", "Hirnbäume", "$Codex_Ent_SeedABCD_01_Name;", "Gypseeum-Hirnbaum").as_str(),
+            analyse("2026-10-01T10:40:00Z", "$Codex_Ent_Brancae_Name;", "Hirnbäume", "$Codex_Ent_SeedZZZZ_09_Name;", "Neuer Hirnbaum").as_str(),
+        ],
+    );
+    assert!(!done(&m), "one genus of two, in any language");
 }

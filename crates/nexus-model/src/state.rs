@@ -1171,6 +1171,7 @@ impl GameState {
                 None => {
                     body.organics.push(crate::exploration::OrganicSpecies {
                         genus,
+                        genus_symbol: o.genus.clone(),
                         species: species.clone(),
                         variant: o.variant_localised.clone(),
                         species_symbol: o.species.clone(),
