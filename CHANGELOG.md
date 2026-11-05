@@ -198,6 +198,9 @@ release time that section becomes the new version and the release workflow publi
   past the table's edge. The Engineering column now takes the room its badges need, and where the two don't fit side
   by side, the experimental effect goes under the blueprint. The ship list sits beside the loadout only once the
   window leaves the loadout enough room; in a narrower window the ships are a row of names above it.
+- **Fleet: a ship's name and its buttons no longer overlap.** In a narrow window the Loadout card ran a long ship
+  name under its Where to buy, Copy JSON, EDSY and Coriolis buttons. Where the two don't fit side by side, the
+  buttons now sit under the name.
 - **Missions and Statistics say why a wingmate's shared mission isn't counted** (GitHub issue #4). Your own missions,
   wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
   game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The

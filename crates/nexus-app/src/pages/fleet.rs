@@ -244,29 +244,103 @@ fn slot_group(slot: &str) -> (u8, &'static str) {
     }
 }
 
+/// The Loadout card's buttons for the ship's build, as they read from left to right.
+#[derive(Clone, Copy)]
+enum BuildButton {
+    WhereToBuy,
+    CopyJson,
+    Edsy,
+    Coriolis,
+}
+
+impl BuildButton {
+    const ALL: [BuildButton; 4] = [BuildButton::WhereToBuy, BuildButton::CopyJson, BuildButton::Edsy, BuildButton::Coriolis];
+
+    fn label(self) -> String {
+        match self {
+            BuildButton::WhereToBuy => format!("{} Where to buy", icon::SHOPPING_CART),
+            BuildButton::CopyJson => format!("{} Copy JSON", icon::COPY),
+            BuildButton::Edsy => format!("{} EDSY", icon::ARROW_SQUARE_OUT),
+            BuildButton::Coriolis => format!("{} Coriolis", icon::ARROW_SQUARE_OUT),
+        }
+    }
+
+    fn tip(self) -> Option<&'static str> {
+        match self {
+            BuildButton::WhereToBuy => Some("Find the nearest stations that sell this build's modules and hull"),
+            BuildButton::CopyJson => None,
+            BuildButton::Edsy => Some("Open this exact build in edsy.org"),
+            BuildButton::Coriolis => Some("Open this exact build in coriolis.io"),
+        }
+    }
+}
+
+/// The build's buttons in a row; `right_to_left` adds them from the right edge, so they still read in the same
+/// order. Returns the one clicked.
+fn build_buttons(ui: &mut Ui, right_to_left: bool) -> Option<BuildButton> {
+    let mut clicked = None;
+    let mut add = |ui: &mut Ui, b: BuildButton| {
+        let r = ui.button(b.label());
+        let r = match b.tip() {
+            Some(tip) => r.on_hover_text(tip),
+            None => r,
+        };
+        if r.clicked() {
+            clicked = Some(b);
+        }
+    };
+    if right_to_left {
+        BuildButton::ALL.into_iter().rev().for_each(|b| add(ui, b));
+    } else {
+        BuildButton::ALL.into_iter().for_each(|b| add(ui, b));
+    }
+    clicked
+}
+
 /// The selected ship's loadout. Returns true when "Where to buy" was clicked.
 fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) -> bool {
     let mut buy = false;
     card(ui, "Loadout", |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(s.display_name()).font(display(22.0)));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(json) = &s.loadout_json {
-                    if ui.button(format!("{} Coriolis", icon::ARROW_SQUARE_OUT)).on_hover_text("Open this exact build in coriolis.io").clicked()
-                        && let Some(url) = crate::export::coriolis_url(json) {
+        let name = RichText::new(s.display_name()).font(display(22.0));
+        match &s.loadout_json {
+            None => {
+                ui.add(Label::new(name).wrap());
+            }
+            Some(json) => {
+                // The name and the buttons share a row while both fit whole; in a narrower card the buttons go under
+                // the name (and wrap if they must) instead of running over it.
+                let gap = ui.spacing().item_spacing.x;
+                let font = egui::TextStyle::Button.resolve(ui.style());
+                let pad = 2.0 * ui.spacing().button_padding.x;
+                let buttons_w: f32 = BuildButton::ALL.iter().map(|b| ui.painter().layout_no_wrap(b.label(), font.clone(), pal::TEXT).size().x + pad + gap).sum();
+                let name_w = ui.painter().layout_no_wrap(s.display_name(), display(22.0), pal::TEXT).size().x;
+                let clicked = if name_w + gap + buttons_w <= ui.available_width() {
+                    ui.horizontal(|ui| {
+                        ui.label(name);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| build_buttons(ui, true)).inner
+                    })
+                    .inner
+                } else {
+                    ui.add(Label::new(name).wrap());
+                    ui.horizontal_wrapped(|ui| build_buttons(ui, false)).inner
+                };
+                match clicked {
+                    Some(BuildButton::WhereToBuy) => buy = true,
+                    Some(BuildButton::CopyJson) => ui.ctx().copy_text(json.clone()),
+                    Some(BuildButton::Edsy) => {
+                        if let Some(url) = crate::export::edsy_url(json) {
                             ui.ctx().open_url(egui::OpenUrl::new_tab(url));
                         }
-                    if ui.button(format!("{} EDSY", icon::ARROW_SQUARE_OUT)).on_hover_text("Open this exact build in edsy.org").clicked()
-                        && let Some(url) = crate::export::edsy_url(json) {
-                            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
-                        }
-                    if ui.button(format!("{} Copy JSON", icon::COPY)).clicked() {
-                        ui.ctx().copy_text(json.clone());
                     }
-                    buy = ui.button(format!("{} Where to buy", icon::SHOPPING_CART)).on_hover_text("Find the nearest stations that sell this build's modules and hull").clicked();
+                    Some(BuildButton::Coriolis) => {
+                        if let Some(url) = crate::export::coriolis_url(json) {
+                            ui.ctx().open_url(egui::OpenUrl::new_tab(url));
+                        }
+                    }
+                    None => {}
                 }
-            });
-        });
+            }
+        }
         Grid::new("shipstats").num_columns(6).spacing([14.0, 3.0]).show(ui, |ui| {
             kv_inline(ui, "Jump range", format!("{:.2} ly", s.max_jump_range));
             kv_inline(ui, "Cargo", format!("{} t", s.cargo_capacity));
