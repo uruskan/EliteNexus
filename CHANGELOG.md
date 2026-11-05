@@ -6,6 +6,12 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
+- **Market › Trade routes**: a **Cargo space** you set. It follows your ship's hold until you set another, so you can
+  check routes for a trade ship before you board it (set its landing pad too); the one you set is remembered, and the
+  ↺ beside it goes back to your ship's. Each route shows the **Stock** where you buy and the **Demand** where you
+  sell, as Find commodity does (the trip profit's tooltip says how many tonnes a trip takes), and its pin puts both
+  ends in the **Run planner**: buying at its start and selling at its end (a second click unpins both). Ask's trade
+  routes carry the stock and demand too. Thanks to nhok0169 for the ideas.
 - **Statistics › Ships**: the period you pick, ship by ship. Everything your journals hold counts for the ship you
   were in at the time: time in the game, jumps and distance, what it earned (trade profit, bounties and bonds at the
   kill, data, mined cargo, missions), kills, deaths and what it cost (fuel, repairs, restocking, rebuys), with when you

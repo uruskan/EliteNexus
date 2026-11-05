@@ -391,8 +391,8 @@ impl NexusTools {
             "near": near, "cargo_capacity_t": q.cargo_capacity,
             "routes": routes.iter().map(|r| json!({
                 "commodity": r.commodity_name, "profit_per_ton": r.profit_per_ton, "tonnes": r.units, "profit_per_trip": r.total_profit,
-                "buy_at": { "station": r.from.station, "system": r.from.system, "price": r.buy_price, "distance_ly": r1(r.from.distance_from_origin_ly), "age_hours": hours_ago(r.from.market_updated_unix) },
-                "sell_at": { "station": r.to.station, "system": r.to.system, "price": r.sell_price, "distance_ly": r1(r.to.distance_from_origin_ly), "age_hours": hours_ago(r.to.market_updated_unix) },
+                "buy_at": { "station": r.from.station, "system": r.from.system, "price": r.buy_price, "stock": r.supply, "distance_ly": r1(r.from.distance_from_origin_ly), "age_hours": hours_ago(r.from.market_updated_unix) },
+                "sell_at": { "station": r.to.station, "system": r.to.system, "price": r.sell_price, "demand": r.demand, "distance_ly": r1(r.to.distance_from_origin_ly), "age_hours": hours_ago(r.to.market_updated_unix) },
                 "hop_ly": r1(r.hop_ly),
             })).collect::<Vec<_>>(),
         }))
