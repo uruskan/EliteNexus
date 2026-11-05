@@ -3740,14 +3740,27 @@ fn market_tile(ui: &mut Ui, id: u64, m: Option<&Option<StationMarket>>, cx: &Til
     action
 }
 
-/// Why a tile shows no goods, small and centred so it fits a low tile.
+/// Why a tile shows no goods, a little above the middle of what's left of the tile. The icon shows only where it
+/// leaves room for the whole note: a low tile keeps the words.
 fn tile_note(ui: &mut Ui, title: &str, hint: &str) {
-    ui.add_space((ui.available_height() * 0.25).clamp(8.0, 60.0));
+    let gap = ui.spacing().item_spacing.y;
+    // Measured as drawn: the title wraps at the tile's width (two lines in a narrow tile), the hint at 360 points.
+    let wrap = ui.available_width().min(360.0);
+    let icon_h = ui.painter().layout_no_wrap(icon::STOREFRONT.to_owned(), egui::FontId::proportional(26.0), pal::FAINT).size().y + gap;
+    let text_h = ui.painter().layout(title.to_owned(), display(size::HEADLINE), pal::TEXT, ui.available_width()).size().y
+        + gap
+        + ui.painter().layout(hint.to_owned(), egui::FontId::proportional(size::FOOTNOTE), pal::DIM, wrap).size().y;
+    let room = ui.available_height();
+    let with_icon = room >= icon_h + text_h + 24.0;
+    let need = text_h + if with_icon { icon_h } else { 0.0 };
+    ui.add_space(((room - need) * 0.4).max(4.0));
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new(icon::STOREFRONT).size(26.0).color(pal::FAINT));
+        if with_icon {
+            ui.label(RichText::new(icon::STOREFRONT).size(26.0).color(pal::FAINT));
+        }
         ui.label(RichText::new(title).font(display(size::HEADLINE)).color(pal::TEXT));
         ui.scope(|ui| {
-            ui.set_max_width(ui.available_width().min(360.0));
+            ui.set_max_width(wrap);
             ui.add(egui::Label::new(RichText::new(hint).size(size::FOOTNOTE).color(pal::DIM)).wrap().halign(egui::Align::Center));
         });
     });
@@ -4121,9 +4134,20 @@ fn database_tab(ui: &mut Ui, svc: &mut MarketService, st: &mut MarketUi, rt: &to
                     let ctx = ui.ctx().clone();
                     svc.start_import(ImportSource::Url(SPANSH_STATIONS_URL.into()), &ctx, rt);
                 }
+                // The path, then its button (the order Tab and a screen reader follow). The path takes the width the
+                // button leaves, as wide as the button was on the frame before, so the row fits a narrow card too.
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut st.import_path).hint_text(r"…or a dump you downloaded, e.g. D:\galaxy_stations.json.gz").desired_width(320.0));
-                    if ui.button("Import file").clicked() && !st.import_path.trim().is_empty() {
+                    let button_w = egui::Id::new("market-import-file-width");
+                    let w = ui.data(|d| d.get_temp::<f32>(button_w)).unwrap_or(90.0);
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut st.import_path)
+                            .hint_text(r"…or a dump you downloaded, e.g. D:\galaxy_stations.json.gz")
+                            .desired_width((ui.available_width() - w - ui.spacing().item_spacing.x).max(80.0)),
+                    );
+                    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let import = ui.button("Import file");
+                    ui.data_mut(|d| d.insert_temp(button_w, import.rect.width()));
+                    if (import.clicked() || enter) && !st.import_path.trim().is_empty() {
                         let ctx = ui.ctx().clone();
                         let path = std::path::PathBuf::from(st.import_path.trim().trim_matches('"'));
                         svc.start_import(ImportSource::File(path), &ctx, rt);
