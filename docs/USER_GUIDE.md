@@ -88,11 +88,15 @@ What it shows depends on what you're doing:
 * **Trade stop**: a market you pinned in this system. A pinned fleet carrier shows its callsign (the navigation panel
   lists carriers by it) and whether the game has listed it here yet. It opens when you drop out of supercruise there:
   what to buy or sell, how much, the price when you pinned it, and the route's next stop.
+* **Docking**: when a station grants docking, it opens for four seconds with your landing pad and the station (once
+  you close the panel you asked from), then keeps the pad ("Pad 36") until you dock, the permission runs out or you
+  leave. A denied request opens it too, with the reason in plain words ("too far away: ask again within 7.5 km").
 * **Docked**: it opens for six seconds as you dock: the exploration and exobiology data this station buys, and what
   it's worth, and orders you pinned here.
 * **Carrier**: your carrier's jump countdown ("Carrier → Colonia 7:42"); when something else is going on, in a small
   capsule of its own beside the island.
-* **Alerts**: an important alert opens the island for four seconds, then it goes back to what it was.
+* **Alerts**: an important alert opens the island for four seconds, then it goes back to what it was. One that comes
+  while a cockpit panel is open waits until the panel closes.
 
 While a cockpit panel or the station's menus are open it's a small empty capsule, and in danger or while being
 interdicted it disappears (only a critical alert shows). It shows only while Elite Dangerous or Elite Nexus is the

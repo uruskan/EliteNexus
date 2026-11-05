@@ -38,6 +38,8 @@ pub enum Moment {
     Sampling,
     Mining,
     Trade,
+    /// Docking granted: the pad, until the ship docks.
+    Docking,
     Docked,
     Carrier,
     Alert,
@@ -53,7 +55,7 @@ impl Moment {
             Moment::Mining => Page::Mining,
             Moment::Trade => Page::Market,
             Moment::Carrier => Page::Carrier,
-            Moment::Docked | Moment::Alert => Page::Dashboard,
+            Moment::Docking | Moment::Docked | Moment::Alert => Page::Dashboard,
         }
     }
 }
@@ -264,8 +266,16 @@ pub struct Inputs {
     pub sampling: Option<Sampling>,
     pub mining: Option<Mining>,
     pub trade: Option<Trade>,
+    /// The pad a station granted, until the ship docks.
+    pub docking: Option<Pad>,
     pub docked: Option<Docked>,
     pub carrier: Option<CarrierJump>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pad {
+    pub station: String,
+    pub number: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -439,6 +449,7 @@ impl Inputs {
             sampling: read_sampling(gs, here),
             mining: read_mining(gs, src.mining),
             trade: read_trade(gs, src),
+            docking: gs.location.docking.as_ref().map(|d| Pad { station: d.station.clone(), number: d.pad }),
             docked: read_docked(gs, src.pins),
             carrier: read_carrier(gs, src.now),
             now: src.now,
@@ -836,13 +847,17 @@ impl Rhythm {
         if c.danger {
             self.queue.retain(|a| a.priority == Priority::Critical);
         }
+        // A cockpit panel keeps the island small: alerts wait for it to close rather than run out unseen (docking is
+        // usually requested from the left panel, so its answer comes while that panel is open).
+        let held = c.in_panel() && !c.danger;
         let may_open = self.last_open.is_none_or(|l| t - l >= OPEN_GAP);
-        if self.showing.is_none() && may_open && let Some(a) = self.queue.pop_front() {
+        if self.showing.is_none() && may_open && !held && let Some(a) = self.queue.pop_front() {
             self.showing = Some((a, t + OPEN_ALERT));
             self.last_open = Some(t);
         }
         let mut next = [self.showing.as_ref().map(|(_, until)| *until), self.open.map(|(_, from, until)| if from > t { from } else { until }).filter(|u| *u > t)].into_iter().flatten().fold(None, |a: Option<f64>, b| Some(a.map_or(b, |a| a.min(b))));
-        if !self.queue.is_empty() {
+        // Held alerts wait for the panel to close, which changes the inputs anyway.
+        if !self.queue.is_empty() && !held {
             let gap = self.last_open.map_or(t, |l| l + OPEN_GAP);
             let due = self.showing.as_ref().map_or(gap, |(_, until)| until.max(gap));
             next = Some(next.map_or(due, |n| n.min(due)));
@@ -970,6 +985,7 @@ fn main_card(i: &Inputs) -> Option<Card> {
     let worth = || i.arrival.as_ref().filter(|a| a.worth_it).map(arrival_card);
     let approach = || i.approach.as_ref().map(approach_card);
     let trade = || i.trade.as_ref().map(trade_card);
+    let docking = || i.docking.as_ref().map(docking_card);
     let surface = || {
         i.sampling
             .as_ref()
@@ -981,10 +997,11 @@ fn main_card(i: &Inputs) -> Option<Card> {
         (Activity::ChargingJump | Activity::Hyperspace, _) | (_, GuiFocus::GalaxyMap) => jump(),
         (_, GuiFocus::Fss | GuiFocus::SystemMap | GuiFocus::Orrery) => arrival(),
         (Activity::Docked, _) => i.docked.as_ref().filter(|d| d.has_news()).map(docked_card),
-        (Activity::NearBody | Activity::Glide, _) => approach(),
+        // A pad to find comes first; a surface port is approached near its body.
+        (Activity::NearBody | Activity::Glide, _) => docking().or_else(approach),
         (Activity::Landed | Activity::Srv(_) | Activity::OnFootPlanet, _) => surface(),
         (Activity::Supercruise, _) => trade().or_else(worth).or_else(jump),
-        (Activity::Space, _) => trade().or_else(worth),
+        (Activity::Space, _) => docking().or_else(trade).or_else(worth),
         (Activity::NotInGame, _) => None,
     };
     card.or_else(|| i.carrier.as_ref().map(|cj| carrier_card(cj, i.now)))
@@ -1316,6 +1333,15 @@ fn docked_card(d: &Docked) -> Card {
     Card { moment: Moment::Docked, compact, expanded: Some(Expanded { rows }) }
 }
 
+/// Docking granted: the station and the pad, small, until the ship docks. The alert opened the island when it came.
+fn docking_card(p: &Pad) -> Card {
+    let trail = match p.number {
+        Some(n) => vec![text("Pad", Style::Caption, Tint::Dim), text(n.to_string(), Style::Value, Tint::Green)],
+        None => vec![text("Granted", Style::Label, Tint::Green)],
+    };
+    Card { moment: Moment::Docking, compact: Compact { lead: vec![Piece::Glyph(icon(glyph::AIRPLANE_LANDING, Tint::Green, 20)), text(p.station.clone(), Style::Label, Tint::White)], trail }, expanded: None }
+}
+
 /// A countdown: "7:42", or "1:05:00" from an hour.
 pub fn countdown(secs: i64) -> String {
     let s = secs.max(0);
@@ -1369,7 +1395,7 @@ fn alert_card(a: &Alert) -> Card {
 // Demo moments (`--overlay <moment>`)
 
 /// The moments `--overlay` shows with sample data.
-pub const DEMOS: &[&str] = &["jump", "hyperspace", "arrival", "approach", "sampling", "close", "mining", "trade", "docked", "carrier", "two", "alert", "quiet"];
+pub const DEMOS: &[&str] = &["jump", "hyperspace", "arrival", "approach", "sampling", "close", "mining", "trade", "docking", "docked", "carrier", "two", "alert", "quiet"];
 
 /// A moment with sample data, compact and expanded: what `--overlay <name>` shows. None for an unknown name.
 pub fn demo(name: &str) -> Option<(IslandView, IslandView)> {
@@ -1471,6 +1497,12 @@ pub fn demo(name: &str) -> Option<(IslandView, IslandView)> {
             orders: Vec::new(),
         }),
         "carrier" => carrier_card(&carrier, now),
+        // The pad stays small until you dock; the alert that came with it opened the island.
+        "docking" => {
+            let (compact, _) = card_views(docking_card(&Pad { station: "Jameson Memorial".into(), number: Some(36) }), None);
+            let granted = alert_card(&Alert::new(Timestamp(now), AlertKind::Navigation, Priority::Normal, "Docking granted").detail("Pad 36 · Jameson Memorial"));
+            return Some((compact, card_views(granted, None).1));
+        }
         "alert" => alert_card(&Alert::new(Timestamp(now), AlertKind::Exploration, Priority::High, "Earth-like world").detail("A 1 · first discovery · worth mapping")),
         "quiet" => {
             let minimal = IslandView { size: Size::Minimal, ..IslandView::default() };
@@ -1773,6 +1805,45 @@ mod tests {
         let stops = [("A", "K", 1, false), ("B", "N", 1, true), ("C", "M", 2, false)];
         let (next, jumps, neutron) = summarise(stops.iter().copied());
         assert_eq!((next, jumps, neutron), (Some(("A", "K")), 4, Some(2)));
+    }
+
+    /// Play-test, 2026-11-04: the island said "docking denied", then nothing when the next request was granted.
+    #[test]
+    fn docking_granted_opens_the_island_like_denied_and_keeps_the_pad() {
+        let mut r = Rhythm::default();
+        let mut i = Inputs { context: ctx(Activity::Space), ..Inputs::default() };
+        r.alert(&Alert::new(Timestamp(0), AlertKind::Navigation, Priority::Normal, "Docking denied").detail("Q2K-71N: too far away: ask again within 7.5 km"));
+        let v = r.view(&i, false, 0.0);
+        assert_eq!((v.moment, v.size), (Some(Moment::Alert), Size::Expanded), "denied opens it");
+        r.alert(&Alert::new(Timestamp(0), AlertKind::Navigation, Priority::Normal, "Docking granted").detail("Pad 12 · Q2K-71N"));
+        i.docking = Some(Pad { station: "Q2K-71N".into(), number: Some(12) });
+        let v = r.view(&i, false, 5.0);
+        assert_eq!((v.moment, v.size), (Some(Moment::Alert), Size::Expanded), "granted opens it too");
+        let v = r.view(&i, false, 9.0);
+        assert_eq!((v.moment, v.size), (Some(Moment::Docking), Size::Compact));
+        assert_eq!(compact_words(&v), ("Q2K-71N".into(), "Pad 12".into()), "then the pad stays");
+        i.context.activity = Activity::NearBody;
+        assert_eq!(r.view(&i, false, 20.0).moment, Some(Moment::Docking), "a surface port, approached near its body");
+        i.docking = None;
+        i.context.activity = Activity::Docked;
+        assert_eq!(r.view(&i, false, 60.0).moment, None, "docked: no pad to find");
+    }
+
+    /// Docking is usually requested from the left panel, so its answer arrives while that panel keeps the island
+    /// small: the alert waits for the panel to close instead of running out unseen.
+    #[test]
+    fn alerts_wait_while_a_cockpit_panel_is_open() {
+        let mut r = Rhythm::default();
+        let mut i = Inputs { context: Context { activity: Activity::Space, focus: GuiFocus::ExternalPanel, ..Context::default() }, ..Inputs::default() };
+        r.alert(&Alert::new(Timestamp(0), AlertKind::Navigation, Priority::Normal, "Docking granted").detail("Pad 12 · Q2K-71N"));
+        i.docking = Some(Pad { station: "Q2K-71N".into(), number: Some(12) });
+        let v = r.view(&i, false, 0.0);
+        assert_eq!((v.size, v.next_change), (Size::Minimal, None), "held, and nothing to wake up for");
+        assert_eq!(r.view(&i, false, 30.0).size, Size::Minimal, "still held after its four seconds would have run out");
+        i.context.focus = GuiFocus::None;
+        let v = r.view(&i, false, 31.0);
+        assert_eq!((v.moment, v.size, v.next_change), (Some(Moment::Alert), Size::Expanded, Some(35.0)), "shown once the panel closes");
+        assert_eq!(r.view(&i, false, 35.0).moment, Some(Moment::Docking));
     }
 
     /// Play-test, 2026-11-04: Leesti → Uszaa → Orrere plotted in the galaxy map, and the island showed only Uszaa and

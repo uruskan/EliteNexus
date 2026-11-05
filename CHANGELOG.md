@@ -110,6 +110,12 @@ release time that section becomes the new version and the release workflow publi
   island names the route's last system and how far it is in a straight line ("Orrere · 23.4 ly away"), under the
   next jump, and the small island adds the distance to the jumps left ("2 jumps · 23.4 ly"). It showed only the
   next jump and the jumps left.
+- **Overlay: docking granted.** When a station grants you docking, the island opens with your landing pad and the
+  station, as it did only when docking was denied, then keeps the pad ("Pad 36") until you dock, the permission
+  runs out or you leave. The banner in Elite Nexus says it too. A denied request now says why in plain words ("too
+  far away: ask again within 7.5 km") instead of the game's code ("Distance"). An alert that comes while a cockpit
+  panel is open (docking is usually requested from one) now waits until the panel closes, instead of running out
+  while the island is kept small.
 - **Settings › Follow my flight** (off by default) changes the page as you fly: it reads what you're doing from
   the game's Status.json and switches when that changes. Flying a system opens Exploration; getting below
   **Planet view below** (150 km by default) over a
