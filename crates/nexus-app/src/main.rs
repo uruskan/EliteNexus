@@ -13,6 +13,7 @@ mod export;
 mod finder;
 mod folders;
 mod follow;
+mod game_process;
 mod icon;
 mod jobs;
 mod market;

@@ -17,9 +17,16 @@ amber = a service is paused or rejecting, click for details), **Pause uploads / 
 EDDN, EDSM, Inara or EDAstro (**Pause EDDN** and so on when you share with only one): it pauses every service you
 share with, or resumes them all, and what happens while they're paused is dropped, not sent later (market prices go
 to EDDN only when you undock, so pausing while docked keeps a market you just found to yourself), and
-**Live / Offline** (Live = the game is writing events). The round button next to it switches the **overlay** on and
-off: a small black island at the top of the game's screen (see [Overlay](#overlay)). While it's on, the lock beside it
-locks it (clicks go to the game) or unlocks it to move it.
+**Live / Offline** (Live = the game is running and writing events). The round button next to it switches the
+**overlay** on and off: a small black island at the top of the game's screen (see [Overlay](#overlay)). While it's on,
+the lock beside it locks it (clicks go to the game) or unlocks it to move it.
+
+A crash leaves no Shutdown in the game's journal, so Elite Nexus also checks whether the game's program still runs on
+this computer (Windows and Linux): once it doesn't, the toolbar says Offline, and the overlay, Follow my flight, HUD &
+cockpit and Ask know the game has stopped, also when you start Elite Nexus after the crash. A journal folder shared
+from another computer, and a Mac, have no program to look at here: the game counts as stopped once neither its journal
+nor Status.json has been written for 15 minutes (docked and idle the game writes nothing, so it may show Offline until
+you move).
 
 Alerts appear as banners at the top right and are spoken if you enable voice. The **bell** at the far right of the
 toolbar keeps every alert since Elite Nexus started, newest first, with its time and what it said, so one you missed

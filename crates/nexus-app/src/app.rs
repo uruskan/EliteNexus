@@ -114,6 +114,10 @@ pub struct NexusApp {
     last_jump_count: Option<usize>,
     /// What the commander was doing at the last Status.json update or journal event (Settings › Follow my flight).
     flight: crate::follow::Follower,
+    /// Whether the game's process runs on this computer, for a game that ends without a `Shutdown` (a crash).
+    game_process: crate::game_process::GameProcess,
+    /// The game's process has been seen on this computer since the journals were read: when it goes, so has the game.
+    game_seen_here: bool,
     clipboard: Option<arboard::Clipboard>,
     /// The overlay: the island at the top of the game's screen, in a window of its own.
     overlay: crate::overlay::window::Overlay,
@@ -242,6 +246,9 @@ impl NexusApp {
             shot,
             last_jump_count: None,
             flight: Default::default(),
+            // Test runs read journals nobody is writing: whether the game runs here says nothing about them.
+            game_process: crate::game_process::GameProcess::start(live_run),
+            game_seen_here: false,
             clipboard: None,
             overlay,
             xsoverlay: Default::default(),
@@ -307,6 +314,26 @@ impl NexusApp {
         self.toasts.push(Toast { alert: a, born: Instant::now() });
         if self.toasts.len() > 5 {
             self.toasts.remove(0);
+        }
+    }
+
+    /// A crash writes no `Shutdown`, so the journal alone would have the game running forever: whether it still runs
+    /// comes from its process on this computer, or from the journal and Status.json going quiet
+    /// (`game_process::gone`). The verdict goes into the model, where pages, the overlay and Ask's tools read it.
+    fn watch_game(&mut self) {
+        let process = self.game_process.running();
+        self.game_seen_here |= process == Some(true);
+        let gone = {
+            let model = self.core.model.read();
+            let Some(gs) = model.active() else { return };
+            let gone = crate::game_process::gone(gs, process, self.game_seen_here, nexus_journal::Timestamp::now());
+            if gone == gs.game_gone {
+                return;
+            }
+            gone
+        };
+        if let Some(gs) = self.core.model.write().active_mut() {
+            gs.game_gone = gone;
         }
     }
 
@@ -489,9 +516,7 @@ impl NexusApp {
             }
             let (label, col) = match &status.phase {
                 Phase::Live => {
-                    let fresh = status.last_live.is_some_and(|t| t.elapsed() < Duration::from_secs(120));
-                    let playing = gs.is_some_and(|g| !g.game_closed);
-                    if fresh || playing { ("Live", pal::GOOD) } else { ("Offline", pal::GRAY) }
+                    if game_live(true, status.last_live, gs) { ("Live", pal::GOOD) } else { ("Offline", pal::GRAY) }
                 }
                 Phase::Loading { .. } | Phase::Starting => ("Loading", pal::WARN),
                 Phase::Error(_) => ("Error", pal::BAD),
@@ -735,7 +760,7 @@ impl NexusApp {
             Page::Bindings => settings_changed |= pages::bindings::show(ui, &mut self.binds, &self.data_dir, &mut self.settings.game_dir),
             Page::Hud => {
                 let s = &mut self.settings;
-                settings_changed |= pages::hud::show(ui, &mut self.hud, &mut s.hud_themes, &mut s.game_dir, !gs.game_closed, (&gs.cmdr.game_version, &gs.cmdr.game_build), self.rt.handle());
+                settings_changed |= pages::hud::show(ui, &mut self.hud, &mut s.hud_themes, &mut s.game_dir, gs.game_running(), (&gs.cmdr.game_version, &gs.cmdr.game_build), self.rt.handle());
             }
             Page::Accounts => {
                 let name = gs.cmdr.name.clone();
@@ -869,6 +894,8 @@ impl NexusApp {
             self.mcp.attach(agent_tools(&self.core, self.market.db.clone(), self.rt.handle(), &self.agents_spansh));
             // A new model: Follow my flight starts afresh instead of comparing it with the old one.
             self.flight = Default::default();
+            // Another journal folder may be another computer's: the game seen here says nothing about it.
+            self.game_seen_here = false;
         }
     }
 
@@ -1041,6 +1068,14 @@ fn toolbar_button(ui: &mut Ui, glyph: &str, tip: &str, on: bool) -> egui::Respon
     resp.on_hover_text(tip)
 }
 
+/// The game is running and its journal followed live (`phase_live`): it has neither closed nor ended without a
+/// `Shutdown` (`GameState::game_running`), or, between a `Shutdown` and its next `LoadGame`, it wrote something in the
+/// last two minutes (`last_live`). A game found gone after a crash isn't live, however recent its last line.
+fn game_live(phase_live: bool, last_live: Option<Instant>, gs: Option<&nexus_model::GameState>) -> bool {
+    let fresh = last_live.is_some_and(|t| t.elapsed() < Duration::from_secs(120));
+    phase_live && !gs.is_some_and(|g| g.game_gone) && (fresh || gs.is_some_and(|g| g.game_running()))
+}
+
 /// The number of alerts that came in since the alert history was last open, as a pill on the bell's top-right corner.
 fn bell_badge(p: &egui::Painter, bell: Rect, n: usize) {
     let text = if n > 99 { "99+".to_string() } else { n.to_string() };
@@ -1170,6 +1205,7 @@ impl eframe::App for NexusApp {
             );
             self.nav.planned = Some(route);
         }
+        self.watch_game();
         self.auto_copy_next();
         self.remember_deposits();
         self.follow_flight();
@@ -1233,15 +1269,16 @@ impl NexusApp {
     /// The overlay: its view from the model (read-locked for this call only; the overlay's window never locks it),
     /// and what it asks of the main window.
     fn overlay_logic(&mut self, ctx: &egui::Context) {
-        let (phase_live, fresh) = {
+        // Read and let go before the model is locked: the core thread takes the two the other way round.
+        let (phase_live, last_live) = {
             let status = self.core.status.read();
-            (matches!(status.phase, Phase::Live), status.last_live.is_some_and(|t| t.elapsed() < Duration::from_secs(120)))
+            (matches!(status.phase, Phase::Live), status.last_live)
         };
         let requests = {
             let model = self.core.model.read();
             let gs = model.active();
             // The journal is followed live and the game is running (as the page header's "Live" says).
-            let live = phase_live && (fresh || gs.is_some_and(|g| !g.game_closed));
+            let live = game_live(phase_live, last_live, gs);
             let src = crate::overlay::Sources {
                 // A finished tour hands over to the in-game route, as on Navigation and for the clipboard.
                 route: self.nav.planned.as_ref().filter(|p| !p.complete()),

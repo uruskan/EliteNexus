@@ -145,6 +145,12 @@ release time that section becomes the new version and the release workflow publi
   **Live** badge stays, with the feed's rate and the database's size beside it.
 
 ### Fixed
+- **After the game crashes, Elite Nexus no longer says it's running.** A crash leaves no Shutdown in the journal, so
+  the toolbar kept saying Live, the overlay and Follow my flight went on as if you were in the game, HUD & cockpit
+  said the game was running and Ask told you it was, even when you started Elite Nexus the next day. Elite Nexus now
+  checks whether the game's program runs on this computer (Windows and Linux). For a journal folder shared from
+  another computer, and on a Mac, the game counts as stopped once neither the journal nor Status.json has been
+  written for 15 minutes.
 - **Voice (SAPI)**: a voice installed while Elite Nexus runs shows up in Settings › Voice when you open Settings or
   the list; it used to appear only after switching the speech engine. A new voice, speed or volume no longer waits
   until the line being spoken, and every alert queued before it, has been said: a new speed or volume applies at

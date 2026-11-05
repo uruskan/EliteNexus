@@ -3,7 +3,8 @@
 //!
 //! Status.json is the live source: the game rewrites it whenever the cockpit changes. Without it (a journal read
 //! back from history, or a game that wrote none yet) the journal's own events decide. A journal that isn't being
-//! followed live means the game isn't running either; only the app knows that, so it says so itself.
+//! followed live means the game isn't running either, and so does a game that ended without a `Shutdown`; only the
+//! app knows those, so it says so itself (`GameState::game_gone` for the second).
 
 use crate::location::Location;
 use crate::state::GameState;
@@ -94,7 +95,7 @@ impl Default for Context {
 impl Context {
     /// The commander's context from the model.
     pub fn of(gs: &GameState) -> Context {
-        if gs.game_closed || gs.at_main_menu {
+        if !gs.game_running() || gs.at_main_menu {
             return Context::default();
         }
         let loc = &gs.location;
@@ -248,6 +249,19 @@ mod tests {
         assert_eq!(activity(&m), Activity::Supercruise, "loading a game leaves the menu");
         feed(&mut m, &[r#"{ "timestamp":"2026-10-25T10:09:00Z", "event":"Shutdown" }"#]);
         assert_eq!(context(&m), Context::default(), "the game closed");
+    }
+
+    /// A crash writes no `Shutdown`: once the app finds the game gone, the last Status.json no longer counts.
+    #[test]
+    fn a_game_gone_without_a_shutdown_is_not_in_game() {
+        let mut m = logged_in();
+        status(&mut m, SHIP | flags::SUPERCRUISE, 0, "");
+        assert_eq!(activity(&m), Activity::Supercruise);
+        m.active_mut().expect("commander").game_gone = true;
+        assert_eq!(context(&m), Context::default());
+        assert!(!m.active().expect("commander").game_running());
+        m.active_mut().expect("commander").game_gone = false;
+        assert_eq!(activity(&m), Activity::Supercruise, "found running again");
     }
 
     #[test]

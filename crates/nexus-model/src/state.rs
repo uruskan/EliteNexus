@@ -66,6 +66,9 @@ pub struct GameState {
     pub events_applied: u64,
     /// The game wrote `Shutdown` after the last session start.
     pub game_closed: bool,
+    /// The game has ended without a `Shutdown` (a crash, or ended from the Task Manager), as the app found it: its
+    /// process is gone, or nothing has been written for a long while. Set by the app, which alone can look.
+    pub game_gone: bool,
     /// The main menu's music is playing (the `Music` event), until the next `LoadGame`.
     pub at_main_menu: bool,
     pub legal_state: Option<String>,
@@ -104,6 +107,11 @@ impl GameState {
         if cat != LedgerCategory::Transfer {
             self.session.record_money(amount);
         }
+    }
+
+    /// The game is running: it hasn't closed (`Shutdown`), nor ended without one (`game_gone`).
+    pub fn game_running(&self) -> bool {
+        !self.game_closed && !self.game_gone
     }
 
     pub fn carrier_of(&self, kind: CarrierKind) -> &Carrier {
