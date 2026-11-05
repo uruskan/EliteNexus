@@ -183,6 +183,11 @@ impl MarketService {
         self.eddn.as_ref().map(|h| h.stats().snapshot())
     }
 
+    /// The live feed's newest message in words ("Docking granted at Ray Gateway"), while the feed is on.
+    pub fn latest_headline(&self) -> Option<String> {
+        self.eddn.as_ref()?.stats().headlines(1).pop().map(|h| h.text)
+    }
+
     pub fn db_summary(&mut self) -> Option<String> {
         let s = self.db_stats()?;
         Some(format!(
@@ -283,7 +288,8 @@ fn pad_rank(p: char) -> u8 {
 
 /// The alert a rule raises for a freshly updated market, if it matches.
 fn check_rule(w: &PriceWatch, symbol: &str, u: &MarketUpdate, m: &StationMarket, dist: Option<f64>) -> Option<Alert> {
-    if let Some(p) = w.min_pad
+    // Every station has a small pad: S asks for nothing, as in the market searches (M and L need the pad reported).
+    if let Some(p) = w.min_pad.filter(|p| pad_rank(*p) > 1)
         && !m.station.max_pad.is_some_and(|have| pad_rank(have) >= pad_rank(p))
     {
         return None;

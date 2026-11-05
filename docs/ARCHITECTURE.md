@@ -18,7 +18,7 @@ isn't slowed, and `tools\dev\shot.ps1` checks the UI with off-screen screenshots
 Parallel builds: set your own `CARGO_TARGET_DIR` (e.g. `target-agents\<name>`) to avoid lock contention.
 `EliteNexus.exe --page Exploration --screenshot out.png` renders a page after loading and saves a PNG (used for UI checks;
 the window is placed off-screen and never takes focus). `--size 1000x700` tests responsive layouts, `--tab <name>` opens
-a Market section (`abnormal`, `database`, …; `routes` finds trade routes on the first frame), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
+a Market section (`abnormal`, `database`, …; `routes` finds trade routes on the first frame, `station` opens four markets side by side), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
 screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build, every row ticked as for a second
 ship like it, and searches on the first frame; `buy-one`: it searches for one module, a 6A frame shift drive), a Statistics tab (`career`, `activity`, `all`), Navigation's
@@ -114,8 +114,9 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   headers), `cards` (responsive grid with equal-height rows), `split`, `group` rows with switches (System Settings
   style), `tabs`/`segmented` (falls back to pills when too narrow), `choices` (option cards that say what each is
   for), `switch`/`toggle`, `stepper` (a − n + glass capsule), `number`/`whole` (a value to type or step through
-  round values), `settings_bar` (a search's settings in view), `pill`, capsule `button`s, `search_field`, `badge`,
-  `th` table headings. Pages use these instead of raw egui widgets so the look stays uniform
+  round values), `settings_bar` (a search's settings in view), `chip_toggle` (a filter chip that switches on and off), `pill`, capsule `button`s, `search_field`, `badge`,
+  `th` table headings, `table` (an `egui_extras` table whose columns the commander drags wider or narrower, widths kept
+  across restarts in ui-state.ron; its one `flex_column` takes the room left). Pages use these instead of raw egui widgets so the look stays uniform
   and every layout adapts to the window width (the sidebar becomes an icon rail below 1180 px).
 * History is folded with alerts **disabled**; only live events raise alerts or get uploaded. Never upload history.
   Test runs (`--journal-dir`, `--screenshot`) never upload at all.
