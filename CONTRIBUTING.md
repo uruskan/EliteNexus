@@ -32,7 +32,7 @@ cargo build --release -p nexus-app     # target/release/EliteNexus (EliteNexus.e
 | `--journal-dir <dir>` | Read another journal folder (a test run; it never uploads). |
 | `--mute` | No voice. |
 | `--demo` | Add a sample Ask conversation, an alert banner and sample alerts in the alert history (for screenshots); with `--tab bell` the history is open, the list under the toolbar's bell. |
-| `--overlay <moment>` | The overlay with sample content: the main window shows the moment compact and expanded, over the game and as the opaque panel, and (except in a screenshot run) the overlay's own window turns between the two every four seconds. Moments: `jump`, `hyperspace`, `arrival`, `approach`, `sampling`, `close`, `mining`, `trade`, `docked`, `carrier`, `two`, `alert`, `quiet`. |
+| `--overlay <moment>` | The overlay with sample content: the main window shows the moment compact and expanded, see-through, as its own window (see-through off) and in VR's panel, and (except in a screenshot run) the overlay's own window turns between the two every four seconds. Moments: `jump`, `hyperspace`, `arrival`, `approach`, `sampling`, `close`, `mining`, `trade`, `docking`, `docked`, `carrier`, `two`, `alert`, `quiet`. |
 | `--screenshot <png> [--shot-delay <s>] [--size <w>x<h>]` | Render the page off-screen after loading, save the PNG and exit. The window is never visible and nothing is uploaded. `--size 1000x760` checks a narrow layout (the size is in points: on a display scaled above 100 % the PNG comes out that much larger, with the same layout, and `tools\dev\shot.ps1` says so); `--shot-delay 8` or more waits for the galaxy image or a Spansh search (5 to 20 s). |
 | `--install-desktop` / `--uninstall-desktop` | Linux only: add Elite Nexus and its icon to the desktop's app menu, or take it out. |
 
@@ -125,9 +125,8 @@ hyphenated version (`v0.8.0-beta.1`) becomes a pre-release. The steps are in AGE
 ## Accounts and APIs
 
 * **Inara** only accepts whitelisted app names; it approved "Elite Nexus" on 2026-10-13, so a user's personal API key
-  is all sync needs. Developer mode (`Accounts::inara_dev_mode`, sent as `isBeingDeveloped`) is off by default, and
-  settings files from when it was on are switched off once (`Settings::migrate`); switch it on under Accounts & sync ›
-  Inara options when you test with a test account. See `docs/research/inara.md`.
+  is all sync needs. It sends no `isBeingDeveloped`: test runs never upload, so what it sends is live play. Use an
+  Inara test account for development work that has to upload; see `docs/research/inara.md`.
 * **Frontier Companion API (CAPI)** needs a client ID approved by Frontier (`docs/research/capi.md`). Not supported
   yet; the journal provides almost everything.
 * **EDDN** uploads are validated against the schemas in `docs/research/eddn-schemas/` and must stay strictly

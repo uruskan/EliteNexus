@@ -163,7 +163,7 @@ pub fn config(acc: &Accounts) -> UplinkConfig {
             api_key: secrets::open(&acc.edsm_api_key),
         }),
         edsm_paused: acc.edsm_paused,
-        inara: acc.inara_enabled.then(|| InaraCredentials { api_key: secrets::open(&acc.inara_api_key), is_being_developed: acc.inara_dev_mode }),
+        inara: acc.inara_enabled.then(|| InaraCredentials { api_key: secrets::open(&acc.inara_api_key) }),
         inara_paused: acc.inara_paused,
         edastro: acc.edastro_enabled,
         edastro_paused: acc.edastro_paused,

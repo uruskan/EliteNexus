@@ -105,7 +105,7 @@ a layout changes.
   theme; add `,options` to open the protection's options; nothing is written). `find`, `untouched`, `known`, `buy`,
   `buy-one`, the `where` tabs and `route-carrier` start their search on the first frame: add
   `-Delay 15` to `-Delay 25` for Spansh to answer. `routes` (Market › Trade routes) searches the local database on the
-  first frame too.
+  first frame too, and `station` (Market › Station) opens four markets side by side: your system's, then the nearest.
 * HUD & cockpit with a game folder of your own making: set `ELITE_NEXUS_GAME_DIR` to a folder holding a dummy
   `EliteDangerous64.exe`; add a `d3dx.ini` starting `; Elite Nexus` with a `[Constants]` section (`x1 = 1` switches
   the HUD colour protection on) and an `EliteNexus-3Dmigoto.json` of `{"migoto_version":"1.4.9","files":[]}` for
@@ -114,7 +114,7 @@ a layout changes.
   the tabs then show an applied state, and no real paths or capture leftovers. Delete the demo folders afterwards.
 * `-Demo` adds a sample Ask conversation, an alert banner and sample alerts in the alert history; `-Tab bell` with it
   opens the history (the list under the toolbar's bell).
-* `-Overlay <moment>` shows an overlay moment compact and expanded, over the game and as the opaque panel (`jump`, `hyperspace`, `arrival`, `approach`, `sampling`, `close`, `mining`, `trade`, `docked`, `carrier`, `two`, `alert`, `quiet`).
+* `-Overlay <moment>` shows an overlay moment compact and expanded, see-through, as its own window (see-through off) and in VR's panel (`jump`, `hyperspace`, `arrival`, `approach`, `sampling`, `close`, `mining`, `trade`, `docking`, `docked`, `carrier`, `two`, `alert`, `quiet`).
   The overlay's own window never opens in a screenshot run.
 
 egui 0.36 layout lessons learned here:

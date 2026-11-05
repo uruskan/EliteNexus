@@ -59,13 +59,7 @@ pub struct Settings {
     pub overlay: crate::overlay::window::OverlayPrefs,
     /// The game's screenshots saved again as PNG (off by default: it writes to the player's Pictures folder).
     pub screenshots: crate::screenshots::ScreenshotPrefs,
-    /// The one-off changes made to this file so far (`Settings::migrate`); 0 in a file from before them.
-    pub migrated: u32,
 }
-
-/// The one-off changes `Settings::migrate` makes to an older file, in order; `migrated` counts those done.
-/// 1: Inara's developer mode, on by default until Inara had approved the app, is switched off.
-const MIGRATIONS: u32 = 1;
 
 /// A named HUD colour matrix.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -151,9 +145,6 @@ pub struct Accounts {
     pub edsm_api_key: String,
     pub inara_enabled: bool,
     pub inara_api_key: String,
-    /// Sent as `isBeingDeveloped`: Inara then ignores global data such as community goals. Off by default since Inara
-    /// approved "Elite Nexus" (2026-10-13); kept for anyone testing with a test account.
-    pub inara_dev_mode: bool,
     pub edastro_enabled: bool,
     /// EDDN sharing paused by the commander (the header's Pause button).
     pub eddn_paused: bool,
@@ -225,8 +216,6 @@ impl Default for Settings {
             mining: Default::default(),
             overlay: Default::default(),
             screenshots: Default::default(),
-            // A file without it is from before the first change; `load` brings every file up to date.
-            migrated: 0,
         }
     }
 }
@@ -242,30 +231,11 @@ pub struct LoadProblem {
 }
 
 impl Settings {
-    /// Reads settings.json (`read`) and makes the one-off changes an older file needs (`migrate`).
-    pub fn load(dir: &Path) -> (Self, Option<LoadProblem>) {
-        let (mut settings, problem) = Self::read(dir);
-        settings.migrate();
-        (settings, problem)
-    }
-
-    /// The one-off changes an older file needs, each made once: `migrated` says which are done, so a setting changed
-    /// back afterwards stays as the commander left it.
-    fn migrate(&mut self) {
-        if self.migrated < 1 {
-            // Inara's developer mode was on by default until Inara had approved the app, so a file from then holds
-            // that default rather than a choice: it goes off once. The switch stays, for anyone testing with a test
-            // account.
-            self.accounts.inara_dev_mode = false;
-        }
-        self.migrated = self.migrated.max(MIGRATIONS);
-    }
-
     /// Reads settings.json; a missing file gives the defaults. A file that can't be used as it is never means a
     /// silent start from scratch (settings are saved every half minute, which would overwrite it): it's copied
     /// aside first, every setting that still reads is kept (from a file that isn't valid JSON at all, the API keys),
     /// and the problem says what happened. A file that can't even be read isn't saved over this run.
-    fn read(dir: &Path) -> (Self, Option<LoadProblem>) {
+    pub fn load(dir: &Path) -> (Self, Option<LoadProblem>) {
         let path = dir.join("settings.json");
         let bytes = match std::fs::read(&path) {
             Ok(b) => b,
@@ -708,6 +678,21 @@ mod tests {
         assert!(kept_copies(&d).is_empty());
     }
 
+    /// A file saved while Inara's Developer mode existed (0.7.3-beta.2 and before) still reads whole, with nothing to
+    /// report.
+    #[test]
+    fn a_setting_that_was_removed_is_ignored() {
+        let d = Dir::new("removed");
+        std::fs::write(d.0.join("settings.json"), r#"{ "tts_rate": 1.2, "accounts": { "inara_enabled": true, "inara_api_key": "dpapi:AAAA", "inara_dev_mode": true } }"#).expect("write");
+        let (s, problem) = Settings::load(&d.0);
+        assert!(problem.is_none(), "{:?}", problem.map(|p| p.what));
+        assert!(s.accounts.inara_enabled);
+        assert_eq!((s.accounts.inara_api_key.as_str(), s.tts_rate), ("dpapi:AAAA", 1.2));
+        s.save(&d.0);
+        let text = std::fs::read_to_string(d.0.join("settings.json")).expect("saved");
+        assert!(!text.contains("inara_dev_mode"), "dropped on the next save");
+    }
+
     /// The BGS tick hour survives a restart (it used to go back to 13:00 UTC); older files without it get the default.
     #[test]
     fn bgs_tick_hour_is_kept() {
@@ -741,24 +726,6 @@ mod tests {
         let (back, problem) = Settings::load(&d.0);
         assert_eq!((back.tts_engine, back.tts_rate), (EngineKind::WinRt, 1.2));
         assert!(problem.expect("a problem to show").what.contains("tts_engine is back at the default"));
-    }
-
-    /// Inara's developer mode was on by default: a file from then goes off, once. Switched on again afterwards, it stays
-    /// on; a first start has it off.
-    #[test]
-    fn inara_developer_mode_goes_off_once() {
-        let d = Dir::new("inara-dev");
-        std::fs::write(d.0.join("settings.json"), r#"{ "welcomed": true, "accounts": { "inara_enabled": true, "inara_dev_mode": true } }"#).expect("write");
-        let (mut s, problem) = Settings::load(&d.0);
-        assert!(problem.is_none());
-        assert!(!s.accounts.inara_dev_mode, "the old default goes");
-        assert!(s.accounts.inara_enabled && s.welcomed, "nothing else changes");
-        s.accounts.inara_dev_mode = true;
-        s.save(&d.0);
-        assert!(Settings::load(&d.0).0.accounts.inara_dev_mode, "switched on again, it stays on");
-        let first = Dir::new("inara-dev-first");
-        assert!(!Settings::load(&first.0).0.accounts.inara_dev_mode);
-        assert!(!Settings::default().accounts.inara_dev_mode);
     }
 
     #[test]

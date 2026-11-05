@@ -300,7 +300,7 @@ fn edsm_bad_credentials_stop_until_settings_change() {
 }
 
 fn inara_cfg() -> UplinkConfig {
-    UplinkConfig { inara: Some(InaraCredentials { api_key: "inara-secret".into(), is_being_developed: true }), ..UplinkConfig::default() }
+    UplinkConfig { inara: Some(InaraCredentials { api_key: "inara-secret".into() }), ..UplinkConfig::default() }
 }
 
 #[test]
@@ -312,7 +312,7 @@ fn inara_posts_batches_with_header() {
     let post = &h.transport.requests_to(inara::API_URL)[0];
     let body: Value = serde_json::from_str(&post.body_text()).unwrap();
     assert_eq!(body["header"]["appName"], "Elite Nexus");
-    assert_eq!(body["header"]["isBeingDeveloped"], true);
+    assert!(body["header"].get("isBeingDeveloped").is_none(), "live play is never marked as in development");
     assert_eq!(body["header"]["APIkey"], "inara-secret");
     assert_eq!(body["header"]["commanderName"], "Jameson");
     assert_eq!(body["header"]["commanderFrontierID"], "F1");

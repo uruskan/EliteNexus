@@ -21,7 +21,6 @@ pub struct StatusView {
 pub struct AccountsUi {
     edsm_key_input: String,
     inara_key_input: String,
-    show_inara_options: bool,
     /// "Check again" was clicked (the app asks the uplink).
     pub check_inara: bool,
 }
@@ -231,18 +230,10 @@ pub fn show(ui: &mut Ui, acc: &mut Accounts, st: &mut AccountsUi, cmdr_name: &st
                 status_row(g, s);
             });
             if !matches!(status.uplink.inara.last_error.as_deref(), Some(e) if e.to_ascii_lowercase().contains("no access allowed")) {
-                footnote(ui, "Inara accepts uploads only from apps it has approved by name; it approved \"Elite Nexus\" in October 2026.");
-            }
-            // Hidden depth.
-            ui.add_space(6.0);
-            if widgets::disclosure(ui, &mut st.show_inara_options, "Inara options") {
-                group(ui, |g| {
-                    changed |= g.switch(
-                        &mut acc.inara_dev_mode,
-                        "Developer mode",
-                        "Sent to Inara as isBeingDeveloped: Inara then treats your uploads as an app being built and ignores the data they share with everyone, such as community goals. Leave it off unless you're testing with a test account. Updates are batched every 35+ seconds, so the key is never locked out.",
-                    );
-                });
+                footnote(
+                    ui,
+                    "Inara accepts uploads only from apps it has approved by name; it approved \"Elite Nexus\" in October 2026. Updates go in batches at least 35 seconds apart, within Inara's limit of about two requests a minute.",
+                );
             }
         });
     });

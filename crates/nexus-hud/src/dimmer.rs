@@ -62,8 +62,16 @@ const FIX_MARK: &str = "// Elite Nexus";
 /// How the in-game patterns of Elite Nexus 0.3.0 start in a config ([`uses_patterns`]).
 const PATTERN_SECTION: &str = "[ShaderRegexEliteNexus";
 
-/// Keys bound in the game while the dimmer is installed (only while the game window is in front).
-pub const KEYS: [(&str, &str); 3] = [("F9", "dimmer on / off"), ("F10", "strength: 0 %, 15 %, 35 %, 60 %, 100 %"), ("F11", "reach: 5 m, 8 m, 12 m")];
+/// Keys bound in the game while the dimmer is installed (only while the game window is in front, and without Shift,
+/// Ctrl or Alt): on / off, the light kept, the reach, in the config's `[KeyEliteNexusDimmer…]` sections ([`KEY_SECTIONS`]).
+/// None of the game's built-in control presets uses F2 to F11, and the game's own screenshot key, F10 ([`GAME_KEYS`]),
+/// is left alone. Until Elite Nexus 0.7.3-beta.2 the light kept was on F10, so every screenshot changed it too.
+pub const KEYS: [(&str, &str); 3] = [("F9", "dimmer on / off"), ("F7", "light kept: 0 %, 15 %, 35 %, 60 %, 100 %"), ("F8", "reach: 5 m, 8 m, 12 m")];
+/// The config's sections for [`KEYS`], in the same order.
+const KEY_SECTIONS: [&str; 3] = ["KeyEliteNexusDimmerOnOff", "KeyEliteNexusDimmerStrength", "KeyEliteNexusDimmerReach"];
+/// Keys the game itself takes, outside its controls (no `.binds` file holds them): F10 saves a screenshot, and Alt+F10
+/// a high-resolution one (the dimmer's keys don't fire with Alt held).
+pub const GAME_KEYS: [(&str, &str); 1] = [("F10", "the game's screenshot key")];
 
 /// What the dimmer does, in the game's `[Constants]` (3Dmigoto's IniParams `x`, `y`, `z`).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -320,6 +328,23 @@ fn fix_name(hash: &str) -> String {
 
 fn is_our_fix(path: &Path) -> bool {
     std::fs::read_to_string(path).is_ok_and(|t| t.starts_with(FIX_MARK))
+}
+
+/// The dimmer's keys in the game's config as Elite Nexus wrote it, in [`KEYS`]' order (`F9`, …); None for one it
+/// doesn't hold (a config of another make, or none).
+pub fn bound_keys(game: &Path) -> Option<[Option<String>; 3]> {
+    let text = std::fs::read_to_string(game.join(CONFIG)).ok().filter(|t| t.starts_with(CONFIG_MARK))?;
+    Some(KEY_SECTIONS.map(|name| {
+        let (_, value) = section(&text, name).find(|(k, _)| k.eq_ignore_ascii_case("Key"))?;
+        let vk = value.split_whitespace().last()?;
+        Some(vk.strip_prefix("VK_").unwrap_or(vk).to_ascii_uppercase())
+    }))
+}
+
+/// Whether the config binds other keys than [`KEYS`]: one written before the keys moved off F10 (the game's
+/// screenshot key). Saving the settings writes the current keys.
+pub fn keys_outdated(game: &Path) -> bool {
+    bound_keys(game).is_some_and(|bound| bound.iter().zip(KEYS).any(|(b, (key, _))| b.as_deref().is_some_and(|b| b != key)))
 }
 
 /// Whether the config still has the in-game patterns of Elite Nexus 0.3.0, which crashed the game
@@ -849,18 +874,19 @@ pub fn render_config(c: &HookConfig) -> String {
     line(&format!("z1 = {}", number(p.max_br)));
     line(&format!("w1 = {}", number(p.min_gr)));
     line("");
-    line("[KeyEliteNexusDimmerOnOff]");
-    line("Key = no_modifiers VK_F9");
+    let [on_off, strength, reach] = KEY_SECTIONS;
+    line(&format!("[{on_off}]"));
+    line(&format!("Key = no_modifiers VK_{}", KEYS[0].0));
     line("type = toggle");
     line(&format!("z = {}", if d.on { 0 } else { 1 }));
     line("");
-    line("[KeyEliteNexusDimmerStrength]");
-    line("Key = no_modifiers VK_F10");
+    line(&format!("[{strength}]"));
+    line(&format!("Key = no_modifiers VK_{}", KEYS[1].0));
     line("type = cycle");
     line("x = 0, 0.15, 0.35, 0.6, 1");
     line("");
-    line("[KeyEliteNexusDimmerReach]");
-    line("Key = no_modifiers VK_F11");
+    line(&format!("[{reach}]"));
+    line(&format!("Key = no_modifiers VK_{}", KEYS[2].0));
     line("type = cycle");
     line("y = 5, 8, 12");
     line("");
@@ -1301,6 +1327,30 @@ mod tests {
         assert!(uses_patterns(&game));
         start_recording(&game).unwrap();
         assert!(!uses_patterns(&game), "starting a calibration writes a config without them");
+        let _ = std::fs::remove_dir_all(&game);
+    }
+
+    /// Play-test, 2026-11-04: F10 stepped the light kept, and F10 is the game's screenshot key, so every screenshot
+    /// changed the dimmer. An install with those keys is noticed, and saving its settings moves them.
+    #[test]
+    fn the_dimmer_keys_leave_the_screenshot_key_alone() {
+        assert!(KEYS.iter().all(|(k, _)| GAME_KEYS.iter().all(|(g, _)| g != k)), "no key the game takes for itself");
+        let game = temp_game("keys");
+        install(&game, &fake_files(), &HookConfig::default()).unwrap();
+        assert_eq!(bound_keys(&game), Some(KEYS.map(|(k, _)| Some(k.to_string()))));
+        assert!(!keys_outdated(&game));
+        // What 0.7.3-beta.2 and earlier wrote.
+        let old = render_config(&HookConfig::default()).replace("VK_F7", "VK_F10").replace("VK_F8", "VK_F11");
+        std::fs::write(game.join(CONFIG), old).unwrap();
+        assert_eq!(bound_keys(&game).map(|b| b[1].clone()), Some(Some("F10".into())));
+        assert!(keys_outdated(&game));
+        let Status::Installed { config } = status(&game) else { panic!("installed") };
+        save_config(&game, &config).unwrap();
+        assert!(!keys_outdated(&game), "saving writes the current keys");
+        // Another mod's config isn't read for keys.
+        std::fs::write(game.join(CONFIG), "[KeyEliteNexusDimmerStrength]\r\nKey = VK_F10\r\n").unwrap();
+        assert_eq!(bound_keys(&game), None);
+        assert!(!keys_outdated(&game));
         let _ = std::fs::remove_dir_all(&game);
     }
 

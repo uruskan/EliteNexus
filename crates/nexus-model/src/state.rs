@@ -408,11 +408,23 @@ impl GameState {
                 self.feed(ts, "Undocked", format!("Undocked from {}", clean_station_name(&u.station_name)));
             }
             Event::DockingDenied(d) => {
-                let reason = d.reason.clone().unwrap_or_default();
+                let reason = crate::location::denied_reason(d.reason.as_deref().unwrap_or_default());
                 let station = clean_station_name(&d.station_name);
+                self.location.docking = None;
                 self.feed(ts, "DockingDenied", format!("Docking denied at {station}: {reason}"));
                 alerts.push_with(|| Alert::new(ts, AlertKind::Navigation, Priority::Normal, "Docking denied").detail(format!("{station}: {reason}")));
             }
+            Event::DockingGranted(d) => {
+                let station = clean_station_name(&d.station_name);
+                self.location.docking = Some(crate::location::DockingGrant { station: station.clone(), market_id: d.market_id, pad: d.landing_pad, at: ts });
+                let detail = match d.landing_pad {
+                    Some(pad) => format!("Pad {pad} · {station}"),
+                    None => station,
+                };
+                self.feed(ts, "DockingGranted", format!("Docking granted: {detail}"));
+                alerts.push_with(|| Alert::new(ts, AlertKind::Navigation, Priority::Normal, "Docking granted").detail(detail));
+            }
+            Event::DockingCancelled(_) | Event::DockingTimeout(_) => self.location.docking = None,
             Event::ApproachBody(b) => {
                 self.location.body = Some(b.body.clone());
                 self.location.body_id = Some(b.body_id);

@@ -50,8 +50,8 @@ rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 tts.workspace = true
 # SAPI 5, the second speech engine (src/tts/sapi.rs). The version wgpu already builds.
 windows = { version = "0.62", features = ["Win32_Media_Speech", "Win32_System_Com"] }
-# Gdi and Threading: the overlay finds the game's monitor and its own window. ToolHelp: whether the game's process
-# still runs (src/game_process.rs).
+# Gdi and Threading: the overlay finds the game's monitor and its own window, and shapes it. ToolHelp: whether the
+# game's process still runs (src/game_process.rs).
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Threading", "Win32_UI_WindowsAndMessaging"] }
 
 [target.'cfg(not(windows))'.dependencies]

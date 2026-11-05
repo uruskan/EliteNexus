@@ -7,7 +7,8 @@
 #        where-route (Mining > Where to mine: near you, near you for that material, or along a route
 #        towards Colonia). find, untouched, known and the where tabs start their search on the first
 #        frame, so give them -Delay 15-25 for Spansh. routes (Market > Trade routes) searches the
-#        local database on the first frame too.
+#        local database on the first frame too, and station (Market > Station) opens four markets
+#        side by side.
 #        With -Page Hud: glare or cockpit (those tabs), or a preset name (mocha, royalpurple, ...)
 #        to start the HUD colours tab from; add ,options (empireblue,options) to open the
 #        protection's options. Set ELITE_NEXUS_GAME_DIR to show the page for a test copy of the
@@ -22,7 +23,7 @@
 #        With -Page Statistics: career, activity or all opens that tab.
 # -JournalDir: read a test journal folder instead of the real one (test runs never upload).
 # -Overlay: an overlay moment with sample content, compact and expanded (jump, hyperspace, arrival, approach,
-#        sampling, close, mining, trade, docked, carrier, two, alert, quiet).
+#        sampling, close, mining, trade, docking, docked, carrier, two, alert, quiet).
 # -Demo: a sample Ask conversation, an alert banner and sample alerts in the alert history; with
 #        -Tab bell the history (the list under the toolbar's bell) is open.
 # -Exe: another build (e.g. one from your own CARGO_TARGET_DIR). The data folder is the build's own

@@ -129,6 +129,16 @@ release time that section becomes the new version and the release workflow publi
 - **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
   the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
   for later starts.
+- **Overlay: where the route ends.** On a plotted route (the galaxy map's, or one planned on Navigation), the open
+  island names the route's last system and how far it is in a straight line ("Orrere · 23.4 ly away"), under the
+  next jump, and the small island adds the distance to the jumps left ("2 jumps · 23.4 ly"). It showed only the
+  next jump and the jumps left.
+- **Overlay: docking granted.** When a station grants you docking, the island opens with your landing pad and the
+  station, as it did only when docking was denied, then keeps the pad ("Pad 36") until you dock, the permission
+  runs out or you leave. The banner in Elite Nexus says it too. A denied request now says why in plain words ("too
+  far away: ask again within 7.5 km") instead of the game's code ("Distance"). An alert that comes while a cockpit
+  panel is open (docking is usually requested from one) now waits until the panel closes, instead of running out
+  while the island is kept small.
 - **Settings › Follow my flight** (off by default) changes the page as you fly: it reads what you're doing from
   the game's Status.json and switches when that changes. Flying a system opens Exploration; getting below
   **Planet view below** (150 km by default) over a
@@ -182,17 +192,32 @@ release time that section becomes the new version and the release workflow publi
   such as a construction's, at cost), a chart by day of jumps, light years, credits or time, a card for each thing you
   did, and arrows against the period before. An empty period says why. **All statistics** replaces the old list of the game's raw names, mostly zeros:
   every figure in plain words, grouped, searchable, with the zeros put away.
-- **Inara**: developer mode is off. Elite Nexus told Inara its uploads came from an app still being built, so Inara
-  ignored what they share with everyone, such as community goals; now that Inara has approved the app, it doesn't.
-  It's switched off once for everyone; Accounts & sync › Inara options still has the switch, for testing.
+- **Market › Station** compares markets side by side: up to eight open at once, tiled to the window, each with a close
+  button, and still open next time. The list on the left uses the page's whole height: a search for any station or
+  carrier the database knows, the station you're docked at, your system's stations and carriers (only those with a
+  market in the database, unless you ask for the rest) and the markets you opened lately; **Open all** puts your
+  system's markets side by side. **Filter goods** narrows every market at once, **Buy here** and **Sell here** show one
+  side, and where several open markets trade a good, the cheapest to buy and the best to sell stand out. A market you
+  open in the game opens there by itself, and the open markets update as new reports arrive.
+- **Market › Services** says how far it reaches: the nearest stations with the service among every station Elite
+  Nexus knows, with no distance limit, so one 3,000 ly away is listed once the nearer ones are, and **Show 25 more**
+  goes further (it used to stop at 25). It says how many stations the database knows and, while that's few, that the
+  Spansh import searches the whole galaxy. Its settings sit in a bar: the landing pad, and whether fleet carriers (left
+  out by default: they move) and planetary ports count.
+- **Market › Price alerts**: a new alert is set in a bar like the other tabs' settings. Its price can still be typed,
+  and − and + step it by an amount that fits its size (1,000 Cr around 48,000 Cr, 100,000 Cr around 1.5 M Cr); **Within**
+  can be **Anywhere**. Under it, the commodity's galactic average and the best price in the alert's range right now,
+  with its filters, each set the price in one click. Your alerts are a list with a switch and a delete button on each.
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.
 - **Engineering** › Suits & weapons and Synthesis read the same way: each recipe (a grade, a modification, a
   synthesis) is one row that says Ready or how many materials you're short of, with its price or effect, and opens
   into each ingredient against what you have, instead of a run of "3× Vanadium (0)" in coloured brackets.
-- **Market**: the four lines of live-feed messages under every tab are gone, so each tab starts higher up. The
-  **Live** badge stays, with the feed's rate and the database's size beside it.
+- **Market**: the four lines of live-feed messages under every tab are gone, so each tab starts higher up. The feed's
+  state sits in a slim bar along the bottom of the page instead: the **Live** badge, the feed's rate, what the
+  database holds and, on the right, the feed's newest message. Click it for Database & feed, which lists the latest
+  messages.
 - **Fleet › Where to buy: a build for a ship you own is a refit of it.** Modules already fitted on your ship of that
   type count as yours, like those in your storage, and start unticked ("Fitted on your Python"). A build of one of
   your own ships says you have all of it, instead of listing every module to buy again. Ask's where to buy counts them
@@ -221,6 +246,36 @@ release time that section becomes the new version and the release workflow publi
   no longer squeezes the rest into the middle. On the Mining page anything further out waits on the rim, in its
   direction, with its distance, and labels stay inside the radar instead of being cut off (seen by Chequers2). The
   overlay's radar uses the same scale and keeps anything further out at its edge.
+- **Overlay with See-through off: the island fits what it shows.** It was a fixed black panel of 408 × 168 points
+  whatever it said, mostly empty for a word or two. It's now a window the island's own size: a small capsule for a
+  word or two, larger only while it's open, and it floats a little below the top of the screen as the see-through
+  island does. On Windows it has the island's rounded shape; elsewhere its corners are square. It switches size
+  only when the island changes shape and draws nothing while it's still, so it costs no more than before. A place
+  you dragged it to keeps the island where it was. On a PC without DirectX 12, where see-through can't work, the
+  island is now its own window too (it was a black rectangle), and Settings › Overlay says why.
+- **Cockpit lights: the dimmer's keys in the game are F7, F8 and F9.** F10 stepped the light kept, but F10 is also
+  the game's screenshot key, so every screenshot changed the dimmer too. Now F7 steps the light kept, F8 the reach,
+  and F9 still switches it on and off; none of the game's built-in control presets uses F2 to F11. A dimmer
+  installed earlier keeps F9, F10 and F11 until you click Save on the Cockpit lights tab, which says so. The tab
+  also checks the dimmer's keys against the game's screenshot key, which isn't among its controls.
+- **Inara**: Developer mode is gone from Accounts & sync (Inara options). Elite Nexus no longer marks what it sends
+  as "in development", so Inara now takes the community goals you're part of, and your progress in them, as it does
+  from any approved app. A settings file that still has the switch reads as before.
+- **Market › Find commodity**: the search's settings are in view, in a bar under the search field, instead of behind
+  an **Options** click: how far to look, the landing pad (Any, S, M or L; it follows your ship until you pick one),
+  how old prices may be, the least stock or demand, fleet carriers and planetary ports, and the order. Click a number
+  to type it, or step it with − and + through round values (50, 75, 100, 150 ly…); a reset button appears once a
+  filter differs from the defaults.
+- **Market**: Trade routes, Mining hotspots, Abnormal prices and the Run planner set their searches in the same bar as
+  Find commodity: each setting a caption over its controls, numbers to type or step with − and +, the landing pad as
+  Any, S, M or L, fleet carriers as a chip. What a search is for (your ship's hold and credits, the pad it needs)
+  reads in the bar beside the settings. Mining hotspots says what to do before its first search.
+- **Market**: columns can be widened or narrowed: drag the edge between two headings (the pointer turns into ↔
+  there). One column in each list, such as the station, takes the room left, so the list still fits the window, and
+  each list remembers its widths between runs.
+- **Market › Sell my cargo**: its settings sit in a bar above the lists (how far to look for buyers, how old prices may
+  be, the pad your ship needs), and **Best buyer per commodity** is a table like Best single stop: the station,
+  system, distance and demand in columns of their own, sortable, with the next best buyers on the price's tooltip.
 
 ### Fixed
 - **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at
@@ -242,6 +297,15 @@ release time that section becomes the new version and the release workflow publi
   the list; it used to appear only after switching the speech engine. A new voice, speed or volume no longer waits
   until the line being spoken, and every alert queued before it, has been said: a new speed or volume applies at
   once, even to the line being spoken, and a new voice from the next line.
+- **Overlay: Keep it when idle works with See-through off.** It kept nothing there: with nothing to say, the opaque
+  panel hid anyway, and switching the setting on didn't bring it back. The small empty island now stays, as it does
+  see-through, and so does the small island while a cockpit panel is open.
+- **Market › Sell my cargo**: commodity names in **Best buyer per commodity** no longer end in "…" while half the card
+  stands empty, and the "planned in … ms" note no longer hides behind the top of the card under it (it's at the end
+  of the settings bar now).
+- **Market › Sell my cargo** plans again when how old prices may be changes, also when it's changed on Find
+  commodity, which shares the setting: the plan could have used the old age while the bar showed the new one. Its
+  refresh button no longer does nothing while a plan is being made.
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.

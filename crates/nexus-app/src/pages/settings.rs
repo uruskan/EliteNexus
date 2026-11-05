@@ -326,10 +326,17 @@ fn overlay(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                 changed = true;
             }
         });
-        changed |= g.switch(&mut o.keep_minimal, "Keep it when idle", "A small empty island stays at the top instead of fading away when there's nothing to say. See-through only: an empty opaque panel hides.");
+        changed |= g.switch(&mut o.keep_minimal, "Keep it when idle", "A small empty island stays at the top instead of fading away when there's nothing to say.");
         changed |= g.switch(&mut o.always_visible, "Visible over every window", "Off, it shows only while Elite Dangerous or Elite Nexus is the window in front. Wayland and macOS don't say which window that is, so there it always shows.");
-        changed |= g.switch(&mut o.see_through, "See-through", "Just the island over the game, changing shape as it opens and closes. Off: an opaque black panel. Applies after a restart.");
-        if o.see_through != running {
+        let opaque = if cfg!(windows) { "Off: the island is an opaque window in its own shape that changes size instead." } else { "Off: the island is an opaque black window its own size, with square corners, that changes size instead." };
+        changed |= g.switch(&mut o.see_through, "See-through", &format!("Just the island over the game, with a soft shadow, changing shape as it opens and closes. {opaque} Applies after a restart."));
+        // Set up at start: on Windows only a DirectX 12 adapter draws a see-through window.
+        let renderer = crate::overlay::window::SEE_THROUGH_RENDERER.load(std::sync::atomic::Ordering::Relaxed);
+        if o.see_through && !renderer {
+            g.content(|ui| {
+                ui.add(egui::Label::new(RichText::new("This PC's graphics can't draw a see-through window here (on Windows that takes DirectX 12), so the island stays an opaque window of its own.").size(size::FOOTNOTE).color(pal::WARN)).wrap());
+            });
+        } else if o.see_through != running {
             g.content(|ui| {
                 ui.add(egui::Label::new(RichText::new("Restart Elite Nexus for this to take effect.").size(size::FOOTNOTE).color(pal::WARN)).wrap());
             });

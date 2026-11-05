@@ -387,6 +387,35 @@ pub fn th(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).font(display(size::FOOTNOTE)).color(pal::DIM));
 }
 
+/// A table whose columns the commander can widen or narrow: dragging the edge between two headings resizes the column
+/// on its left (the pointer turns into ↔ there, the edge lights up, and orange while dragged). Each table's widths are
+/// remembered across restarts under `id`: give every table its own, and a table that lays out other columns in a
+/// narrow window one per layout, or one layout's widths would reset the other's. Rows are striped, cells centred.
+///
+/// Give it one [`flex_column`]: that column takes the room the others leave, so the table still fits the window. A last
+/// column that is `Column::remainder()` does the same. Columns that should keep their width (a pin, a button) say
+/// `.resizable(false)`.
+pub fn table<R>(ui: &mut Ui, id: &str, build: impl FnOnce(egui_extras::TableBuilder<'_>) -> R) -> R {
+    // An id of its own, so the widths don't depend on what the page shows above the table.
+    ui.scope_builder(egui::UiBuilder::new().id(egui::Id::new(("nexus-table", id))), |ui| {
+        let w = &mut ui.visuals_mut().widgets;
+        // No grid lines at rest: the edge under the pointer shows, and the one being dragged is orange.
+        w.noninteractive.bg_stroke = Stroke::NONE;
+        w.hovered.bg_stroke = Stroke::new(1.0, pal::FAINT);
+        w.active.bg_stroke = Stroke::new(1.5, pal::ACCENT);
+        // A table scrolls in whatever height is left (egui_extras would take at least 200 points, past what's below).
+        build(egui_extras::TableBuilder::new(ui).id_salt(id).resizable(true).striped(true).min_scrolled_height(0.0).cell_layout(Layout::left_to_right(Align::Center)))
+    })
+    .inner
+}
+
+/// The flexible column of a [`table`]: it takes the width the other columns leave (at least `min`), cuts what doesn't
+/// fit, and isn't dragged itself: dragging the others resizes it.
+pub fn flex_column(min: f32) -> egui_extras::Column {
+    egui_extras::Column::remainder().at_least(min).clip(true).resizable(false)
+}
+
+
 /// How a table is sorted: a column (the table's own numbering) and the direction; no column = the
 /// order the rows came in. Remembered per table ([`TableSort::load`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -755,6 +784,28 @@ pub fn pill(ui: &mut Ui, selected: bool, text: &str) -> Response {
 /// A rounded suggestion chip.
 pub fn chip(ui: &mut Ui, text: &str) -> Response {
     ui.add(egui::Button::new(RichText::new(text).size(size::CALLOUT).color(pal::TEXT)).fill(pal::CARD).corner_radius(CornerRadius::same(255)).min_size(Vec2::new(0.0, 32.0)))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Filter chips
+
+/// A filter chip that switches something on and off: "✓ Fleet carriers" on an orange tint when on, "+ Fleet carriers"
+/// on grey when off. The response reports `changed()` when flipped.
+pub fn chip_toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
+    let (glyph, fill, col) = if *on {
+        (egui_phosphor::regular::CHECK, pal::ACCENT_BG, pal::ACCENT_SOFT)
+    } else {
+        (egui_phosphor::regular::PLUS, Color32::from_white_alpha(16), pal::TEXT)
+    };
+    let mut r = ui.add(
+        egui::Button::new(RichText::new(format!("{glyph}  {label}")).size(size::CALLOUT).color(col)).fill(fill).corner_radius(CornerRadius::same(255)).min_size(Vec2::new(0.0, 30.0)),
+    );
+    if r.clicked() {
+        *on = !*on;
+        r.mark_changed();
+    }
+    r.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), *on, label));
+    r
 }
 
 /// Collapsible "› Options" disclosure; returns true while open.

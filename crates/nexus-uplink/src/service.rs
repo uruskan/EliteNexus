@@ -1202,7 +1202,7 @@ async fn run_inara(shared: Arc<Shared>) {
             }
             shared.inara_check_now.store(false, Ordering::Relaxed);
             let header = json!({
-                "appName": software, "appVersion": version, "isBeingDeveloped": creds.is_being_developed, "APIkey": creds.api_key.trim(),
+                "appName": software, "appVersion": version, "APIkey": creds.api_key.trim(),
             });
             let event = json!({ "eventName": "getCommanderProfile", "eventTimestamp": Timestamp::now().to_iso(), "eventData": {} });
             let body = json!({ "header": header, "events": [event] }).to_string();
@@ -1280,7 +1280,6 @@ async fn run_inara(shared: Arc<Shared>) {
         let mut header = serde_json::Map::new();
         header.insert("appName".into(), json!(software));
         header.insert("appVersion".into(), json!(version));
-        header.insert("isBeingDeveloped".into(), json!(creds.is_being_developed));
         header.insert("APIkey".into(), json!(creds.api_key.trim()));
         header.insert("commanderName".into(), json!(first.cmdr));
         if !first.fid.is_empty() {
