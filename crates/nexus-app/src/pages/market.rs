@@ -2944,13 +2944,15 @@ fn results_routes(ui: &mut Ui, slot: &Slot<Res<TradeRoute>>, from: Option<&str>)
     const TABLE: &str = "trade-routes";
     let mut sort = TableSort::load(ui, TABLE);
     crate::widgets::table(ui, if here { "trade-routes/here" } else { "trade-routes/around" }, |table| {
+        // The two stations share what the numbers leave, so the table fits a 1,000-pixel window; from one station,
+        // Buy here is only a price and keeps a narrow column.
         let table = table
-            .column(Column::initial(170.0).at_least(90.0).clip(true))
+            .column(Column::initial(160.0).at_least(90.0).clip(true))
+            .column(Column::initial(84.0).at_least(60.0).clip(true))
             .column(Column::initial(90.0).at_least(60.0).clip(true))
-            .column(Column::initial(100.0).at_least(60.0).clip(true))
-            .column(Column::initial(if here { 110.0 } else { 260.0 }).at_least(90.0).clip(true))
-            .column(crate::widgets::flex_column(200.0))
-            .column(Column::initial(70.0).at_least(50.0).clip(true))
+            .column(if here { Column::initial(110.0).at_least(90.0).clip(true) } else { crate::widgets::flex_column(170.0) })
+            .column(crate::widgets::flex_column(170.0))
+            .column(Column::initial(64.0).at_least(50.0).clip(true))
             .header(30.0, |mut h| {
                 // Buy at / Sell at sort by how far from you the station is (Buy here by price).
                 let buy = if here { "Buy here" } else { "Buy at" };

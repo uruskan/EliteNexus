@@ -135,7 +135,7 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   for), `switch`/`toggle`, `stepper` (a − n + glass capsule), `number`/`whole` (a value to type or step through
   round values), `settings_bar` (a search's settings in view), `chip_toggle` (a filter chip that switches on and off), `pill`, capsule `button`s, `search_field`, `badge`,
   `th` table headings, `table` (an `egui_extras` table whose columns the commander drags wider or narrower, widths kept
-  across restarts in ui-state.ron; its one `flex_column` takes the room left). Pages use these instead of raw egui widgets so the look stays uniform
+  across restarts in ui-state.ron; its `flex_column`, or two sharing equally, takes the room left). Pages use these instead of raw egui widgets so the look stays uniform
   and every layout adapts to the window width (the sidebar becomes an icon rail below 1180 px).
 * History is folded with alerts **disabled**; only live events raise alerts or get uploaded. Never upload history.
   Test runs (`--journal-dir`, `--screenshot`) never upload at all.
