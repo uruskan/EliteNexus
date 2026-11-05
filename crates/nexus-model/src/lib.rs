@@ -19,6 +19,7 @@ pub mod mining;
 pub mod missions;
 pub mod period;
 pub mod session;
+pub mod ships;
 pub mod state;
 
 pub use alerts::{Alert, AlertKind, Alerts, Priority};

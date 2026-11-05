@@ -202,6 +202,16 @@ impl GameState {
                 self.session = Session::start(ts, l.credits);
                 self.history.credit_sample(ts, l.credits);
                 self.history.login(ts);
+                // Logged in as: a suit means on foot, a taxi (adder_taxi, vulture_taxi…, which dropships are too) a ride,
+                // anything else aboard that ship; never crewing for another commander. (The Location that follows says
+                // OnFoot only when it's true, and older journals say nothing of taxis or crews, so the last session's
+                // state mustn't linger.)
+                if let Some(ship) = l.ship.as_deref() {
+                    let lower = ship.to_ascii_lowercase();
+                    self.location.on_foot = lower.contains("suit");
+                    self.location.in_taxi = lower.ends_with("_taxi");
+                }
+                self.location.multicrew = false;
                 self.game_closed = false;
                 self.at_main_menu = false;
                 let mode = l.game_mode.as_deref().map(|m| format!(" ({m})")).unwrap_or_default();
@@ -578,6 +588,12 @@ impl GameState {
             // ---------------------------------------------------------------- ships
             Event::Loadout(l) => self.fleet.on_loadout(l, ctx.line, ts),
             Event::ShipyardBuy(b) => {
+                // Named before the ship sold in part exchange leaves the fleet.
+                self.name_ships();
+                self.history.purchase(ts, b.ship_price);
+                if let Some(id) = b.sell_ship_id {
+                    self.history.ship_sold(id, b.sell_old_ship.as_deref().unwrap_or_default(), ts, b.sell_price);
+                }
                 let here = self.here_station();
                 self.fleet.on_shipyard_buy(b, (&here.0, here.1.as_deref(), here.2), ts);
                 let name = b.ship_type_localised.clone().unwrap_or_else(|| nexus_data::ships::ship_name(&b.ship_type));
@@ -586,12 +602,21 @@ impl GameState {
                     self.money(ts, LedgerCategory::Ships, p, "Sold old ship");
                 }
             }
-            Event::ShipyardNew(n) => self.fleet.on_shipyard_new(n),
+            Event::ShipyardNew(n) => {
+                self.fleet.on_shipyard_new(n);
+                self.history.new_ship(n.new_ship_id, &n.ship_type);
+            }
             Event::ShipyardSell(s) => {
+                self.name_ships();
+                self.history.ship_sold(s.sell_ship_id, &s.ship_type, ts, Some(s.ship_price));
                 self.fleet.on_shipyard_sell(s);
                 self.money(ts, LedgerCategory::Ships, s.ship_price, format!("Sold {}", nexus_data::ships::ship_name(&s.ship_type)));
             }
             Event::ShipyardSwap(s) => {
+                self.name_ships();
+                if let Some(id) = s.sell_ship_id {
+                    self.history.ship_sold(id, s.sell_old_ship.as_deref().unwrap_or_default(), ts, None);
+                }
                 let here = self.here_station();
                 self.fleet.on_shipyard_swap(s, (&here.0, here.1.as_deref(), here.2), ts);
             }
@@ -1087,6 +1112,36 @@ impl GameState {
         }
         self.carrier.settle_pending(ts);
         self.squadron_carrier.settle_pending(ts);
+        // Which ship what follows belongs to, and what the ships are called now.
+        self.history.set_aboard(ts, self.aboard(), self.credited_ship());
+        if matches!(event, Event::LoadGame(_) | Event::Loadout(_) | Event::ShipyardNew(_) | Event::ShipyardSwap(_) | Event::SetUserShipName(_) | Event::StoredShips(_) | Event::ShipRedeemed(_)) {
+            self.name_ships();
+        }
+    }
+
+    /// The commander's own ship they're in: None on foot, in a taxi or a dropship, or crewing another commander's ship.
+    /// In its SRV or its fighter, the ship that carries them.
+    pub fn aboard(&self) -> Option<u64> {
+        let l = &self.location;
+        if l.on_foot || l.in_taxi || l.multicrew { None } else { self.fleet.current_ship_id }
+    }
+
+    /// The commander's own ship what they do counts for: the one they're in, or the one they stepped out of while
+    /// they're on foot beside it (on its planet, or at the station it's docked at). None in a taxi or a dropship,
+    /// crewing another commander's ship, or on foot somewhere else.
+    pub fn credited_ship(&self) -> Option<u64> {
+        if let Some(id) = self.aboard() {
+            return Some(id);
+        }
+        let s = self.fleet.current()?;
+        (self.ship_place(s) == ShipPlace::WithYou).then_some(s.id)
+    }
+
+    /// Writes down what each ship in the fleet is and is called, so a ship sold later keeps its name in the history.
+    fn name_ships(&mut self) {
+        for s in self.fleet.ships.values() {
+            self.history.name_ship(s.id, &s.ship_type, &s.type_name, &s.name, &s.ident);
+        }
     }
 
     fn star_class_alert(&mut self, ts: Timestamp, system: &str, class: &str, alerts: &mut Alerts) {

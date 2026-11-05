@@ -195,9 +195,10 @@ impl Fleet {
 
     pub fn on_load_game(&mut self, l: &ev::LoadGame) {
         let (Some(id), Some(ship)) = (l.ship_id, l.ship.as_deref()) else { return };
-        // On foot / in a taxi the "Ship" is a suit or a dropship: ignore those.
+        // On foot / in a taxi or a dropship the "Ship" is a suit or a taxi hull (adder_taxi, vulture_taxi…): ignore
+        // those. Not "dropship": the Federal Dropship and Assault Ship (federation_dropship…) are ships of one's own.
         let lower = ship.to_ascii_lowercase();
-        if lower.contains("suit") || lower.contains("taxi") || lower.contains("dropship") {
+        if lower.contains("suit") || lower.contains("taxi") {
             return;
         }
         // Logged in aboard it.

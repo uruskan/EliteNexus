@@ -1,8 +1,8 @@
-//! Statistics, in three tabs. **Career**: the game's own lifetime figures (its statistics, written at each login) in
+//! Statistics, in four tabs. **Career**: the game's own lifetime figures (its statistics, written at each login) in
 //! plain words: where the credits came from and went, each activity with its rank, records and the round numbers coming
 //! up. **Activity**: what the commander did over a period they pick, from the journals Elite Nexus has read, against
-//! the period before. **All statistics**: every figure the game keeps, searchable, with the zeros put away. Every chart
-//! fits the period shown, and amounts read as "19.1 B".
+//! the period before. **Ships**: the same period ship by ship. **All statistics**: every figure the game keeps,
+//! searchable, with the zeros put away. Every chart fits the period shown, and amounts read as "19.1 B".
 
 use crate::theme::{display, pal, size};
 use crate::widgets::{self, GAP, bar, card_tinted, card_with, cards, footnote, section, short_credits};
@@ -16,24 +16,27 @@ use nexus_journal::Timestamp;
 use nexus_model::career::{self, Career, Earning, Expense, Record, Unit};
 use nexus_model::history::LedgerCategory;
 use nexus_model::period::{Day, Records, Summary, Window};
+use nexus_model::ships::ShipSummary;
 use nexus_model::GameState;
 use std::sync::Arc;
 
 const CAREER: u8 = 0;
 const ACTIVITY: u8 = 1;
 const ALL: u8 = 2;
-const TABS: [(u8, &str); 3] = [(CAREER, "Career"), (ACTIVITY, "Activity"), (ALL, "All statistics")];
+const SHIPS: u8 = 3;
+const TABS: [(u8, &str); 4] = [(CAREER, "Career"), (ACTIVITY, "Activity"), (SHIPS, "Ships"), (ALL, "All statistics")];
 
 /// Where the tab is remembered (between runs, like the period).
 fn tab_id() -> egui::Id {
     egui::Id::new("stats-tab")
 }
 
-/// Opens a tab by name (`career`, `activity`, `all`), for screenshot runs.
+/// Opens a tab by name (`career`, `activity`, `ships`, `all`), for screenshot runs.
 pub fn open_tab(ctx: &egui::Context, name: Option<&str>) {
     let tab = match name {
         Some("career") => CAREER,
         Some("activity") => ACTIVITY,
+        Some("ships") => SHIPS,
         Some("all") => ALL,
         _ => return,
     };
@@ -51,6 +54,7 @@ pub fn show(ui: &mut Ui, gs: &GameState) {
     ui.add_space(GAP);
     match tab {
         ACTIVITY => activity_tab(ui, gs),
+        SHIPS => ships_tab(ui, gs),
         ALL => all_tab(ui, gs),
         _ => career_tab(ui, gs),
     }
@@ -722,18 +726,23 @@ fn none_in(gs: &GameState, w: Window, what: &str) -> String {
     }
 }
 
-fn activity_tab(ui: &mut Ui, gs: &GameState) {
-    let h = &gs.history;
-    let now = Timestamp::now();
-    // The period, remembered between runs.
+/// The period picker the Activity and Ships tabs share (remembered between runs): the days picked (0 for all time) and
+/// the stretch of time they cover, up to now.
+fn pick_period(ui: &mut Ui, gs: &GameState, now: Timestamp) -> (u32, Window) {
     let id = egui::Id::new("stats-range");
     let mut days: u32 = ui.data_mut(|d| *d.get_persisted_mut_or(id, 30u32));
     if widgets::segmented(ui, &mut days, &RANGES) {
         ui.data_mut(|d| d.insert_persisted(id, days));
     }
+    (days, Window { start: range_start(days, now, gs.history.first()), end: Timestamp(now.0 + 1) })
+}
+
+fn activity_tab(ui: &mut Ui, gs: &GameState) {
+    let h = &gs.history;
+    let now = Timestamp::now();
+    let (days, window) = pick_period(ui, gs, now);
     let first = h.first();
-    let start = range_start(days, now, first);
-    let window = Window { start, end: Timestamp(now.0 + 1) };
+    let start = window.start;
     // Worked out again every ten seconds at most (journal lines arrive faster than that during a scan), and at once for
     // another period or commander.
     let p = cached(ui, "period", (&gs.cmdr.fid, &gs.cmdr.name, days, start, now.0 / 10), || {
@@ -1181,6 +1190,299 @@ fn period_activities(ui: &mut Ui, gs: &GameState, p: &Period, span: &str) {
         let names: Vec<String> = quiet.iter().map(|a| a.title.to_lowercase()).collect();
         footnote(ui, &format!("No {} in {span}. Ranks and career totals are on the Career tab.", names.join(", ")));
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Ships
+
+/// A ship's row: its summary and what it's called.
+struct ShipRow {
+    s: ShipSummary,
+    /// The name it shows under: its own name, or its type.
+    title: String,
+    /// Its type and ident, or what the row stands for when it isn't a ship.
+    detail: String,
+    /// Still in the fleet (not sold).
+    owned: bool,
+    /// When it was bought and sold, as far as the journals go.
+    bought: Option<Timestamp>,
+    sold: Option<Timestamp>,
+}
+
+fn ship_row(gs: &GameState, s: ShipSummary) -> ShipRow {
+    let Some(id) = s.ship else {
+        return ShipRow { s, title: "Out of your ships".into(), detail: "on foot, in taxis and dropships, crewing for others".into(), owned: true, bought: None, sold: None };
+    };
+    let (ty, name, ident) = nexus_model::ships::ship_names(gs, id);
+    let ty = if ty.is_empty() { "A ship".to_string() } else { ty };
+    let title = if name.trim().is_empty() { ty.clone() } else { name.trim().to_string() };
+    let detail = match (title == ty, ident.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => ident,
+        (false, true) => ty,
+        (false, false) => format!("{ty} · {ident}"),
+    };
+    let rec = gs.history.ships.get(&id);
+    ShipRow { s, title, detail, owned: gs.fleet.ships.contains_key(&id), bought: rec.and_then(|r| r.bought).map(|b| b.0), sold: rec.and_then(|r| r.sold).map(|x| x.0) }
+}
+
+fn ships_tab(ui: &mut Ui, gs: &GameState) {
+    let now = Timestamp::now();
+    let (days, window) = pick_period(ui, gs, now);
+    let span = if days == 0 { "all time".to_string() } else { format!("the last {days} days") };
+    let coverage = match gs.history.first() {
+        Some(f) => format!("From your journals, back to {}.", f.to_local_string("%d %b %Y")),
+        None => "From your journals, as Elite Nexus reads them.".into(),
+    };
+    footnote(ui, &format!("{coverage} Time counts for the ship you were in, and what you did on foot beside it (sampling on its planet, selling where it's docked) counts for it too. Taxis, dropships, crewing for others, kills on foot and walks elsewhere have a row of their own."));
+    ui.add_space(6.0);
+    let summaries = cached(ui, "ships", (&gs.cmdr.fid, &gs.cmdr.name, days, window.start, now.0 / 10), || nexus_model::ships::per_ship(gs, window));
+    let rows: Vec<ShipRow> = summaries.iter().cloned().map(|s| ship_row(gs, s)).collect();
+    if rows.iter().all(|r| r.s.ship.is_none()) {
+        let why = why_empty(gs, window).unwrap_or_else(|| "Your journals don't show you in one of your ships in it.".into());
+        widgets::empty(ui, icon::ROCKET_LAUNCH, &format!("No ship flown in {span}"), &why);
+        return;
+    }
+    let ships: Vec<&ShipRow> = rows.iter().filter(|r| r.s.ship.is_some()).collect();
+    // The ship that did most by a measure, and how much.
+    let top = |f: &dyn Fn(&ShipSummary) -> f64| ships.iter().copied().filter(|r| f(&r.s) > 0.0).max_by(|a, b| f(&a.s).total_cmp(&f(&b.s)));
+    tile_row(ui, |cs| {
+        cs.add(|ui| match top(&|s| s.play_secs as f64) {
+            Some(r) => tile(ui, icon::CLOCK, "Most time in", pal::PURPLE, &r.title, pal::TEXT, &[(career::duration(r.s.play_secs), pal::DIM)]),
+            None => tile(ui, icon::CLOCK, "Most time in", pal::PURPLE, "—", pal::DIM, &[]),
+        });
+        cs.add(|ui| match top(&|s| s.earned() as f64) {
+            Some(r) => tile(ui, icon::HAND_COINS, "Earned most", pal::GOOD, &r.title, pal::TEXT, &[(format!("+{}", short_credits(r.s.earned())), pal::GOOD)]),
+            None => tile(ui, icon::HAND_COINS, "Earned most", pal::GOOD, "—", pal::DIM, &[("nothing earned in a ship".into(), pal::DIM)]),
+        });
+        cs.add(|ui| match top(&|s| s.ly) {
+            Some(r) => tile(ui, icon::PATH, "Jumped farthest", pal::CYAN, &r.title, pal::TEXT, &[(format!("{:.0} ly in {}", r.s.ly, plural(r.s.jumps, "jump", "jumps")), pal::DIM)]),
+            None => tile(ui, icon::PATH, "Jumped farthest", pal::CYAN, "—", pal::DIM, &[("no jumps in your ships".into(), pal::DIM)]),
+        });
+        cs.add(|ui| {
+            let gone = ships.iter().filter(|r| !r.owned).count();
+            let line = if gone > 0 { format!("{} no longer in your fleet", group_digits(gone as i64)) } else { format!("of the {} in your fleet", group_digits(gs.fleet.ships.len() as i64)) };
+            tile(ui, icon::ROCKET_LAUNCH, "Ships flown", pal::INDIGO, &group_digits(ships.len() as i64), pal::TEXT, &[(line, pal::DIM)]);
+        });
+    });
+    ui.add_space(GAP);
+    // The ship picked in the table, or the one with the most time.
+    let sel_id = egui::Id::new("stats-ship");
+    let picked: Option<Option<u64>> = ui.data(|d| d.get_temp::<Option<u64>>(sel_id));
+    let selected = picked.filter(|p| rows.iter().any(|r| r.s.ship == *p)).unwrap_or(rows[0].s.ship);
+    let mut clicked = None;
+    widgets::card(ui, "Ship by ship", |ui| clicked = ships_table(ui, &rows, selected));
+    if let Some(c) = clicked {
+        ui.data_mut(|d| d.insert_temp(sel_id, c));
+    }
+    ui.add_space(GAP);
+    if let Some(r) = rows.iter().find(|r| r.s.ship == clicked.unwrap_or(selected)) {
+        ship_detail(ui, gs, r);
+    }
+    footnote(
+        ui,
+        "A sale's profit counts for the ship that sold the cargo, and a bounty or a combat bond for the ship that made the kill, when it was made (a voucher can still be lost before it's handed in). Data, mission rewards and the rest count for the ship you were paid with, wherever the work was done. Time counts while it was the ship you were in, docked or flying.",
+    );
+}
+
+/// The table of ships; returns the row clicked.
+fn ships_table(ui: &mut Ui, rows: &[ShipRow], selected: Option<u64>) -> Option<Option<u64>> {
+    use egui_extras::Column;
+    const TABLE: &str = "stats-ships";
+    // Ten columns need about 960 points (the ship's at its narrowest): below that, the dates go.
+    let wide = ui.available_width() >= 980.0;
+    let mut sort = widgets::TableSort::load(ui, TABLE);
+    let mut clicked = None;
+    widgets::table(ui, if wide { "stats-ships/wide" } else { "stats-ships/narrow" }, |table| {
+        // The page scrolls; the table doesn't scroll inside it.
+        let mut table = table
+            .vscroll(false)
+            .sense(egui::Sense::click())
+            .column(widgets::flex_column(170.0))
+            .column(Column::initial(84.0).at_least(56.0).clip(true))
+            .column(Column::initial(60.0).at_least(44.0).clip(true))
+            .column(Column::initial(80.0).at_least(56.0).clip(true))
+            .column(Column::initial(92.0).at_least(60.0).clip(true))
+            .column(Column::initial(56.0).at_least(40.0).clip(true))
+            .column(Column::initial(62.0).at_least(44.0).clip(true))
+            .column(Column::initial(84.0).at_least(56.0).clip(true));
+        if wide {
+            table = table.column(Column::initial(100.0).at_least(70.0).clip(true)).column(Column::initial(100.0).at_least(70.0).clip(true));
+        }
+        // Sortable columns: 0 ship, 1 time, 2 jumps, 3 distance, 4 earned, 5 kills, 6 deaths, 7 costs, 8 bought, 9 sold.
+        let mut heads: Vec<(&str, u8, bool)> =
+            vec![("Ship", 0, false), ("Time", 1, true), ("Jumps", 2, true), ("Distance", 3, true), ("Earned", 4, true), ("Kills", 5, true), ("Deaths", 6, true), ("Costs", 7, true)];
+        if wide {
+            heads.extend([("Bought", 8, true), ("Sold", 9, true)]);
+        }
+        let table = table.header(28.0, |mut h| {
+            for (text, col, desc) in &heads {
+                h.col(|ui| widgets::th_sort(ui, text, *col, &mut sort, TABLE, *desc));
+            }
+        });
+        let order = sort.order(rows, |a, b, c| match c {
+            0 => widgets::cmp_text(&a.title, &b.title),
+            1 => a.s.play_secs.cmp(&b.s.play_secs),
+            2 => a.s.jumps.cmp(&b.s.jumps),
+            3 => a.s.ly.total_cmp(&b.s.ly),
+            4 => a.s.earned().cmp(&b.s.earned()),
+            5 => a.s.kills.cmp(&b.s.kills),
+            6 => a.s.deaths.cmp(&b.s.deaths),
+            7 => a.s.costs().cmp(&b.s.costs()),
+            8 => a.bought.cmp(&b.bought),
+            _ => a.sold.cmp(&b.sold),
+        });
+        table.body(|body| {
+            body.rows(44.0, rows.len(), |mut row| {
+                let r = &rows[order[row.index()]];
+                row.set_selected(r.s.ship == selected);
+                let out = r.s.ship.is_none();
+                row.col(|ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Label::new(RichText::new(&r.title).color(if out { pal::DIM } else { pal::TEXT })).truncate());
+                            if r.sold.is_some() {
+                                widgets::badge(ui, "sold", pal::GRAY);
+                            } else if !r.owned {
+                                widgets::badge(ui, "gone", pal::GRAY).on_hover_text("No longer in your fleet, and your journals don't show it sold");
+                            }
+                        });
+                        if !r.detail.is_empty() {
+                            ui.add(egui::Label::new(RichText::new(&r.detail).size(size::FOOTNOTE).color(pal::DIM)).truncate());
+                        }
+                    });
+                });
+                // A dash, in grey, for nothing.
+                let num = |ui: &mut Ui, text: String, colour: Color32| {
+                    let colour = if text == "—" { pal::FAINT } else { colour };
+                    ui.label(RichText::new(text).color(colour));
+                };
+                let blank_or = |v: bool, text: String| if v { text } else { "—".into() };
+                row.col(|ui| num(ui, blank_or(r.s.play_secs > 0, career::duration(r.s.play_secs)), pal::TEXT));
+                row.col(|ui| num(ui, blank_or(r.s.jumps > 0, group_digits(r.s.jumps as i64)), pal::TEXT));
+                row.col(|ui| num(ui, blank_or(r.s.ly > 0.0, format!("{:.0} ly", r.s.ly)), pal::TEXT));
+                row.col(|ui| num(ui, blank_or(r.s.earned() != 0, short_credits(r.s.earned())), if r.s.earned() >= 0 { pal::GOOD } else { pal::BAD }));
+                row.col(|ui| num(ui, blank_or(r.s.kills > 0, group_digits(r.s.kills as i64)), pal::TEXT));
+                row.col(|ui| num(ui, blank_or(r.s.deaths > 0, group_digits(r.s.deaths as i64)), if r.s.deaths > 0 { pal::BAD } else { pal::TEXT }));
+                row.col(|ui| num(ui, blank_or(r.s.costs() > 0, short_credits(r.s.costs())), pal::DIM));
+                if wide {
+                    // Dates the journals hold; a ship bought before them says so on hover.
+                    let date = |t: Option<Timestamp>| t.map(|t| t.to_local_string("%d %b %Y"));
+                    row.col(|ui| match (date(r.bought), out) {
+                        (Some(d), _) => num(ui, d, pal::DIM),
+                        (None, true) => num(ui, String::new(), pal::DIM),
+                        (None, false) => {
+                            ui.label(RichText::new("—").color(pal::FAINT))
+                                .on_hover_text("No purchase in your journals: bought before them, or a ship you didn't buy (the one you started with, a free one after a rebuy you couldn't pay)");
+                        }
+                    });
+                    row.col(|ui| num(ui, date(r.sold).unwrap_or_default(), pal::DIM));
+                }
+                if row.response().clicked() {
+                    clicked = Some(r.s.ship);
+                }
+            });
+        });
+    });
+    clicked
+}
+
+/// One ship in full: what it did, where its credits came from, what it cost, and when it joined and left the fleet.
+fn ship_detail(ui: &mut Ui, gs: &GameState, r: &ShipRow) {
+    let s = &r.s;
+    let title = if r.detail.is_empty() { r.title.clone() } else { format!("{} · {}", r.title, r.detail) };
+    card_tinted(ui, if s.ship.is_some() { icon::ROCKET_LAUNCH } else { icon::PERSON_SIMPLE_WALK }, &title, pal::INDIGO, |ui| {
+        if let Some(id) = s.ship {
+            let rec = gs.history.ships.get(&id);
+            let mut life = Vec::new();
+            match rec.and_then(|x| x.bought) {
+                Some((t, price)) => life.push(format!("Bought on {} for {}", t.to_local_string("%d %b %Y"), short_credits(price))),
+                None => life.push("No purchase in your journals (bought before them, or not bought at all)".into()),
+            }
+            match rec.and_then(|x| x.sold) {
+                Some((t, Some(price))) => life.push(format!("sold on {} for {}", t.to_local_string("%d %b %Y"), short_credits(price))),
+                Some((t, None)) => life.push(format!("sold on {} (the journal gives no price)", t.to_local_string("%d %b %Y"))),
+                None if r.owned => life.push("in your fleet now".into()),
+                None => life.push("no longer in your fleet".into()),
+            }
+            ui.label(RichText::new(life.join(", ")).color(pal::DIM));
+            ui.add_space(6.0);
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 26.0;
+            widgets::stat(ui, "in the game", career::duration(s.play_secs), pal::TEXT);
+            widgets::stat(ui, "jumps", group_digits(s.jumps as i64), pal::TEXT);
+            widgets::stat(ui, "light years", format!("{:.0}", s.ly), pal::CYAN);
+            let (earned, costs) = (s.earned(), s.costs());
+            widgets::stat(ui, "earned", if earned > 0 { format!("+{}", short_credits(earned)) } else { short_credits(earned) }, if earned >= 0 { pal::GOOD } else { pal::BAD });
+            widgets::stat(ui, "costs", if costs > 0 { format!("-{}", short_credits(costs)) } else { short_credits(0) }, if costs > 0 { pal::BAD } else { pal::DIM });
+        });
+        ui.add_space(10.0);
+        // The parts above zero, biggest first.
+        let parts = |list: &[(&str, i64, Color32)]| -> Vec<Part> {
+            let mut v: Vec<Part> = list.iter().filter(|(_, a, _)| *a > 0).map(|(l, a, c)| Part { label: (*l).into(), amount: *a, colour: *c }).collect();
+            v.sort_by_key(|p| std::cmp::Reverse(p.amount));
+            v
+        };
+        let earned = parts(&[
+            ("Trade profit", s.trade, pal::GOLD),
+            ("Bounties and bonds, at the kill", s.combat, pal::PINK),
+            ("Exploration data", s.exploration, pal::CYAN),
+            ("Exobiology data", s.exobiology, pal::GOOD),
+            ("Mined and found cargo", s.mining, pal::ACCENT),
+            ("Mission rewards", s.missions, pal::PURPLE),
+        ]);
+        let costs = parts(&[("Rebuys", s.rebuys, pal::BAD), ("Repairs", s.repairs, pal::WARN), ("Fuel", s.fuel, pal::MINT), ("Ammunition, limpets and restocking", s.ammo, pal::ACCENT_SOFT), ("Trade at a loss", -s.trade, pal::GOLD)]);
+        let mut did: Vec<(String, String)> = Vec::new();
+        let count = |n: usize| group_digits(n as i64);
+        if s.kills > 0 {
+            did.push(("Kills for bounties and combat bonds".into(), count(s.kills)));
+        }
+        if s.deaths > 0 {
+            did.push(("Deaths".into(), count(s.deaths)));
+        }
+        if s.scanned > 0 {
+            did.push(("Stars and planets scanned".into(), count(s.scanned)));
+        }
+        if s.mapped > 0 {
+            did.push(("Planets mapped".into(), count(s.mapped)));
+        }
+        if s.organics > 0 {
+            did.push(("Species analysed".into(), count(s.organics)));
+        }
+        if s.refined > 0 {
+            did.push(("Tonnes refined".into(), group_digits(s.refined)));
+        }
+        widgets::split(
+            ui,
+            0.5,
+            300.0,
+            |ui| {
+                ui.label(RichText::new("Where its credits came from").font(display(size::FOOTNOTE)).color(pal::DIM));
+                if earned.is_empty() {
+                    ui.label(RichText::new("Nothing earned in it in this period.").color(pal::DIM));
+                } else {
+                    breakdown(ui, &earned, 6);
+                }
+            },
+            |ui| {
+                ui.label(RichText::new("What it cost").font(display(size::FOOTNOTE)).color(pal::DIM));
+                if costs.is_empty() {
+                    ui.label(RichText::new("Nothing paid for it in this period.").color(pal::DIM));
+                } else {
+                    breakdown(ui, &costs, 4);
+                }
+                if !did.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("What it did").font(display(size::FOOTNOTE)).color(pal::DIM));
+                    for (label, value) in &did {
+                        fact(ui, label, value);
+                    }
+                }
+            },
+        );
+    });
 }
 
 // ---------------------------------------------------------------------------------------------
