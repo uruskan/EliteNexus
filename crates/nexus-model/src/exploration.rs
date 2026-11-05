@@ -40,6 +40,19 @@ pub struct OrganicSpecies {
     pub analysed: bool,
 }
 
+impl OrganicSpecies {
+    /// The genus it belongs to, for counting genera: the exobiology data's genus for a known species (one name, whatever
+    /// the game's language, and right where the journal names the genus oddly, as for Stratum Araneamus), else the
+    /// journal's genus, else the species itself.
+    pub fn genus_key(&self) -> &str {
+        match nexus_data::exobio::species(&self.species_symbol) {
+            Some(s) => s.genus,
+            None if !self.genus.is_empty() => &self.genus,
+            None => &self.species_symbol,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BodyValue {
     /// Value if only FSS-scanned.
@@ -200,10 +213,21 @@ impl Body {
         self.kind == BodyKind::Planet
     }
 
-    /// Nothing biological left to do here: no biological signals, or one species analysed per signal
-    /// (each signal is a genus, and only one species per genus grows on a body).
+    /// Nothing biological left to do here: no biological signals, or a species analysed in as many genera as there are
+    /// signals (each signal is a genus). Genera are counted, not species: Brain Trees and Sinuous Tubers can grow
+    /// several species on one body, so two of them analysed don't make up for a genus not yet found.
     pub fn bio_done(&self) -> bool {
-        self.bio_signals == 0 || self.organics.iter().filter(|o| o.analysed).count() >= self.bio_signals as usize
+        if self.bio_signals == 0 {
+            return true;
+        }
+        let mut genera: Vec<&str> = Vec::new();
+        for o in self.organics.iter().filter(|o| o.analysed) {
+            let g = o.genus_key();
+            if !genera.contains(&g) {
+                genera.push(g);
+            }
+        }
+        genera.len() >= self.bio_signals as usize
     }
 
     pub fn recompute_value(&mut self, odyssey: bool) {

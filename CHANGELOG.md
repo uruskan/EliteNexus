@@ -105,9 +105,11 @@ release time that section becomes the new version and the release workflow publi
   the game's Status.json and switches when that changes. Flying a system opens Exploration; getting below
   **Planet view below** (150 km by default) over a
   planet, landing, or stepping outside on foot opens Exobiology when the planet has biological signals you haven't
-  finished analysing (Exploration otherwise); climbing back above it returns to Exploration; the galaxy map, a
-  charging hyperspace jump or a finished system (every body found, every planet worth the high-value threshold
-  mapped, every genus analysed) opens Navigation. Exploration opens on the current system and Exobiology on This
+  finished analysing (Exploration otherwise); climbing back to a tenth above it returns to Exploration, so hovering
+  around that height doesn't switch back and forth; the galaxy map, a charging hyperspace jump or a finished system
+  (every body found, every planet worth the high-value threshold mapped, a species analysed in every genus the
+  biological signals stand for) opens Navigation, and so does arriving in a system you finished before or leaving a
+  planet in one. Exploration opens on the current system and Exobiology on This
   system, whichever tab you left open there. It only ever moves between those three pages: on any other page it
   leaves you alone; docked, in an SRV or on foot inside, only opening the galaxy map changes the page, and it reacts
   only to what happens while the game runs: never to the journals read at start, nor to loading another commander.

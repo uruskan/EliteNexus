@@ -1010,3 +1010,34 @@ fn fully_explored_needs_scan_map_and_bio() {
     feed(&mut m, &[r#"{ "timestamp":"2026-10-01T11:03:00Z", "event":"FSSAllBodiesFound", "SystemName":"Beta", "SystemAddress":200, "Count":2 }"#]);
     assert!(beta(&m), "the icy body isn't worth mapping");
 }
+
+/// Each biological signal is a genus. Brain Trees can grow several species on one body, so two of them analysed still
+/// leave the second genus, Stratum, to do.
+#[test]
+fn bio_done_counts_genera_not_species() {
+    let analyse = |ts: &str, genus: &str, genus_name: &str, species: &str, species_name: &str| {
+        format!(
+            r#"{{ "timestamp":"{ts}", "event":"ScanOrganic", "ScanType":"Analyse", "Genus":"{genus}", "Genus_Localised":"{genus_name}", "Species":"{species}", "Species_Localised":"{species_name}", "WasLogged":false, "SystemAddress":100, "Body":3 }}"#
+        )
+    };
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 3", "BodyID":3, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":20.0, "PlanetClass":"Rocky body", "MassEM":0.05, "Landable":true, "Volcanism":"minor silicate vapour geysers volcanism", "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:05:00Z", "event":"SAASignalsFound", "BodyName":"Alpha 3", "SystemAddress":100, "BodyID":3, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":2 } ], "Genuses":[ { "Genus":"$Codex_Ent_Brancae_Name;", "Genus_Localised":"Brain Trees" }, { "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum" } ] }"#,
+        ],
+    );
+    let done = |m: &Model| m.active().unwrap().exploration.systems[&100].bodies[&3].bio_done();
+    let brain_trees = [
+        analyse("2026-10-01T10:20:00Z", "$Codex_Ent_Brancae_Name;", "Brain Trees", "$Codex_Ent_SeedABCD_01_Name;", "Gypseeum Brain Tree"),
+        analyse("2026-10-01T10:40:00Z", "$Codex_Ent_Brancae_Name;", "Brain Trees", "$Codex_Ent_SeedABCD_02_Name;", "Ostrinum Brain Tree"),
+    ];
+    feed(&mut m, &[brain_trees[0].as_str(), brain_trees[1].as_str()]);
+    let body = &m.active().unwrap().exploration.systems[&100].bodies[&3];
+    assert_eq!(body.organics.iter().filter(|o| o.analysed).count(), 2, "two species analysed");
+    assert!(!done(&m), "one genus of two");
+    feed(&mut m, &[analyse("2026-10-01T11:00:00Z", "$Codex_Ent_Stratum_Genus_Name;", "Stratum", "$Codex_Ent_Stratum_07_Name;", "Stratum Tectonicas").as_str()]);
+    assert!(done(&m), "both genera");
+}

@@ -149,7 +149,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                     }
                 });
                 cx.changed |= g.switch(&mut s.auto_page, "Follow my flight", "Exploration while you fly a system, Exobiology near a planet with life, Navigation in the galaxy map or when a jump charges or the system is done. Only while you're on one of those pages.");
-                g.row("Planet view below", "Closer than this to a planet with biology left to analyse, Exobiology opens instead of Exploration.", |ui| {
+                g.row("Planet view below", "Closer than this to a planet with biology left to analyse, Exobiology opens instead of Exploration, until you climb a tenth higher.", |ui| {
                     cx.changed |= slider(ui, &mut s.auto_page_altitude_km, 10.0..=500.0, 0, " km");
                 });
             });
