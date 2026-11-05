@@ -240,7 +240,7 @@ pub fn show(ui: &mut Ui, acc: &mut Accounts, st: &mut AccountsUi, cmdr_name: &st
                     changed |= g.switch(
                         &mut acc.inara_dev_mode,
                         "Developer mode",
-                        "Sent to Inara as isBeingDeveloped: Inara then ignores shared data such as community-goal progress. Inara approved \"Elite Nexus\" in October 2026 and treats newly approved apps as in development for a while anyway, so leave it on for now. Updates are batched every 35+ seconds, so the key is never locked out.",
+                        "Sent to Inara as isBeingDeveloped: Inara then treats your uploads as an app being built and ignores the data they share with everyone, such as community goals. Leave it off unless you're testing with a test account. Updates are batched every 35+ seconds, so the key is never locked out.",
                     );
                 });
             }

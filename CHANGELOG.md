@@ -137,6 +137,9 @@ release time that section becomes the new version and the release workflow publi
   CereProc, …). **Voice** picks one of the engine's voices instead of always the Windows default.
 
 ### Changed
+- **Inara**: developer mode is off. Elite Nexus told Inara its uploads came from an app still being built, so Inara
+  ignored what they share with everyone, such as community goals; now that Inara has approved the app, it doesn't.
+  It's switched off once for everyone; Accounts & sync › Inara options still has the switch, for testing.
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.

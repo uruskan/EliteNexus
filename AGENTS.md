@@ -185,9 +185,6 @@ never touches `nexus-data`.
 
 ## Open decisions
 
-* Inara whitelisted the app name "Elite Nexus" on 2026-10-13 (Artie, Inara's author), so Inara sync works with a
-  user's personal key. Developer mode (`Accounts::inara_dev_mode`, sent as `isBeingDeveloped`) is still on by
-  default; switch it off after a few weeks of clean syncs.
 * `GalaxyOptions::all_eddn_bodies` (keep every landable EDDN body, not just biology and valuable worlds) is off.
 
 ## Ideas queue
