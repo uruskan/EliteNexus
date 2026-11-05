@@ -359,7 +359,7 @@ fn start(ui: &mut Ui, gs: &GameState, st: &mut PlanUi) {
     if st.plan.is_some() {
         return;
     }
-    if !st.builds.list.is_empty() || st.builds.problem.is_some() {
+    if !st.builds.list.is_empty() || st.builds.problem.is_some() || st.builds.notice.is_some() {
         ui.add_space(widgets::GAP);
         saved_card(ui, gs, st);
         if st.plan.is_some() {
@@ -381,6 +381,10 @@ fn saved_card(ui: &mut Ui, gs: &GameState, st: &mut PlanUi) {
     card(ui, "Your saved builds", |ui| {
         if let Some(p) = &st.builds.problem {
             ui.add(Label::new(RichText::new(format!("{} {p}", icon::WARNING_CIRCLE)).color(pal::BAD)).wrap());
+            ui.add_space(4.0);
+        }
+        if let Some(n) = &st.builds.notice {
+            ui.add(Label::new(RichText::new(format!("{} {n}", icon::INFO)).color(pal::WARN)).wrap());
             ui.add_space(4.0);
         }
         let (mut open, mut rename, mut delete, mut cancel) = (None, None, None, false);
@@ -645,11 +649,11 @@ fn compare_options(gs: &GameState, st: &PlanUi, hull: &Hull) -> Vec<Choice> {
     compare::unique(v)
 }
 
-/// What the weapons can be tried against: every hull as a shipyard sells it, the saved builds, and the commander's
-/// ships with a recorded build.
+/// What the weapons can be tried against: the saved builds and the commander's ships with a recorded build, then
+/// every hull as a shipyard sells it.
 fn target_options(gs: &GameState, st: &PlanUi) -> Vec<Choice> {
-    let mut v: Vec<Choice> = fitting::hulls().iter().map(|h| Choice { label: h.name.clone(), detail: format!("As a shipyard sells it · hardness {:.0}", h.hardness), pick: Pick::NewHull(h.symbol.clone()) }).collect();
-    v.extend(build_choices(gs, st, false));
+    let mut v = build_choices(gs, st, false);
+    v.extend(fitting::hulls().iter().map(|h| Choice { label: h.name.clone(), detail: format!("Hardness {:.0}", h.hardness), pick: Pick::NewHull(h.symbol.clone()) }));
     compare::unique(v)
 }
 
@@ -688,10 +692,7 @@ fn compare_panel(ui: &mut Ui, hull: &Hull, figures: &Figures, with: &CompareWith
         let width = (ui.available_width() - 44.0).clamp(200.0, 420.0);
         let done = ui
             .horizontal(|ui| {
-                widgets::combobox(ui, "plan-compare-with", text, &with.label, width, |typed| {
-                    let k = nexus_data::commodities::name_key(typed);
-                    others.iter().filter(|c| k.is_empty() || nexus_data::commodities::name_key(&c.label).contains(&k)).map(|c| widgets::Suggestion { text: c.label.clone(), detail: c.detail.clone(), starred: false }).collect()
-                })
+                widgets::combobox_grouped(ui, "plan-compare-with", text, &with.label, width, |typed| compare::rows(others, typed))
             })
             .inner;
         if let Some(c) = done.picked.and_then(|name| picked(others, &name)) {
@@ -1158,7 +1159,9 @@ fn figure_spec(key: &str) -> Option<(&'static str, f64, usize, &'static str)> {
 /// The figures a goal changes, as rolled, each with a field to type the module's real value (as the game shows it once
 /// rolled): it replaces what the roll works out. Returns the goal with a value typed or taken back.
 fn exact_figures(ui: &mut Ui, item: &str, g: &Goal) -> Option<Goal> {
-    let figures: Vec<_> = fitting::goal_figures(item, g).into_iter().filter_map(|(k, v, base)| figure_spec(&k).map(|s| (k, v, base, s))).collect();
+    // A range in metres is a weapon's; sensors and limpet controllers keep theirs in other units, not offered here.
+    let weapon = fitting::module(item).is_some_and(|m| m.figures.contains_key("damage"));
+    let figures: Vec<_> = fitting::goal_figures(item, g).into_iter().filter(|(k, ..)| weapon || k != "range").filter_map(|(k, v, base)| figure_spec(&k).map(|s| (k, v, base, s))).collect();
     if figures.is_empty() {
         return None;
     }

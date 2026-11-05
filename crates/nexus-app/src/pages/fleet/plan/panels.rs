@@ -537,10 +537,7 @@ fn against_card(ui: &mut Ui, f: &Figures, text: &mut String, chosen: Option<(&st
         let hint = chosen.map_or("A ship: Anaconda, Python, Federal Corvette…", |(label, _)| label);
         let done = ui
             .horizontal(|ui| {
-                widgets::combobox(ui, "plan-target", text, hint, width, |typed| {
-                    let k = nexus_data::commodities::name_key(typed);
-                    options.iter().filter(|c| k.is_empty() || nexus_data::commodities::name_key(&c.label).contains(&k)).map(|c| widgets::Suggestion { text: c.label.clone(), detail: c.detail.clone(), starred: false }).collect()
-                })
+                widgets::combobox_grouped(ui, "plan-target", text, hint, width, |typed| super::compare::rows(options, typed))
             })
             .inner;
         if let Some(c) = done.picked.and_then(|name| options.iter().find(|c| c.label == name)) {
@@ -577,7 +574,19 @@ fn against_card(ui: &mut Ui, f: &Figures, text: &mut String, chosen: Option<(&st
             Some(secs) => format!(" Your weapons capacitor lasts {} at {} weapon pips: past that, weapons that draw on it fire slower.", span(secs), pips_text(f.setup.pips.wep)),
             None => String::new(),
         };
-        footnote(ui, &format!("Every weapon firing and hitting at full damage, reloads included, against its resistances and two systems pips; its shields don't regenerate meanwhile, and shield cells aren't counted.{capacitor}"));
+        // Weapons whose ammunition runs out before the end stop then, and the sums count that: say which.
+        let end = total.unwrap_or(f64::INFINITY);
+        let mut dry: Vec<String> = Vec::new();
+        for w in &f.weapons {
+            if let Some(t) = w.time_to_empty.filter(|t| *t < end) {
+                let line = format!("{} after {}", outfitting::display_name(&w.item), span(t));
+                if !dry.contains(&line) {
+                    dry.push(line);
+                }
+            }
+        }
+        let ammo = if dry.is_empty() { String::new() } else { format!(" Out of ammunition first, and stopped from then: {}.", dry.join(", ")) };
+        footnote(ui, &format!("Every weapon firing and hitting at full damage, reloads included, until its ammunition runs out, against its resistances and two systems pips; its shields don't regenerate meanwhile, and shield cells aren't counted.{ammo}{capacitor}"));
     });
     picked
 }

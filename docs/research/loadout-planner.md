@@ -119,7 +119,7 @@ The sums and where they come from are under [Formulas](#formulas).
 | Compare two builds | done (the plan beside your ship, the stock hull, a saved build or another ship of yours) |
 | Import SLEF, EDSY and Coriolis import links, the game's Loadout | done |
 | Export SLEF, EDSY and Coriolis links, the game's Loadout | done (with the engineering on the modules) |
-| Planned engineering in what's exported | done (Share writes it as the game writes engineering: each changed figure with its label, value and original value; EDSY was checked to read the labels and units) |
+| Planned engineering in what's exported | done (Share writes it as the game writes engineering: each changed figure with its label, value and original value; EDSY was checked to read the labels and units. It's marked, so a build pasted back into Elite Nexus comes in planned again) |
 | Undo and start over | done |
 
 ## Checked against the game
@@ -184,8 +184,9 @@ ranges per grade, how each figure changes (multiplied, added or replaced), and e
   second.
 * **Against a target** (`combat::against`): on shields, each weapon's damage over time × Σ (its share of each type ×
   (1 − the shields' resistance to it)) × (1 − the target's systems pips' share, a third at two pips); on the hull,
-  × its hardness share × Σ (share × (1 − the hull's resistance)). Absolute damage passes every resistance. Seconds =
-  shields ÷ shield damage a second, then armour ÷ hull damage a second; no regeneration, no shield cells.
+  × its hardness share × Σ (share × (1 − the hull's resistance)). Absolute damage passes every resistance. The
+  damage adds up in stages, each weapon stopping when its clip and reserve are spent: the seconds to deal the
+  shields, then from there the armour; no regeneration, no shield cells.
 * **One jump boosted**: a neutron star's cone multiplies the drive's jump range by 4 (6 for the Caspian's FSD Mk II, as
   `nexus_spansh::ship` has it; its white dwarf factor isn't known), a white dwarf's by 1.5; FSD injection
   adds 25, 50 or 100 %. Each is shown for the range with what's carried, with a Guardian FSD booster's light years

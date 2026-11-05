@@ -19,6 +19,9 @@ pub struct SavedBuild {
     pub goals: Vec<SavedGoal>,
     /// The commander's ship it was planned from (its ShipID), to compare with again when it's opened.
     pub ship: Option<u64>,
+    /// Fields this version doesn't know (a later version's), written back as they were.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -31,6 +34,8 @@ pub struct SavedGoal {
     pub experimental: Option<String>,
     /// Figures typed in exactly, by coriolis-data's name.
     pub exact: Vec<SavedFigure>,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -50,9 +55,10 @@ impl SavedBuild {
             roll: g.roll,
             experimental: g.experimental.clone(),
             exact: g.exact.iter().map(|(key, value)| SavedFigure { key: key.clone(), value: *value }).collect(),
+            extra: serde_json::Map::new(),
         };
         let goals = plan.bulkheads_goal.iter().map(|g| goal("Armour", g)).chain(plan.fitted.iter().filter_map(|f| f.goal.as_ref().map(|g| goal(&f.slot, g)))).collect();
-        SavedBuild { name: name.trim().to_string(), saved: nexus_journal::Timestamp::now().0, loadout: plan.to_loadout(), goals, ship }
+        SavedBuild { name: name.trim().to_string(), saved: nexus_journal::Timestamp::now().0, loadout: plan.to_loadout(), goals, ship, extra: serde_json::Map::new() }
     }
 
     /// The plan again; None when the build can't be read.
@@ -89,14 +95,18 @@ pub struct Builds {
     pub list: Vec<SavedBuild>,
     /// Entries this version can't read (a hand edit, a later version's), written back as they are.
     kept: Vec<Value>,
-    /// Why the file couldn't be read or written, to say on the page.
+    /// Why the file couldn't be read or written: an error, to say on the page.
     pub problem: Option<String>,
+    /// What to know about the file that isn't an error: entries kept as they are, a copy kept aside.
+    pub notice: Option<String>,
     /// After a failed read, when to try again (not every frame).
     retry_at: Option<std::time::Instant>,
 }
 
-/// The file's entries: the builds, the entries that aren't one (kept as they are), and what to say about those.
+/// The file's entries: the builds, and the entries that aren't one (kept as they are). A byte order mark (an editor's)
+/// is passed over.
 fn parse(bytes: &[u8]) -> Result<(Vec<SavedBuild>, Vec<Value>), String> {
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     let entries: Vec<Value> = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     let (mut list, mut kept) = (Vec::new(), Vec::new());
     for v in entries {
@@ -117,19 +127,34 @@ impl Builds {
     }
 
     fn load(&mut self, path: PathBuf) {
+        self.notice = None;
         match std::fs::read(&path) {
             Ok(bytes) => match parse(&bytes) {
                 Ok((list, kept)) => {
-                    self.problem = (!kept.is_empty()).then(|| format!("{} entries in the saved builds file can't be read here; they're kept in it as they are.", kept.len()));
+                    self.problem = None;
+                    self.notice = (!kept.is_empty()).then(|| format!("{} entries in the saved builds file can't be read here; they're kept in it as they are.", kept.len()));
                     (self.list, self.kept) = (list, kept);
                 }
                 Err(e) => {
-                    // Not a list at all: kept aside, under a name of its own, before saving starts a new one.
+                    // Not a list at all: kept aside under a name of its own (once: the same file isn't copied again),
+                    // before saving starts a new one.
                     tracing::warn!("builds.json not read: {e}");
+                    let name = |p: &std::path::Path| p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let same = std::fs::read_dir(path.parent().unwrap_or(std::path::Path::new(".")))
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Result::ok)
+                        .map(|e| e.path())
+                        .find(|p| name(p).starts_with("builds.unreadable-") && std::fs::read(p).is_ok_and(|b| b == bytes));
                     let aside = path.with_file_name(format!("builds.unreadable-{}.json", nexus_journal::Timestamp::now().0));
-                    self.problem = Some(match std::fs::copy(&path, &aside) {
-                        Ok(_) => format!("The saved builds file can't be read: it's kept as {}, and saving a build starts a new one.", aside.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
-                        Err(_) => "The saved builds file can't be read, nor kept aside: saving a build replaces it.".into(),
+                    let kept = match same {
+                        Some(p) => Some(p),
+                        None => std::fs::copy(&path, &aside).ok().map(|_| aside),
+                    };
+                    self.problem = None;
+                    self.notice = Some(match kept {
+                        Some(p) => format!("The saved builds file can't be read: it's kept as {}, and saving a build starts a new one.", name(&p)),
+                        None => "The saved builds file can't be read, nor kept aside: saving a build replaces it.".into(),
                     });
                 }
             },
@@ -195,9 +220,7 @@ impl Builds {
         match write_file(&path, &list, &self.kept) {
             Ok(()) => {
                 self.list = list;
-                if self.kept.is_empty() {
-                    self.problem = None;
-                }
+                self.problem = None;
                 Ok(())
             }
             Err(e) => {
@@ -257,25 +280,29 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("nexus-builds-test-{}-{}", std::process::id(), nexus_journal::Timestamp::now().0));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("builds.json");
-        std::fs::write(&path, r#"[{"name":"Good","loadout":{"Ship":"python","Modules":[]}},{"name":"Bad","grade":"six","goals":7},{"name":""}]"#).expect("write");
+        // An editor's byte order mark, a field from a later version, and two entries this version can't read.
+        std::fs::write(&path, "\u{feff}[{\"name\":\"Good\",\"loadout\":{\"Ship\":\"python\",\"Modules\":[]},\"later\":{\"x\":1}},{\"name\":\"Bad\",\"grade\":\"six\",\"goals\":7},{\"name\":\"\"}]").expect("write");
         let mut builds = Builds::default();
         builds.load(path.clone());
         assert_eq!((builds.list.len(), builds.kept.len()), (1, 2));
-        assert!(builds.problem.as_deref().is_some_and(|p| p.contains("2 entries")), "{:?}", builds.problem);
+        assert!(builds.problem.is_none() && builds.notice.as_deref().is_some_and(|p| p.contains("2 entries")), "{:?}", builds.notice);
         let plan = Plan::stock(fitting::hull("anaconda").expect("Anaconda"));
         builds.save(SavedBuild::from_plan("New", &plan, None)).expect("saved");
         let on_disk: Vec<Value> = serde_json::from_slice(&std::fs::read(&path).expect("read")).expect("json");
         assert_eq!(on_disk.len(), 4, "two builds and the two kept entries");
         assert!(on_disk.iter().any(|v| v["grade"] == "six"));
+        assert!(on_disk.iter().any(|v| v["name"] == "Good" && v["later"]["x"] == 1), "a later version's field stays");
         // Renaming onto a name taken, or to nothing, is refused.
         assert!(builds.rename(1, "good").is_err() && builds.rename(1, "  ").is_err());
-        // Not a list at all: kept aside under a name of its own, and saving starts afresh.
+        // Not a list at all: kept aside under a name of its own, once, and saving starts afresh.
         std::fs::write(&path, "{ not json").expect("write");
+        let asides = || std::fs::read_dir(&dir).expect("dir").filter_map(Result::ok).filter(|e| e.file_name().to_string_lossy().starts_with("builds.unreadable-")).count();
         let mut broken = Builds::default();
         broken.load(path.clone());
-        assert!(broken.list.is_empty() && broken.problem.is_some());
-        let aside = std::fs::read_dir(&dir).expect("dir").filter_map(Result::ok).any(|e| e.file_name().to_string_lossy().starts_with("builds.unreadable-"));
-        assert!(aside, "the unreadable file is kept");
+        assert!(broken.list.is_empty() && broken.notice.is_some() && broken.problem.is_none());
+        assert_eq!(asides(), 1, "the unreadable file is kept");
+        Builds::default().load(path.clone());
+        assert_eq!(asides(), 1, "and not copied again");
         // Without a file read, nothing is written.
         let mut unread = Builds { problem: Some("locked".into()), ..Builds::default() };
         assert!(unread.commit(Vec::new()).is_err());

@@ -36,6 +36,34 @@ pub struct Choice {
     pub pick: Pick,
 }
 
+impl Pick {
+    /// The heading it's listed under.
+    fn group(&self) -> &'static str {
+        match self {
+            Pick::AsItIs => "Your ship",
+            Pick::NewHull(_) => "As a shipyard sells it",
+            Pick::Saved(_) => "Saved builds",
+            Pick::Ship(_) => "Your ships",
+        }
+    }
+}
+
+/// The choices whose name has what's typed, under a heading for each kind, for a grouped combobox.
+pub fn rows(choices: &[Choice], typed: &str) -> Vec<widgets::ListRow> {
+    let k = nexus_data::commodities::name_key(typed);
+    let mut out = Vec::new();
+    let mut last = "";
+    for c in choices.iter().filter(|c| k.is_empty() || nexus_data::commodities::name_key(&c.label).contains(&k)) {
+        let group = c.pick.group();
+        if group != last {
+            out.push(widgets::ListRow::Heading(group.to_string()));
+            last = group;
+        }
+        out.push(widgets::ListRow::Item(widgets::Suggestion { text: c.label.clone(), detail: c.detail.clone(), starred: false }));
+    }
+    out
+}
+
 /// Makes every label in the list its own, adding a ship's ShipID where two would read the same.
 pub fn unique(mut choices: Vec<Choice>) -> Vec<Choice> {
     let labels: Vec<String> = choices.iter().map(|c| c.label.clone()).collect();

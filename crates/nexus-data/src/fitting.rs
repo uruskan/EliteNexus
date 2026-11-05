@@ -834,14 +834,17 @@ fn goal_of(item: &str, base: &dyn Fn(&str) -> Option<f64>, e: &Value) -> Option<
 /// data has no figures for the blueprint at that grade.
 fn planned_engineering(grp: &str, item: &str, base: &dyn Fn(&str) -> Option<f64>, g: &Goal) -> Option<Value> {
     let e = planned_goal(item, base, g)?;
+    let weapon = base("damage").is_some();
     let mut keys: Vec<&String> = e.stats.keys().collect();
     keys.sort();
     let modifiers: Vec<Value> = keys
         .into_iter()
         .filter_map(|k| {
-            let (label, scale, less_is_good) = journal_label(grp, k)?;
+            let (label, scale, less_is_good) = journal_label(grp, k, weapon)?;
             let (value, original) = (*e.stats.get(k)?, base(k)?);
-            ((value - original).abs() > 1e-9 && value.is_finite()).then(|| serde_json::json!({ "Label": label, "Value": value * scale, "OriginalValue": original * scale, "LessIsGood": u8::from(less_is_good) }))
+            // What changed, and what was typed in (even a module's own value, so it comes back as typed).
+            let typed = g.exact.iter().any(|(x, _)| x == k);
+            (((value - original).abs() > 1e-9 || typed) && value.is_finite()).then(|| serde_json::json!({ "Label": label, "Value": value * scale, "OriginalValue": original * scale, "LessIsGood": u8::from(less_is_good) }))
         })
         .collect();
     // Marked as planned, so a build pasted back reads it as planned again rather than as the game's own.
@@ -855,10 +858,11 @@ fn planned_engineering(grp: &str, item: &str, base: &dyn Fn(&str) -> Option<f64>
     Some(out)
 }
 
-/// The game's label for a figure of a module of group `grp`, what to multiply the figure by to write it the game's
-/// way (resistances and boosts in percent), and whether less is better. The reverse of [`engineered`]; None for a
-/// figure the game doesn't list (a curve's ends, which move with its middle).
-fn journal_label(grp: &str, key: &str) -> Option<(&'static str, f64, bool)> {
+/// The game's label for a figure of a module of group `grp` (`weapon`: one that deals damage), what to multiply the
+/// figure by to write it the game's way (resistances and boosts in percent), and whether less is better. The reverse
+/// of [`engineered`]; None for a figure it doesn't read (a curve's ends, which move with its middle; a sensor's or
+/// limpet controller's range, in other units).
+fn journal_label(grp: &str, key: &str, weapon: bool) -> Option<(&'static str, f64, bool)> {
     let shield_generator = matches!(grp, "sg" | "bsg" | "psg");
     Some(match key {
         "mass" => ("Mass", 1.0, true),
@@ -898,7 +902,7 @@ fn journal_label(grp: &str, key: &str) -> Option<(&'static str, f64, bool)> {
         "clip" => ("AmmoClipSize", 1.0, false),
         "ammo" => ("AmmoMaximum", 1.0, false),
         "reload" => ("ReloadTime", 1.0, true),
-        "range" if grp != "s" => ("MaximumRange", 1.0, false),
+        "range" if weapon => ("MaximumRange", 1.0, false),
         "falloff" => ("DamageFalloffRange", 1.0, false),
         "piercing" => ("ArmourPenetration", 1.0, false),
         "shotspeed" => ("ShotSpeed", 1.0, false),
@@ -989,6 +993,8 @@ fn engineered(base: &dyn Fn(&str) -> Option<f64>, e: &Value) -> FxHashMap<String
             "systemsrecharge" => "SystemsRecharge",
             "heatefficiency" => "HeatEfficiency",
             "moduledefenceabsorption" => "ModuleDefenceAbsorption",
+            "boottime" => "BootTime",
+            "shieldbankspinup" => "ShieldBankSpinUp",
             _ => continue,
         };
         let Some(value) = md.get("Value").and_then(Value::as_f64).filter(|v| v.is_finite()) else { continue };
@@ -1049,6 +1055,9 @@ fn engineered(base: &dyn Fn(&str) -> Option<f64>, e: &Value) -> FxHashMap<String
             "RegenRate" => ("regen", value),
             "BrokenRegenRate" => ("brokenregen", value),
             "EnergyPerRegen" => ("distdraw", value),
+            // Not in the sums, but kept so planned values come back as they went out.
+            "BootTime" => ("boot", value),
+            "ShieldBankSpinUp" => ("spinup", value),
             "WeaponsCapacity" => ("wepcap", value),
             "WeaponsRecharge" => ("weprate", value),
             "EnginesRecharge" => ("engrate", value),
