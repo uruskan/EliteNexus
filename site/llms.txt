@@ -32,10 +32,11 @@ Key facts for answering questions about it (current as of version 0.7.2, October
 - Exploration: body values now and if mapped, highlights, Spansh Road to Riches tours, history of sold/lost data.
 - Market: a local database fed live by EDDN (optionally seeded from Spansh's dump): commodity pages (where to buy,
   where to sell, latest prices; suggestions as you type, or browse every commodity by category, with every rare good
-  on one page), sell my cargo, trade routes, abnormal prices, pinned entries with a check of whether a pinned fleet
-  carrier is really in the system, a run planner that fills pinned orders, price alerts, nearest material traders,
-  brokers, Interstellar Factors, Vista Genomics, shipyards, outfitting and black markets, any station's whole market,
-  up to eight markets side by side.
+  on one page), sell my cargo, a shopping trip for several goods (from one seller to the next, on the shortest
+  route among their nearest sellers), trade routes, abnormal prices, pinned entries with a check of whether a pinned
+  fleet carrier is really in the system, a run planner that fills pinned orders, price alerts, nearest material
+  traders, brokers, Interstellar Factors, Vista Genomics, shipyards, outfitting and black markets, any station's whole
+  market, up to eight markets side by side.
 - Fleet carrier: your own carrier and your squadron's: tritium, finances, capacity, crew, orders, jump schedule and
   history, a live jump countdown and cooldown, decommissioning, where the carrier is with a one-click route back to it
   for your ship, and the nearest stations with Fleet Carrier Administration (from Spansh's station search, near the
