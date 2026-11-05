@@ -4134,9 +4134,20 @@ fn database_tab(ui: &mut Ui, svc: &mut MarketService, st: &mut MarketUi, rt: &to
                     let ctx = ui.ctx().clone();
                     svc.start_import(ImportSource::Url(SPANSH_STATIONS_URL.into()), &ctx, rt);
                 }
+                // The path, then its button (the order Tab and a screen reader follow). The path takes the width the
+                // button leaves, as wide as the button was on the frame before, so the row fits a narrow card too.
                 ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut st.import_path).hint_text(r"…or a dump you downloaded, e.g. D:\galaxy_stations.json.gz").desired_width(320.0));
-                    if ui.button("Import file").clicked() && !st.import_path.trim().is_empty() {
+                    let button_w = egui::Id::new("market-import-file-width");
+                    let w = ui.data(|d| d.get_temp::<f32>(button_w)).unwrap_or(90.0);
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut st.import_path)
+                            .hint_text(r"…or a dump you downloaded, e.g. D:\galaxy_stations.json.gz")
+                            .desired_width((ui.available_width() - w - ui.spacing().item_spacing.x).max(80.0)),
+                    );
+                    let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let import = ui.button("Import file");
+                    ui.data_mut(|d| d.insert_temp(button_w, import.rect.width()));
+                    if (import.clicked() || enter) && !st.import_path.trim().is_empty() {
                         let ctx = ui.ctx().clone();
                         let path = std::path::PathBuf::from(st.import_path.trim().trim_matches('"'));
                         svc.start_import(ImportSource::File(path), &ctx, rt);

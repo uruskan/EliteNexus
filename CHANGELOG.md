@@ -324,6 +324,9 @@ release time that section becomes the new version and the release workflow publi
 - **Market › Sell my cargo** plans again when how old prices may be changes, also when it's changed on Find
   commodity, which shares the setting: the plan could have used the old age while the bar showed the new one. Its
   refresh button no longer does nothing while a plan is being made.
+- **Market › Database & feed** fits a narrow window: the box for a downloaded Spansh dump kept a fixed width, so in a
+  window about 1,000 pixels wide its Import file button pushed the whole right-hand column past the window's edge.
+  The box now takes the width its button leaves, and Enter in it starts the import too.
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
