@@ -387,33 +387,26 @@ pub fn th(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).font(display(size::FOOTNOTE)).color(pal::DIM));
 }
 
-/// A table whose columns the commander can widen or narrow: dragging the edge between two headings resizes the column
-/// on its left (the pointer turns into ↔ there, the edge lights up, and orange while dragged). Each table's widths are
-/// remembered across restarts under `id`: give every table its own, and a table that lays out other columns in a
-/// narrow window one per layout, or one layout's widths would reset the other's. Rows are striped, cells centred.
+/// A table: striped rows, cells centred, the columns as wide as the page sets them. `id` keeps its scroll position
+/// apart from other tables': give every table its own, and a table that lays out other columns in a narrow window one
+/// per layout.
 ///
 /// Give it a [`flex_column`], or two that share the room equally: it takes the room the others leave, so the table
-/// still fits the window, as long as the other columns' widths add up to less than a 1,000-pixel window leaves. A last
-/// column that is `Column::remainder()` does the same. Columns that should keep their width (a pin, a button) say
-/// `.resizable(false)`.
+/// still fits the window, as long as the other columns add up to less than a 1,000-pixel window leaves. A last column
+/// that is `Column::remainder()` does the same.
 pub fn table<R>(ui: &mut Ui, id: &str, build: impl FnOnce(egui_extras::TableBuilder<'_>) -> R) -> R {
-    // An id of its own, so the widths don't depend on what the page shows above the table.
+    // An id of its own, so the table doesn't depend on what the page shows above it.
     ui.scope_builder(egui::UiBuilder::new().id(egui::Id::new(("nexus-table", id))), |ui| {
-        let w = &mut ui.visuals_mut().widgets;
-        // No grid lines at rest: the edge under the pointer shows, and the one being dragged is orange.
-        w.noninteractive.bg_stroke = Stroke::NONE;
-        w.hovered.bg_stroke = Stroke::new(1.0, pal::FAINT);
-        w.active.bg_stroke = Stroke::new(1.5, pal::ACCENT);
         // A table scrolls in whatever height is left (egui_extras would take at least 200 points, past what's below).
-        build(egui_extras::TableBuilder::new(ui).id_salt(id).resizable(true).striped(true).min_scrolled_height(0.0).cell_layout(Layout::left_to_right(Align::Center)))
+        build(egui_extras::TableBuilder::new(ui).id_salt(id).striped(true).min_scrolled_height(0.0).cell_layout(Layout::left_to_right(Align::Center)))
     })
     .inner
 }
 
 /// The flexible column of a [`table`]: it takes the width the other columns leave (at least `min`; two of them share
-/// it equally), cuts what doesn't fit, and isn't dragged itself: dragging the others resizes it.
+/// it equally) and cuts what doesn't fit.
 pub fn flex_column(min: f32) -> egui_extras::Column {
-    egui_extras::Column::remainder().at_least(min).clip(true).resizable(false)
+    egui_extras::Column::remainder().at_least(min).clip(true)
 }
 
 

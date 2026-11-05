@@ -305,9 +305,6 @@ release time that section becomes the new version and the release workflow publi
   Find commodity: each setting a caption over its controls, numbers to type or step with − and +, the landing pad as
   Any, S, M or L, fleet carriers as a chip. What a search is for (your ship's hold and credits, the pad it needs)
   reads in the bar beside the settings. Mining hotspots says what to do before its first search.
-- **Market**: columns can be widened or narrowed: drag the edge between two headings (the pointer turns into ↔
-  there). One column in each list, such as the station, takes the room left, so the list still fits the window, and
-  each list remembers its widths between runs.
 - **Market › Sell my cargo**: its settings sit in a bar above the lists (how far to look for buyers, how old prices may
   be, the pad your ship needs), and **Best buyer per commodity** is a table like Best single stop: the station,
   system, distance and demand in columns of their own, sortable, with the next best buyers on the price's tooltip.

@@ -1784,7 +1784,7 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
     crate::widgets::table(ui, &layout, |mut table| {
         table = table.sense(egui::Sense::click());
         if pins.is_some() {
-            table = table.column(Column::exact(24.0).resizable(false));
+            table = table.column(Column::exact(24.0));
         }
         if many {
             table = table.column(Column::initial(180.0).at_least(80.0).clip(true));
@@ -2338,7 +2338,7 @@ fn abnormal_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -
     let wide = ui.available_width() >= 1040.0;
     crate::widgets::table(ui, if wide { "abnormal/wide" } else { "abnormal/narrow" }, |table| {
         let mut table = table
-            .column(Column::exact(24.0).resizable(false))
+            .column(Column::exact(24.0))
             .column(Column::initial(180.0).at_least(80.0).clip(true))
             .column(Column::initial(118.0).at_least(70.0).clip(true));
         if wide {
@@ -2523,14 +2523,14 @@ fn pins_panel(ui: &mut Ui, gs: &GameState, st: &mut MarketUi) -> Option<Nav> {
             .vscroll(true)
             .max_scroll_height(30.0 * 5.0)
             .auto_shrink([false, true])
-            .column(Column::exact(24.0).resizable(false))
-            .column(Column::exact(44.0).resizable(false))
+            .column(Column::exact(24.0))
+            .column(Column::exact(44.0))
             .column(Column::initial(150.0).at_least(70.0).clip(true))
             .column(Column::initial(124.0).at_least(70.0).clip(true))
             .column(crate::widgets::flex_column(140.0))
             .column(Column::initial(66.0).at_least(44.0).clip(true))
             .column(Column::initial(118.0).at_least(60.0).clip(true))
-            .column(Column::exact(26.0).resizable(false))
+            .column(Column::exact(26.0))
             .body(|body| {
                 body.rows(30.0, n, |mut row| {
                     let i = row.index();
@@ -3884,10 +3884,10 @@ fn tile_table(ui: &mut Ui, m: &StationMarket, cx: &TileCtx, sort: &mut TableSort
     let layout = if w >= 520.0 { 2 } else if w >= 360.0 { 1 } else { 0 };
     // Narrow, a long name takes two lines rather than ending in "…".
     let (price_w, row_h) = if layout == 0 { (62.0, 38.0) } else { (76.0, 30.0) };
-    // Keyed by market: its widths and where it was scrolled stay with it when the tiles move.
+    // Keyed by market: where it was scrolled stays with it when the tiles move.
     crate::widgets::table(ui, &format!("market-tile/{}/{layout}", m.station.market_id), |t| {
         // A low tile's table scrolls in what's left of it (egui_extras would take at least 200 points).
-        let mut t = t.vscroll(true).auto_shrink([false, false]).min_scrolled_height(0.0).column(Column::exact(22.0).resizable(false)).column(crate::widgets::flex_column(90.0)).column(Column::initial(price_w).at_least(50.0).clip(true));
+        let mut t = t.vscroll(true).auto_shrink([false, false]).min_scrolled_height(0.0).column(Column::exact(22.0)).column(crate::widgets::flex_column(90.0)).column(Column::initial(price_w).at_least(50.0).clip(true));
         if layout == 2 {
             t = t.column(Column::initial(64.0).at_least(40.0).clip(true));
         }
@@ -4384,15 +4384,17 @@ fn sell_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Op
         const TABLE: &str = "sell-items";
         let mut sort = TableSort::load(ui, TABLE);
         crate::widgets::table(ui, TABLE, |table| {
+            // The commodity, the station and the system share what the numbers leave, so the names fit where there's
+            // room and the table fits a 1,000-pixel window.
             let table = table
                 .vscroll(false)
-                .column(Column::initial(230.0).at_least(100.0).clip(true))
-                .column(Column::initial(64.0).at_least(44.0).clip(true))
-                .column(Column::initial(110.0).at_least(70.0).clip(true))
-                .column(crate::widgets::flex_column(160.0))
-                .column(Column::initial(200.0).at_least(90.0).clip(true))
-                .column(Column::initial(76.0).at_least(50.0).clip(true))
-                .column(Column::initial(90.0).at_least(70.0).clip(true))
+                .column(crate::widgets::flex_column(130.0))
+                .column(Column::initial(60.0).at_least(44.0).clip(true))
+                .column(Column::initial(96.0).at_least(70.0).clip(true))
+                .column(crate::widgets::flex_column(130.0))
+                .column(crate::widgets::flex_column(130.0))
+                .column(Column::initial(72.0).at_least(50.0).clip(true))
+                .column(Column::initial(80.0).at_least(60.0).clip(true))
                 .header(30.0, |mut h| {
                     let heads: Heads = vec![
                         ("Commodity", Some((0, false))),
