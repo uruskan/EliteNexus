@@ -7,7 +7,8 @@ release time that section becomes the new version and the release workflow publi
 
 ### Added
 - **A support card at start**: while Elite Nexus is in beta, each start shows a small card in the middle of the main
-  window with the **GitHub Sponsors** and **Buy Me a Coffee** buttons and what support pays for. It can be closed
+  window with the **GitHub Sponsors** and **Buy Me a Coffee** buttons, why support matters and what it pays for, and
+  the same thanks to supporters and contributors as the release notes. It can be closed
   after a 10-second countdown. Elite Nexus stays free with no ads, and nothing in it depends on support. The card
   never appears on the overlay or in VR, and never takes focus from the game; on a first start it waits until the
   welcome is done.

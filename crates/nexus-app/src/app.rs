@@ -1420,9 +1420,10 @@ impl NexusApp {
                 }
             }
         }
-        // The support card, after the welcome sheet on a first start.
-        let welcome_open = !self.settings.welcomed && self.shot.is_none();
-        if !welcome_open && self.support.as_mut().is_some_and(|card| card.show(&ctx)) {
+        // The support card, after the welcome sheet on a first start: the sheet waits for the journals, so the card
+        // does too, unless they can't be read (then no sheet comes).
+        let welcome_ahead = !self.settings.welcomed && self.shot.is_none() && !matches!(self.core.status.read().phase, Phase::Error(_));
+        if !welcome_ahead &&self.support.as_mut().is_some_and(|card| card.show(&ctx)) {
             self.support = None;
         }
         self.toasts(&ctx);

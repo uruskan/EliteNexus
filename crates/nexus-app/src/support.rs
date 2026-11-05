@@ -106,8 +106,8 @@ impl Card {
                     ui.label(RichText::new("Elite Nexus is free, and stays free").font(bold(size::TITLE3)).color(pal::TEXT));
                     ui.add_space(8.0);
                     for line in [
-                        "One commander builds it, with no company, no ads and no subscription, and nothing in it depends on this.",
-                        "I never made it for money, but it takes more of my time every week. Your support keeps me going, and pays for things like early-access ships, so new features are tested in the game instead of guessed at.",
+                        "I never started it to earn money, and nothing in it depends on this: no ads, no subscription. But it takes more of my time every week, much of it on things I don't need myself, and your support is what keeps me motivated.",
+                        "It also buys what I can't test yet: I don't own a Nomad, an Anaconda Mk II or a Rhino, so working on those parts is really miserable for me right now.",
                     ] {
                         ui.add(egui::Label::new(RichText::new(line).size(size::CALLOUT).color(pal::DIM)).wrap().halign(Align::Center));
                         ui.add_space(6.0);
@@ -115,7 +115,9 @@ impl Card {
                 });
                 ui.add_space(14.0);
                 support_buttons(ui);
-                ui.add_space(20.0);
+                ui.add_space(18.0);
+                thanks_lines(ui, &THANKS);
+                ui.add_space(14.0);
                 ui.separator();
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
@@ -133,6 +135,112 @@ impl Card {
             });
         closed
     }
+}
+
+/// The README, whose Thanks section names the supporters (the release notes thank the same people).
+const README: &str = include_str!("../../../README.md");
+
+static THANKS: std::sync::LazyLock<Thanks> = std::sync::LazyLock::new(|| thanks(README));
+
+/// Who to thank, from README › Thanks, as the release notes read it: under **Sponsors**, every GitHub profile linked
+/// and every item that starts with a bold name without a link; under the other headings, every GitHub profile linked
+/// (code, bug reports and ideas). Each name once, ignoring case, a supporter only among the supporters.
+#[derive(Debug, Default, PartialEq)]
+pub struct Thanks {
+    pub supporters: Vec<String>,
+    pub others: Vec<String>,
+}
+
+pub fn thanks(readme: &str) -> Thanks {
+    let mut t = Thanks::default();
+    let mut seen = std::collections::HashSet::new();
+    let mut add = |list: &mut Vec<String>, name: &str| {
+        if seen.insert(name.to_ascii_lowercase()) {
+            list.push(name.to_string());
+        }
+    };
+    let mut in_thanks = false;
+    let mut sponsors = false;
+    for line in readme.lines() {
+        if line.starts_with("## ") {
+            if in_thanks {
+                break;
+            }
+            in_thanks = line.starts_with("## Thanks");
+            continue;
+        }
+        if !in_thanks {
+            continue;
+        }
+        let trimmed = line.trim();
+        if let Some(group) = trimmed.strip_prefix("**").and_then(|s| s.strip_suffix("**"))
+            && !group.contains(['*', '['])
+        {
+            sponsors = group.starts_with("Sponsor");
+            continue;
+        }
+        let logins = github_logins(line);
+        if sponsors {
+            for l in &logins {
+                add(&mut t.supporters, l);
+            }
+            // A bold name without a link (a supporter from elsewhere, added by hand).
+            if let Some(rest) = trimmed.strip_prefix("* **").or_else(|| trimmed.strip_prefix("- **"))
+                && let Some((name, _)) = rest.split_once("**")
+                && !name.is_empty()
+                && !name.contains(['[', ']'])
+            {
+                add(&mut t.supporters, name);
+            }
+        } else {
+            for l in &logins {
+                add(&mut t.others, l);
+            }
+        }
+    }
+    t
+}
+
+/// The GitHub logins a line links to (`](https://github.com/<login>)`), in order.
+fn github_logins(line: &str) -> Vec<&str> {
+    const LINK: &str = "](https://github.com/";
+    let mut out = Vec::new();
+    let mut rest = line;
+    while let Some(i) = rest.find(LINK) {
+        rest = &rest[i + LINK.len()..];
+        let end = rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '-')).unwrap_or(rest.len());
+        if end > 0 && rest[end..].starts_with(')') {
+            out.push(&rest[..end]);
+        }
+        rest = &rest[end..];
+    }
+    out
+}
+
+/// "Elite Nexus is possible because of its supporters", with their names, and the other commanders under it.
+fn thanks_lines(ui: &mut Ui, t: &Thanks) {
+    let dim = egui::TextFormat { font_id: egui::FontId::proportional(size::FOOTNOTE), color: pal::DIM, ..Default::default() };
+    let name_fmt = egui::TextFormat { font_id: display(size::FOOTNOTE), color: pal::TEXT, ..Default::default() };
+    ui.vertical_centered(|ui| {
+        let mut job = egui::text::LayoutJob { halign: Align::Center, ..Default::default() };
+        if t.supporters.is_empty() {
+            job.append("Elite Nexus is possible because of its supporters: thank you to ", 0.0, dim.clone());
+        } else {
+            job.append("Elite Nexus is possible because of its supporters: thank you, ", 0.0, dim.clone());
+            for name in &t.supporters {
+                job.append(name, 0.0, name_fmt.clone());
+                job.append(", ", 0.0, dim.clone());
+            }
+            job.append("and ", 0.0, dim.clone());
+        }
+        job.append("everyone who sponsors anonymously or bought a coffee!", 0.0, dim);
+        ui.add(egui::Label::new(job).wrap());
+        if !t.others.is_empty() {
+            ui.add_space(4.0);
+            let line = format!("Thanks also to {} for code, bug reports and ideas, and to many more on the Frontier Forums.", t.others.join(", "));
+            ui.add(egui::Label::new(RichText::new(line).size(size::FOOTNOTE).color(pal::FAINT)).wrap().halign(Align::Center));
+        }
+    });
 }
 
 /// The two support buttons side by side, centred, in the README badges' colours.
@@ -196,6 +304,22 @@ mod tests {
         assert_eq!(c.fraction_left(t0 + Duration::from_secs(60)), 0.0);
         // A clock read before the card was shown (it never goes backwards, but nothing may panic).
         assert_eq!(c.left(t0.checked_sub(Duration::from_secs(1)).unwrap_or(t0)), WAIT);
+    }
+
+    #[test]
+    fn thanks_come_from_the_readme_as_the_release_notes_read_them() {
+        let readme = "## Support\n* **[notme](https://github.com/notme)**\n## Thanks\n\nIntro.\n\n**Code**\n\n\
+            * **[coder](https://github.com/coder)**: a fix ([PR #2](https://github.com/uruskan/EliteNexus/pull/2)).\n\n\
+            **Sponsors**\n\n* **[Backer](https://github.com/Backer)** (on the forums), and one anonymous.\n* **Coffee Friend**: a coffee.\n\n\
+            **Bug reports and ideas on GitHub**\n\n* **[backer](https://github.com/backer)**: twice.\n* **[tester-1](https://github.com/tester-1)**: a report.\n\n\
+            ## Licence\n* **[after](https://github.com/after)**\n";
+        let t = thanks(readme);
+        assert_eq!(t.supporters, ["Backer", "Coffee Friend"]);
+        // A repository link isn't a profile, and a supporter is thanked once, as a supporter.
+        assert_eq!(t.others, ["coder", "tester-1"]);
+        assert_eq!(thanks("no thanks section"), Thanks::default());
+        // The real README names its supporters.
+        assert!(!THANKS.supporters.is_empty(), "README › Thanks › Sponsors");
     }
 
     #[test]
