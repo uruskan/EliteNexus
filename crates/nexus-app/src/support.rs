@@ -117,12 +117,19 @@ impl Card {
                 support_buttons(ui);
                 ui.add_space(18.0);
                 thanks_lines(ui, &THANKS);
-                ui.add_space(14.0);
+                ui.add_space(20.0);
                 ui.separator();
                 ui.add_space(10.0);
                 ui.horizontal(|ui| {
                     ui.set_min_height(30.0);
-                    ui.label(RichText::new("Shown at every start during the beta.").size(size::FOOTNOTE).color(pal::FAINT));
+                    // Room on the right for the countdown or Close, whichever is wider.
+                    let note = (ui.available_width() - 190.0).max(120.0);
+                    ui.allocate_ui(Vec2::new(note, 30.0), |ui| {
+                        ui.add(
+                            egui::Label::new(RichText::new("Shown at every start during the beta. In the release, supporters and everyone who bought a coffee won't see it.").size(size::FOOTNOTE).color(pal::FAINT))
+                                .wrap(),
+                        );
+                    });
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if done {
                             closed = widgets::primary_button(ui, "Close").clicked();

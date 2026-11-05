@@ -11,7 +11,7 @@ release time that section becomes the new version and the release workflow publi
   the same thanks to supporters and contributors as the release notes. It can be closed
   after a 10-second countdown. Elite Nexus stays free with no ads, and nothing in it depends on support. The card
   never appears on the overlay or in VR, and never takes focus from the game; on a first start it waits until the
-  welcome is done.
+  welcome is done. In the stable release, supporters and everyone who bought a coffee won't see it.
 - **Missions › Recent mission history** can be cleared (asked for by Asmodeus on the Frontier Forums): **Clear**
   hides the missions in the list, so it starts fresh with the next one you complete, fail or abandon. They're hidden
   from this list only: the game, its journals and every other page of Elite Nexus still have them (Statistics still
