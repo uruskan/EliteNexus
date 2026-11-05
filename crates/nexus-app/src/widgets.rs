@@ -761,6 +761,308 @@ pub fn disclosure(ui: &mut Ui, open: &mut bool, label: &str) -> bool {
     *open
 }
 
+// ---------------------------------------------------------------------------------------------
+// Settings in view
+
+/// A search's settings, all in view where they're used, never behind an "Options" click (Apple's inline filter bar):
+/// a rounded bar of fields, each a small caption over its control, side by side with hairlines between them, wrapping
+/// onto more rows as the window narrows. Add the fields through the [`SettingsBar`].
+pub fn settings_bar<R>(ui: &mut Ui, add: impl FnOnce(&mut SettingsBar) -> R) -> R {
+    let id = ui.id().with(("settings-bar", ui.next_auto_id()));
+    Frame::new()
+        .fill(Color32::from_white_alpha(6))
+        .stroke(Stroke::new(1.0, Color32::from_white_alpha(10)))
+        .corner_radius(CornerRadius::same(12))
+        .inner_margin(Margin::symmetric(16, 12))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            // Rows start one control high and grow to their tallest field (as `horizontal_wrapped` does): a row as tall
+            // as all the space left would send the next row to the bottom of it.
+            let width = ui.available_width();
+            let first_row = Vec2::new(width, ui.spacing().interact_size.y);
+            ui.allocate_ui_with_layout(first_row, Layout::left_to_right(Align::Min).with_main_wrap(true), |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(28.0, 14.0);
+                let mut bar = SettingsBar { ui, id, width, last: None };
+                add(&mut bar)
+            })
+            .inner
+        })
+        .inner
+}
+
+/// Builder for [`settings_bar`].
+pub struct SettingsBar<'a> {
+    pub ui: &'a mut Ui,
+    id: egui::Id,
+    /// The bar's inner width: what a field may take.
+    width: f32,
+    /// The field before, for the hairline between two fields on one row.
+    last: Option<Rect>,
+}
+
+impl SettingsBar<'_> {
+    /// One setting: `caption` over whatever `control` draws; `tip`, shown over the caption, says what it does and its
+    /// limits (empty for none). A field that won't fit on the row moves to the next one whole.
+    pub fn field<R>(&mut self, caption: &str, tip: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
+        let key = self.id.with(caption);
+        let ui = &mut *self.ui;
+        // The field's width, from the frame before: a wrapping row places a child where the last one ended.
+        let width: Option<f32> = ui.data(|d| d.get_temp(key));
+        if self.last.is_some() && width.is_some_and(|w| w > ui.available_size_before_wrap().x) {
+            ui.end_row();
+        }
+        // Laid out with the bar's whole width, so a control takes its own size instead of squeezing into what's left
+        // of the row (a segmented control would turn into pills).
+        let room = Rect::from_min_size(ui.cursor().min, Vec2::new(self.width, f32::INFINITY));
+        let r = ui.scope_builder(egui::UiBuilder::new().max_rect(room).layout(Layout::top_down(Align::Min)), |ui| {
+            ui.spacing_mut().item_spacing.y = 5.0;
+            let c = ui.add(egui::Label::new(RichText::new(caption).size(size::FOOTNOTE).color(pal::DIM)).selectable(false));
+            if !tip.is_empty() {
+                c.on_hover_text(tip);
+            }
+            control(ui)
+        });
+        let rect = r.response.rect;
+        if width.is_none_or(|w| (w - rect.width()).abs() > 0.5) {
+            ui.data_mut(|d| d.insert_temp(key, rect.width()));
+            ui.ctx().request_repaint();
+        }
+        if let Some(prev) = self.last
+            && (prev.top() - rect.top()).abs() < 0.5
+            && prev.right() < rect.left()
+        {
+            let x = (prev.right() + rect.left()) / 2.0;
+            ui.painter().vline(x, rect.top() + 2.0..=rect.bottom().max(prev.bottom()) - 2.0, Stroke::new(1.0, Color32::from_white_alpha(16)));
+        }
+        self.last = Some(rect);
+        r.inner
+    }
+}
+
+/// How [`number`]'s − and + move its value.
+#[derive(Debug, Clone, Copy)]
+pub enum Steps<'a> {
+    /// To the next multiple of this (1 ly, 5 %).
+    By(f64),
+    /// To the next of these round values, smallest first (25, 50, 100, 250 ly).
+    Through(&'a [f64]),
+}
+
+impl Steps<'_> {
+    /// The value one step up (or down) from `v`, kept within `lo..=hi`.
+    pub fn step(self, v: f64, up: bool, lo: f64, hi: f64) -> f64 {
+        let eps = 1e-9 * v.abs().max(1.0);
+        let next = match self {
+            Steps::By(d) if d > 0.0 => d * if up { ((v + eps) / d).floor() + 1.0 } else { ((v - eps) / d).ceil() - 1.0 },
+            Steps::By(_) => v,
+            Steps::Through(ladder) if up => ladder.iter().copied().find(|s| *s > v + eps).unwrap_or(hi),
+            Steps::Through(ladder) => ladder.iter().rev().copied().find(|s| *s < v - eps).unwrap_or(lo),
+        };
+        next.clamp(lo, hi)
+    }
+}
+
+/// A number to type or step (macOS 26's stepper and its field in one glass capsule): − and + move it by `steps`, a
+/// click on the value types a new one, a drag across it slides it. Kept within `range`, written with `decimals`
+/// places, its thousands grouped, and `suffix` after it (" ly"). The response is the value's and reports `changed()`
+/// whichever way it changed.
+pub fn number(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>, steps: Steps, decimals: usize, suffix: &str) -> Response {
+    const H: f32 = 28.0;
+    let (lo, hi) = (*range.start(), *range.end());
+    let before = *value;
+    // Room for the widest value, so the capsule keeps its size as the value changes.
+    let widest = [lo, hi].map(|v| ui.painter().layout_no_wrap(format!("{}{suffix}", grouped(v, decimals)), FontId::proportional(size::CALLOUT), pal::TEXT).size().x);
+    let mid = widest[0].max(widest[1]) + 18.0;
+    // The glass goes under the controls, so its place is kept before they're drawn.
+    let under = ui.painter().add(egui::Shape::Noop);
+    let row = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let minus = step_half(ui, egui_phosphor::regular::MINUS, *value > lo, true);
+        let mut resp = ui
+            .scope(|ui| {
+                let s = ui.style_mut();
+                s.spacing.interact_size = Vec2::new(mid, H);
+                s.spacing.button_padding = Vec2::new(8.0, 0.0);
+                let w = &mut s.visuals.widgets;
+                for v in [&mut w.inactive, &mut w.hovered, &mut w.active] {
+                    v.bg_stroke = Stroke::NONE;
+                    v.expansion = 0.0;
+                    v.corner_radius = CornerRadius::same(6);
+                }
+                w.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                w.hovered.weak_bg_fill = Color32::from_white_alpha(10);
+                w.active.weak_bg_fill = Color32::from_white_alpha(18);
+                let speed = match steps {
+                    Steps::By(d) => d / 4.0,
+                    Steps::Through(_) => (hi - lo) / 600.0,
+                };
+                ui.add(
+                    egui::DragValue::new(&mut *value)
+                        .range(range.clone())
+                        .speed(speed)
+                        .fixed_decimals(decimals)
+                        .suffix(suffix)
+                        .custom_formatter(move |v, _| grouped(v, decimals))
+                        .custom_parser(parse_number),
+                )
+            })
+            .inner;
+        let plus = step_half(ui, egui_phosphor::regular::PLUS, *value < hi, false);
+        let round = |v: f64| {
+            let k = 10f64.powi(decimals as i32);
+            ((v * k).round() / k).clamp(lo, hi)
+        };
+        if minus.clicked() {
+            *value = round(steps.step(*value, false, lo, hi));
+        }
+        if plus.clicked() {
+            *value = round(steps.step(*value, true, lo, hi));
+        }
+        if *value != before {
+            resp.mark_changed();
+        }
+        (resp, minus.rect.right(), plus.rect.left())
+    });
+    let (resp, left, right) = row.inner;
+    let rect = row.response.rect;
+    let r = CornerRadius::same((rect.height() / 2.0).min(255.0) as u8);
+    ui.painter().set(
+        under,
+        egui::Shape::Vec(vec![
+            Shadow { offset: [0, 1], blur: 4, spread: 0, color: Color32::from_black_alpha(70) }.as_shape(rect, r).into(),
+            egui::Shape::rect_filled(rect, r, Color32::from_white_alpha(16)),
+        ]),
+    );
+    let p = ui.painter();
+    p.rect_stroke(rect, r, Stroke::new(1.0, Color32::from_white_alpha(14)), egui::StrokeKind::Inside);
+    let top = Rect::from_min_max(rect.min, Pos2::new(rect.max.x, rect.center().y));
+    p.with_clip_rect(top).rect_stroke(rect, r, Stroke::new(1.0, Color32::from_white_alpha(34)), egui::StrokeKind::Inside);
+    for x in [left, right] {
+        p.vline(x, rect.y_range().shrink(7.0), Stroke::new(1.0, Color32::from_white_alpha(22)));
+    }
+    resp
+}
+
+/// A [`number`] of whole units (stops, light years, percent).
+pub fn whole(ui: &mut Ui, value: &mut u32, range: std::ops::RangeInclusive<u32>, steps: Steps, suffix: &str) -> Response {
+    let mut v = f64::from(*value);
+    let resp = number(ui, &mut v, f64::from(*range.start())..=f64::from(*range.end()), steps, 0, suffix);
+    *value = (v.round().max(0.0) as u32).clamp(*range.start(), *range.end());
+    resp
+}
+
+/// The − or + end of a [`number`] capsule.
+fn step_half(ui: &mut Ui, glyph: &str, enabled: bool, left: bool) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(28.0), if enabled { Sense::click() } else { Sense::hover() });
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        if enabled && resp.hovered() {
+            let round = if left { CornerRadius { nw: 14, sw: 14, ne: 0, se: 0 } } else { CornerRadius { nw: 0, sw: 0, ne: 14, se: 14 } };
+            p.rect_filled(rect, round, Color32::from_white_alpha(if resp.is_pointer_button_down_on() { 30 } else { 14 }));
+        }
+        p.text(rect.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(size::CALLOUT), if enabled { pal::TEXT } else { pal::FAINT });
+    }
+    resp
+}
+
+/// `v` with `decimals` places and its thousands grouped: 50,000 or 19.6.
+pub fn grouped(v: f64, decimals: usize) -> String {
+    let s = format!("{:.*}", decimals, v.abs());
+    let (int, frac) = s.split_once('.').map_or((s.as_str(), None), |(i, f)| (i, Some(f)));
+    let mut out = String::with_capacity(s.len() + int.len() / 3 + 1);
+    if v < 0.0 && s.chars().any(|c| c.is_ascii_digit() && c != '0') {
+        out.push('-');
+    }
+    for (i, c) in int.chars().enumerate() {
+        if i > 0 && (int.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if let Some(f) = frac {
+        out.push('.');
+        out.push_str(f);
+    }
+    out
+}
+
+/// A typed number: separators and spaces are ignored, and so is a unit after it ("50,000 ls" is 50000). One comma
+/// before the last one or two digits, with no point, is a decimal comma ("19,6" is 19.6).
+pub fn parse_number(s: &str) -> Option<f64> {
+    let t: String = s.trim().replace('\u{2212}', "-").chars().filter(|c| !matches!(c, ' ' | '_' | '\u{a0}' | '\u{202f}')).collect();
+    let decimals = |i: usize| t[i + 1..].chars().take_while(char::is_ascii_digit).count();
+    let t = match (t.matches(',').count(), t.contains('.'), t.find(',')) {
+        (1, false, Some(i)) if (1..=2).contains(&decimals(i)) => t.replacen(',', ".", 1),
+        _ => t.replace(',', ""),
+    };
+    let end = t.char_indices().find(|&(i, c)| !(c.is_ascii_digit() || c == '.' || (i == 0 && matches!(c, '-' | '+')))).map_or(t.len(), |(i, _)| i);
+    t[..end].parse().ok()
+}
+
+/// One option of [`choices`]: its icon, its name, and when to pick it.
+pub struct Choice<'a, T> {
+    pub value: T,
+    pub icon: &'a str,
+    pub title: &'a str,
+    pub detail: &'a str,
+}
+
+/// Options as cards that say what each one is for, so the choice is made knowing the difference (macOS's appearance
+/// picker, with words): equal cards side by side, each at least `min_width` wide, wrapping onto more rows as the
+/// window narrows; the one picked is ringed in the accent colour. Returns the option clicked this frame, the picked
+/// one included.
+pub fn choices<T: PartialEq + Copy>(ui: &mut Ui, value: T, options: &[Choice<'_, T>], min_width: f32) -> Option<T> {
+    const PAD: f32 = 14.0;
+    const ICON: f32 = 26.0;
+    let base = ui.id().with(("choices", ui.next_auto_id()));
+    let avail = ui.available_width();
+    let cols = (((avail + GAP) / (min_width + GAP)).floor() as usize).clamp(1, options.len().max(1));
+    let w = (avail - GAP * (cols as f32 - 1.0)) / cols as f32;
+    // Every card's text is laid out first: the cards of a row share the tallest one's height.
+    let text: Vec<_> = options
+        .iter()
+        .map(|o| {
+            let title = ui.painter().layout(o.title.to_owned(), display(size::HEADLINE), pal::TEXT, w - 2.0 * PAD - ICON);
+            let detail = ui.painter().layout(o.detail.to_owned(), FontId::proportional(size::FOOTNOTE), pal::DIM, w - 2.0 * PAD);
+            (title, detail)
+        })
+        .collect();
+    let mut clicked = None;
+    for (row, cells) in text.chunks(cols).enumerate() {
+        let h = cells.iter().map(|(t, d)| 2.0 * PAD + t.size().y + 5.0 + d.size().y).fold(0.0, f32::max);
+        let (band, _) = ui.allocate_exact_size(Vec2::new(avail, h), Sense::hover());
+        for (j, (title, detail)) in cells.iter().enumerate() {
+            let i = row * cols + j;
+            let o = &options[i];
+            let rect = Rect::from_min_size(Pos2::new(band.left() + j as f32 * (w + GAP), band.top()), Vec2::new(w, h));
+            let resp = ui.interact(rect, base.with(i), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+            let picked = o.value == value;
+            resp.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, true, picked, o.title));
+            if resp.clicked() {
+                clicked = Some(o.value);
+            }
+            if !ui.is_rect_visible(rect) {
+                continue;
+            }
+            let p = ui.painter();
+            let round = CornerRadius::same(12);
+            p.rect_filled(rect, round, if resp.hovered() && !picked { Color32::from_rgb(52, 52, 55) } else { pal::CARD });
+            if picked {
+                p.rect_filled(rect, round, pal::ACCENT.gamma_multiply(0.08));
+                p.rect_stroke(rect, round, Stroke::new(1.5, pal::ACCENT), egui::StrokeKind::Inside);
+            }
+            let top = rect.min + Vec2::splat(PAD);
+            p.text(Pos2::new(top.x, top.y + title.size().y / 2.0), Align2::LEFT_CENTER, o.icon, FontId::proportional(17.0), if picked { pal::ACCENT } else { pal::DIM });
+            p.galley(Pos2::new(top.x + ICON, top.y), title.clone(), pal::TEXT);
+            p.galley(Pos2::new(top.x, top.y + title.size().y + 5.0), detail.clone(), pal::DIM);
+        }
+        if row + 1 < text.len().div_ceil(cols) {
+            ui.add_space(GAP - ui.spacing().item_spacing.y);
+        }
+    }
+    clicked
+}
+
 /// A capsule search field with a magnifying-glass icon.
 pub fn search_field(ui: &mut Ui, text: &mut String, hint: &str, width: f32) -> Response {
     search_capsule(ui, text, hint, width, None).inner
@@ -1352,6 +1654,36 @@ mod tests {
         assert_eq!(s.clicked(2, true), TableSort::default());
         // Another column starts over.
         assert_eq!(s.clicked(0, false), TableSort { column: Some(0), descending: false });
+    }
+
+    #[test]
+    fn numbers_step_through_round_values() {
+        // By a fixed amount: to the next multiple, whatever was typed in between.
+        assert_eq!(Steps::By(1.0).step(19.6, true, 10.0, 100.0), 20.0);
+        assert_eq!(Steps::By(1.0).step(19.6, false, 10.0, 100.0), 19.0);
+        assert_eq!(Steps::By(1.0).step(20.0, true, 10.0, 100.0), 21.0);
+        assert_eq!(Steps::By(1.0).step(20.0, false, 10.0, 100.0), 19.0);
+        assert_eq!(Steps::By(5.0).step(98.0, true, 1.0, 100.0), 100.0, "never past the end");
+        // Through a ladder: to the next rung, the ends of the range past the last one.
+        let ladder = [25.0, 50.0, 100.0, 250.0];
+        assert_eq!(Steps::Through(&ladder).step(50.0, true, 1.0, 1000.0), 100.0);
+        assert_eq!(Steps::Through(&ladder).step(60.0, false, 1.0, 1000.0), 50.0);
+        assert_eq!(Steps::Through(&ladder).step(250.0, true, 1.0, 1000.0), 1000.0);
+        assert_eq!(Steps::Through(&ladder).step(25.0, false, 1.0, 1000.0), 1.0);
+    }
+
+    #[test]
+    fn numbers_are_written_grouped_and_read_back() {
+        assert_eq!(grouped(50_000.0, 0), "50,000");
+        assert_eq!(grouped(1_234_567.891, 2), "1,234,567.89");
+        assert_eq!(grouped(19.6, 1), "19.6");
+        assert_eq!(grouped(999.0, 0), "999");
+        assert_eq!(grouped(-1500.0, 0), "-1,500");
+        assert_eq!(grouped(-0.01, 0), "0", "no minus on a zero");
+        for (typed, value) in [("50,000", 50_000.0), ("50 000 ls", 50_000.0), ("19.6 ly", 19.6), ("−3", -3.0), (" 1.25M Cr", 1.25), ("19,6", 19.6), ("0,5 M Cr", 0.5), ("1,250", 1_250.0), ("1,234,567.5", 1_234_567.5)] {
+            assert_eq!(parse_number(typed), Some(value), "{typed}");
+        }
+        assert_eq!(parse_number("ly"), None);
     }
 
     #[test]
