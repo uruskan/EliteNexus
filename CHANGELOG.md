@@ -6,6 +6,13 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
+- **Statistics › Ships**: the period you pick, ship by ship. Everything your journals hold counts for the ship you
+  were in at the time: time in the game, jumps and distance, what it earned (trade profit, bounties and bonds at the
+  kill, data, mined cargo, missions), kills, deaths and what it cost (fuel, repairs, restocking, rebuys), with when you
+  bought and sold it. What you do on foot beside a ship (sampling on its planet, selling at Vista Genomics) counts for it;
+  time in taxis or crewing for others has a row of its own. Sort the table by any heading, resize its columns, and click
+  a ship for it in full; ships you sold keep their names. The Federal Dropship and Assault Ship are no longer mistaken
+  for a taxi when you log in aboard one.
 - **Combat**, a new page (under Commander) for commanders who want a fight without a bounty. **Fights near you**
   lists the nearest wars and civil wars, the fights with conflict zones: how far, active or pending, the two
   factions with the days each has won and what each stands to lose, the system's government, how old the report is,
