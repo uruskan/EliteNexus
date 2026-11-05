@@ -70,6 +70,8 @@ pub struct NexusApp {
     data_dir: PathBuf,
     page: Page,
     toasts: Vec<Toast>,
+    /// Every alert of this run, behind the bell in the toolbar.
+    alert_history: crate::alert_history::AlertHistory,
     speaker: Speaker,
     applied_scale: f32,
     settings_dirty: Option<Instant>,
@@ -177,6 +179,19 @@ impl NexusApp {
         let mut mcp = crate::mcp::McpService::default();
         // Screenshot runs never answer agents.
         mcp.apply(settings.ai.agents && shot.is_none(), || agent_tools(&core, market.db.clone(), rt.handle(), &agents_spansh), rt.handle());
+        // `--demo` screenshots fill the alert history, and `--tab alerts` opens it, so its design can be checked.
+        let demo = ov.demo && shot.is_some();
+        let mut alert_history = crate::alert_history::AlertHistory::default();
+        if demo {
+            // As if Elite Nexus had been running for an hour.
+            alert_history = crate::alert_history::AlertHistory::since(nexus_journal::Timestamp(nexus_journal::Timestamp::now().0 - 3600));
+            for a in demo_alerts() {
+                alert_history.push(&a);
+            }
+            if ov.tab.as_deref() == Some("alerts") {
+                alert_history.toggle();
+            }
+        }
         NexusApp {
             core,
             settings,
@@ -185,7 +200,7 @@ impl NexusApp {
             data_dir,
             page,
             // `--demo` screenshots show one banner so its design can be checked.
-            toasts: if ov.demo && shot.is_some() {
+            toasts: if demo {
                 vec![Toast {
                     alert: Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Exploration, Priority::High, "Earth-like world")
                         .detail("Brestla A 1 · 3.2 M Cr if mapped, first discovery"),
@@ -194,6 +209,7 @@ impl NexusApp {
             } else {
                 Vec::new()
             },
+            alert_history,
             speaker,
             applied_scale: 0.0,
             settings_dirty: None,
@@ -277,12 +293,20 @@ impl NexusApp {
         }
         if let Some(cb) = self.clipboard.as_mut() {
             match cb.set_text(next.clone()) {
-                Ok(()) => self.toasts.push(Toast {
-                    alert: Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Navigation, Priority::Low, format!("Next: {next}")).detail("Copied to clipboard"),
-                    born: Instant::now(),
-                }),
+                Ok(()) => self.notify(Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Navigation, Priority::Low, format!("Next: {next}")).detail("Copied to clipboard")),
                 Err(e) => tracing::warn!("clipboard: {e}"),
             }
+        }
+    }
+
+    /// Shows an alert as a banner and keeps it in the alert history; a repeat within 20 seconds is left out of both.
+    fn notify(&mut self, a: Alert) {
+        if !self.alert_history.push(&a) {
+            return;
+        }
+        self.toasts.push(Toast { alert: a, born: Instant::now() });
+        if self.toasts.len() > 5 {
+            self.toasts.remove(0);
         }
     }
 
@@ -352,13 +376,7 @@ impl NexusApp {
             if self.settings.overlay.xsoverlay && self.shot.is_none() {
                 self.xsoverlay.send(&a);
             }
-            let dup = self.toasts.iter().rev().take(4).any(|t| t.alert.title == a.title && t.alert.detail == a.detail && t.born.elapsed() < Duration::from_secs(20));
-            if !dup {
-                self.toasts.push(Toast { alert: a, born: Instant::now() });
-            }
-            if self.toasts.len() > 5 {
-                self.toasts.remove(0);
-            }
+            self.notify(a);
         }
     }
 
@@ -483,6 +501,22 @@ impl NexusApp {
             });
             ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                 ui.add_space(2.0);
+                // The alert history, at the far right as macOS keeps its notifications.
+                let unseen = self.alert_history.unseen();
+                let tip = match unseen {
+                    0 => "Alerts: every banner shown since Elite Nexus started, newest first, with its time".to_string(),
+                    1 => "1 new alert since you last looked. Click for the alert history.".to_string(),
+                    n => format!("{n} new alerts since you last looked. Click for the alert history."),
+                };
+                let bell = toolbar_button(ui, icon::BELL, &tip, self.alert_history.is_open());
+                if unseen > 0 {
+                    bell_badge(ui.painter(), bell.rect, unseen);
+                }
+                if bell.clicked() {
+                    self.alert_history.toggle();
+                }
+                self.alert_history.show(&bell);
+                ui.add_space(6.0);
                 let ov = &mut self.settings.overlay;
                 // Wayland doesn't let a window keep itself above the others; XWayland does.
                 let wayland = cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some_and(|v| !v.is_empty());
@@ -816,11 +850,12 @@ impl NexusApp {
         }
     }
 
-    /// Alerts as macOS-style notification banners, top right, newest first.
+    /// Alerts as macOS-style notification banners, top right, newest first. None over the open alert history, which
+    /// lists them at its top anyway.
     fn toasts(&mut self, ctx: &egui::Context) {
         let life = Duration::from_secs_f32(self.settings.toast_seconds.max(1.0));
         self.toasts.retain(|t| t.born.elapsed() < life);
-        if self.toasts.is_empty() {
+        if self.toasts.is_empty() || self.alert_history.is_open() {
             return;
         }
         ctx.request_repaint_after(Duration::from_millis(100));
@@ -836,12 +871,7 @@ impl NexusApp {
                     let fade = ((life.as_secs_f32() - age) / 0.5).clamp(0.0, 1.0);
                     let enter = (age / 0.25).clamp(0.0, 1.0);
                     let slide = (1.0 - enter).powi(3) * 40.0;
-                    let tint = match t.alert.priority {
-                        Priority::Critical => pal::BAD,
-                        Priority::High => pal::ACCENT,
-                        Priority::Normal => pal::BLUE,
-                        Priority::Low => pal::GRAY,
-                    };
+                    let tint = crate::alert_history::tint(t.alert.priority);
                     let top = ui.cursor().min;
                     let width = 360.0;
                     // Measure first so the glass is drawn under the text.
@@ -989,6 +1019,30 @@ fn toolbar_button(ui: &mut Ui, glyph: &str, tip: &str, on: bool) -> egui::Respon
     resp.on_hover_text(tip)
 }
 
+/// The number of alerts that came in since the alert history was last open, as a pill on the bell's top-right corner.
+fn bell_badge(p: &egui::Painter, bell: Rect, n: usize) {
+    let text = if n > 99 { "99+".to_string() } else { n.to_string() };
+    let g = p.layout_no_wrap(text, display(size::CAPTION), pal::ON_ACCENT);
+    let w = (g.size().x + 10.0).max(18.0);
+    let pill = Rect::from_min_size(egui::pos2(bell.right() - w, bell.top()), Vec2::new(w, 18.0));
+    p.rect_filled(pill, CornerRadius::same(9), pal::ACCENT);
+    p.galley(pill.center() - g.size() / 2.0, g, pal::ON_ACCENT);
+}
+
+/// Sample alerts for `--demo` screenshots of the alert history, oldest first.
+fn demo_alerts() -> Vec<Alert> {
+    use nexus_model::AlertKind;
+    let ago = |min: i64| nexus_journal::Timestamp(nexus_journal::Timestamp::now().0 - min * 60);
+    vec![
+        Alert::new(ago(52), AlertKind::Exploration, Priority::Low, "System scan complete").detail("23 bodies, ~4.1 M Cr"),
+        Alert::new(ago(47), AlertKind::Exploration, Priority::High, "Earth-like world").detail("Brestla A 1 · 3.2 M Cr if mapped, first discovery"),
+        Alert::new(ago(31), AlertKind::Exobiology, Priority::Normal, "Stratum Tectonicas: sample 1 of 3").detail("Move at least 500 m before the next sample"),
+        Alert::new(ago(12), AlertKind::Combat, Priority::High, "Interdiction").detail("By Lucan Ward"),
+        Alert::new(ago(9), AlertKind::Navigation, Priority::High, "Next star is not scoopable").detail("Brestla AB-C d14 — White dwarf; fuel 38%"),
+        Alert::new(ago(2), AlertKind::Navigation, Priority::Low, "Next: Brestla AB-C d14").detail("Copied to clipboard"),
+    ]
+}
+
 /// The app icon: Elite orange tile with the diamond, as in the Dock.
 fn paint_app_tile(p: &egui::Painter, rect: Rect, fade: f32) {
     let r = CornerRadius::same((rect.width() * 0.26) as u8);
@@ -1085,13 +1139,13 @@ impl eframe::App for NexusApp {
         self.assistant.poll();
         self.sync.tick(&self.core);
         // A route the assistant planned goes to the Navigation page (and the clipboard flow).
-        if let Some(route) = self.ai_routes.lock().take() {
+        let planned = self.ai_routes.lock().take();
+        if let Some(route) = planned {
             let first = route.waypoints.first().map(|w| w.system.clone());
-            self.toasts.push(Toast {
-                alert: Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Navigation, Priority::Low, format!("{} route ready", route.kind))
+            self.notify(
+                Alert::new(nexus_journal::Timestamp::now(), nexus_model::AlertKind::Navigation, Priority::Low, format!("{} route ready", route.kind))
                     .detail(first.map(|s| format!("{} · first stop {s} (see Navigation)", route.summary)).unwrap_or_else(|| route.summary.clone())),
-                born: Instant::now(),
-            });
+            );
             self.nav.planned = Some(route);
         }
         self.auto_copy_next();

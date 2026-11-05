@@ -6,6 +6,10 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
+- **Alert history** (GitHub issue #4): the bell at the far right of the toolbar lists every alert since Elite Nexus
+  started, newest first, with its time and what it said, so one you missed while its banner was up can still be
+  read. A number on the bell counts the alerts that came in since you last looked. It holds the last 200, while
+  Elite Nexus runs.
 - **AI agents** (Settings › AI agents, off by default): Claude Code, Claude Desktop and other AI programs that speak
   MCP can use the tools Ask uses, to read only: your commander, fleet, materials, ranks and engineers, journal, the
   market database, engineering, where to mine or buy, and Spansh. Copy buttons set them up. The program the agent

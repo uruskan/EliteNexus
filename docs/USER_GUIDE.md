@@ -19,7 +19,11 @@ amber = a service is paused or rejecting, click for details), **Pause EDDN / Res
 off: a small black island at the top of the game's screen (see [Overlay](#overlay)). While it's on, the lock beside it
 locks it (clicks go to the game) or unlocks it to move it.
 
-Alerts appear as banners at the top right and are spoken if you enable voice.
+Alerts appear as banners at the top right and are spoken if you enable voice. The **bell** at the far right of the
+toolbar keeps every alert since Elite Nexus started, newest first, with its time and what it said, so one you missed
+while its banner was up can still be read; a number on the bell counts those that came in since you last opened it.
+While the list is open no banners cover it: new alerts appear at its top. **Clear** empties it. It holds the last 200,
+and only while Elite Nexus runs.
 
 ## Simple first, everything still there
 

@@ -88,6 +88,8 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   hidden and inactive, shows it once it has painted, switches click-through on only after that, and hides it while the
   game isn't in front (`overlay/platform.rs`: the foreground window's class on Windows, `_NET_ACTIVE_WINDOW` on X11).
   See-through needs the renderer set up for it at start (`main.rs`; DirectComposition on Windows).
+* Alerts: `App::notify` shows each one as a banner and keeps it in `alert_history.rs`, the list behind the bell in the
+  toolbar (this run's last 200, in memory; a repeat within 20 seconds is left out of both).
 * Follow my flight (`follow.rs`, Settings › Exploration): `Follower::step` reduces `nexus_model::context` to the
   page that fits (Navigation, Exploration, Exobiology) and names it when that changes, pure and tested; `App::logic`
   switches to it only while one of those pages is shown and the journal is followed live.

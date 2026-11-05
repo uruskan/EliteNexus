@@ -3,6 +3,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod ai_tools;
+mod alert_history;
 mod app;
 mod assistant;
 mod core;
