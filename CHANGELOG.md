@@ -31,6 +31,9 @@ release time that section becomes the new version and the release workflow publi
   and planetary filters, counts what's already aboard, says why a good has no seller, warns when the goods won't fit
   your hold or your credits, and **Follow this trip** sends the stops to Navigation. It plans from each good's 200
   sellers nearest you in the database, and says so. Thanks to nhok0169 for the idea.
+- **Ask** plans a shopping trip too: "where do I buy 20 t of Cobalt and some Micro Controllers?" chains the stops
+  from one to the next, as Market › Shopping trip does, instead of finding each good near you. Its trade routes take
+  another ship's cargo space when you name one.
 - **Statistics › Ships**: the period you pick, ship by ship. Everything your journals hold counts for the ship you
   were in at the time: time in the game, jumps and distance, what it earned (trade profit, bounties and bonds at the
   kill, data, mined cargo, missions), kills, deaths and what it cost (fuel, repairs, restocking, rebuys), with when you

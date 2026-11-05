@@ -136,6 +136,38 @@ fn arg_bool(a: &Value, k: &str) -> Option<bool> {
     a.get(k).and_then(Value::as_bool)
 }
 
+/// A shopping-trip good as the model writes it: a name, with the tonnes first or last if they matter ("20 t Cobalt",
+/// "1,000 Cobalt", "Cobalt x20", "Cobalt 20 t"), up to 5,000 t as on the page. No tonnes: 1, any amount.
+fn trip_good(text: &str) -> (String, i64) {
+    let count = |w: &str| w.trim_start_matches(['x', 'X', '×']).trim_end_matches(['t', 'T', 'x', '×']).replace(',', "").parse::<i64>().ok().filter(|n| *n > 0).map(|n| n.min(5_000));
+    let unit = |w: &str| matches!(w.to_ascii_lowercase().as_str(), "t" | "x" | "×" | "tonnes" | "tons" | "of");
+    let mut words: Vec<&str> = text.split_whitespace().collect();
+    let mut tonnes = 1;
+    if words.len() > 1
+        && let Some(n) = count(words[0])
+    {
+        tonnes = n;
+        words.remove(0);
+        while words.first().copied().is_some_and(unit) {
+            words.remove(0);
+        }
+    } else {
+        while words.len() > 1 && words.last().copied().is_some_and(unit) {
+            words.pop();
+        }
+        if words.len() > 1
+            && let Some(n) = words.last().copied().and_then(count)
+        {
+            tonnes = n;
+            words.pop();
+            while words.last().copied().is_some_and(unit) {
+                words.pop();
+            }
+        }
+    }
+    (words.join(" "), tonnes)
+}
+
 fn hours_ago(unix: i64) -> f64 {
     let h = (nexus_journal::Timestamp::now().0 - unix).max(0) as f64 / 3600.0;
     (h * 10.0).round() / 10.0
@@ -149,7 +181,8 @@ fn schema(props: Value, required: &[&str]) -> Value {
     json!({ "type": "object", "properties": props, "required": required })
 }
 
-const NEAR: &str = "System to search around; default: the commander's current system.";
+/// What `near_system` says to the model; its name says the rest. It goes with most tools' specs, on every question.
+const NEAR: &str = "Default: the commander's system.";
 
 impl NexusTools {
     fn db(&self) -> Result<&GalaxyDb, String> {
@@ -373,12 +406,14 @@ impl NexusTools {
     fn trade_routes(&self, a: &Value) -> Result<Value, String> {
         let me = self.me()?;
         let (origin, near) = self.origin(a, &me)?;
+        // The hold of the ship flown, or the cargo space asked for (a trade ship the commander isn't in), as on the page.
+        let cargo = arg_f64(a, "cargo_t").map(|t| t.round() as i64).filter(|t| *t > 0).unwrap_or(me.cargo_capacity).clamp(1, 5_000);
         let q = TradeQuery {
             origin,
             radius_ly: arg_f64(a, "radius_ly").unwrap_or(40.0),
             max_hop_ly: arg_f64(a, "max_hop_ly").unwrap_or(25.0),
             min_pad: me.pad,
-            cargo_capacity: me.cargo_capacity.max(1),
+            cargo_capacity: cargo,
             capital: Some(me.credits.max(0)),
             max_age_hours: Some(48.0),
             include_carriers: false,
@@ -388,13 +423,58 @@ impl NexusTools {
         };
         let routes = self.db()?.trade_routes(&q).map_err(|e| e.to_string())?;
         Ok(json!({
-            "near": near, "cargo_capacity_t": q.cargo_capacity,
+            // The flown ship's pad, also for another ship's cargo_t: say so when the two ships' pads differ.
+            "near": near, "cargo_capacity_t": q.cargo_capacity, "landing_pad": me.pad.map(String::from),
             "routes": routes.iter().map(|r| json!({
                 "commodity": r.commodity_name, "profit_per_ton": r.profit_per_ton, "tonnes": r.units, "profit_per_trip": r.total_profit,
                 "buy_at": { "station": r.from.station, "system": r.from.system, "price": r.buy_price, "stock": r.supply, "distance_ly": r1(r.from.distance_from_origin_ly), "age_hours": hours_ago(r.from.market_updated_unix) },
                 "sell_at": { "station": r.to.station, "system": r.to.system, "price": r.sell_price, "demand": r.demand, "distance_ly": r1(r.to.distance_from_origin_ly), "age_hours": hours_ago(r.to.market_updated_unix) },
                 "hop_ly": r1(r.hop_ly),
             })).collect::<Vec<_>>(),
+        }))
+    }
+
+    /// Market › Shopping trip for Ask: the shortest trip that buys several goods ("20 t Cobalt", "Micro Controllers"),
+    /// from stop to stop.
+    fn shopping_trip(&self, a: &Value) -> Result<Value, String> {
+        let me = self.me()?;
+        let (origin, near) = self.origin(a, &me)?;
+        let db = self.db()?;
+        let all = db.commodities();
+        let (mut goods, mut unknown): (Vec<finder::Line>, Vec<String>) = (Vec::new(), Vec::new());
+        for text in a.get("goods").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            let (name, tonnes) = trip_good(text);
+            if name.is_empty() {
+                continue;
+            }
+            // A good named twice needs both amounts: the planner adds them up.
+            match db.commodity_symbol(&name).and_then(|sym| all.iter().find(|c| c.symbol == sym)) {
+                Some(c) => goods.push((c.symbol.clone(), c.name.clone(), tonnes)),
+                None => unknown.push(name),
+            }
+        }
+        if goods.is_empty() {
+            return Err(match unknown.is_empty() {
+                true => "goods is required: commodity names, with the tonnes first if they matter (\"20 t Cobalt\").".into(),
+                false => format!("No commodity called {}.", unknown.join(", ")),
+            });
+        }
+        let f = finder::TripFilters { min_pad: me.pad, max_age_hours: Some(72.0), include_carriers: arg_bool(a, "include_carriers").unwrap_or(true), include_planetary: true };
+        let trip = finder::shopping_trip(db, origin, &goods, &f)?;
+        Ok(json!({
+            "near": near, "total_ly": r1(trip.total_ly),
+            "stops": trip.stops.iter().map(|s| json!({
+                "station": s.hit.station, "system": s.hit.system, "ly_from_previous": r1(s.leg_ly), "pad": s.hit.max_pad.map(String::from),
+                "fleet_carrier": s.hit.is_carrier, "arrival_distance_ls": s.hit.dist_ls.map(f64::round), "age_hours": hours_ago(s.hit.updated_unix),
+                "buy": s.buys.iter().map(|b| json!({ "name": b.name, "tonnes": b.tonnes, "price": b.price, "stock": b.stock })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+            "left_out": trip.missing.iter().map(|m| json!({ "name": m.name, "why": m.why })).collect::<Vec<_>>(),
+            "unknown_commodities": unknown,
+            "how_to_read": format!(
+                "Stops in order from near; ly_from_previous is a straight line (the first from near). A stop has the tonnes in stock as asked (1: any amount; cargo aboard isn't counted), for the ship's landing pad, with prices up to 72 h old. Only markets in Elite Nexus' database count, and only each good's {} sellers nearest near were weighed; {} Market › Shopping trip plans the same from a list the commander builds there, counts the cargo aboard, and can send the trip to Navigation.",
+                finder::TRIP_SELLERS,
+                if trip.exact { "among them no trip is shorter." } else { "there were too many near enough to weigh them all, so a shorter trip may exist." }
+            ),
         }))
     }
 
@@ -1923,13 +2003,14 @@ pub static TOOLS: &[Tool] = &[
     Tool {
         name: "trade_routes",
         title: "Trade routes",
-        description: "Best buy-here-sell-there trade routes near a system, sized to the ship's cargo capacity and the commander's credits.",
+        description: "Best buy-here-sell-there trade routes near a system, sized to the ship's cargo capacity (or cargo_t) and the commander's credits.",
         params: || {
             schema(
                 json!({
                     "near_system": { "type": "string", "description": NEAR },
                     "radius_ly": { "type": "number", "description": "Both stations within this distance, default 40." },
                     "max_hop_ly": { "type": "number", "description": "Maximum distance between the two stations, default 25." },
+                    "cargo_t": { "type": "integer", "description": "Another ship's cargo space." },
                     "limit": { "type": "integer" }
                 }),
                 &[],
@@ -2374,6 +2455,28 @@ pub static TOOLS: &[Tool] = &[
         online: false,
         run: NexusTools::conflicts_near,
     },
+    Tool {
+        name: "shopping_trip",
+        title: "Shopping trip",
+        description: "The shortest trip that buys several goods (a mission's, say): each good's nearest sellers, chained from stop to stop; a station selling several is one stop.",
+        params: || {
+            schema(
+                json!({
+                    "goods": { "type": "array", "items": { "type": "string" }, "description": "Up to 8, tonnes first if they matter: \"20 t Cobalt\", \"Micro Controllers\"." },
+                    "near_system": { "type": "string", "description": NEAR },
+                    "include_carriers": { "type": "boolean", "description": "Default true." }
+                }),
+                &["goods"],
+            )
+        },
+        working: "Planning a shopping trip…",
+        noun: "shopping trip",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        online: false,
+        run: NexusTools::shopping_trip,
+    },
 ];
 
 /// One line about the commander for each question (location, ship, credits, date).
@@ -2540,6 +2643,57 @@ mod tests {
         assert_eq!((&around["near"], &around["conflicts"][0]["distance_ly"]), (&json!("Far"), &json!(0.0)));
     }
 
+    /// "Where do I buy Cobalt and Micro Controllers?" (GitHub issue #4): the stops chained from one to the next, as Market
+    /// › Shopping trip plans them, with the tonnes asked for, the goods no market sells and the names it doesn't know.
+    /// And trade routes for another ship's cargo space, with the stock and the demand.
+    #[test]
+    fn shopping_trip_chains_the_stops_from_one_to_the_next() {
+        let t = TempDb::new("ai-trip");
+        let db = t.db();
+        station(db, ("Cobalt Sys", 2001, 10.0), "Cobalt Port", 6001, json!([good("cobalt", 400, 500, 0, 0)]));
+        station(db, ("West", 2002, -8.0), "Chip Works", 6002, json!([good("microcontrollers", 3_000, 200, 0, 0)]));
+        station(db, ("East", 2003, 14.0), "Chip Forge", 6003, json!([good("microcontrollers", 3_100, 200, 0, 0)]));
+        station(db, ("Buyer Sys", 2004, 5.0), "Cobalt Buyer", 6004, json!([good("cobalt", 0, 0, 1_000, 1_000)]));
+        db.flush().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = NexusTools { db: Some(db.clone()), ..model_tools(commander(), &rt) };
+
+        let trip = tools.call("shopping_trip", &json!({ "goods": ["20 t Cobalt", "Micro Controllers", "Painite", "Unobtainium"] })).unwrap();
+        let stops: Vec<&str> = trip["stops"].as_array().unwrap().iter().map(|s| s["station"].as_str().unwrap()).collect();
+        assert_eq!(stops, ["Cobalt Port", "Chip Forge"], "Chip Forge is nearest Cobalt Port, Chip Works nearest the start: {trip}");
+        assert_eq!((&trip["total_ly"], &trip["stops"][1]["ly_from_previous"]), (&json!(14.0), &json!(4.0)));
+        assert_eq!(trip["stops"][0]["buy"][0], json!({ "name": "Cobalt", "tonnes": 20, "price": 400, "stock": 500 }));
+        assert_eq!(trip["left_out"], json!([{ "name": "Painite", "why": "no market in the database sells it" }]));
+        assert_eq!(trip["unknown_commodities"], json!(["Unobtainium"]));
+        assert!(tools.call("shopping_trip", &json!({ "goods": ["Unobtainium"] })).unwrap_err().contains("Unobtainium"));
+        assert!(tools.call("shopping_trip", &json!({})).is_err(), "no goods is an error, not a panic");
+
+        let routes = tools.call("trade_routes", &json!({ "cargo_t": 50 })).unwrap();
+        assert_eq!((&routes["cargo_capacity_t"], &routes["routes"][0]["tonnes"]), (&json!(50), &json!(50)), "{routes}");
+        assert_eq!(routes["landing_pad"], "L", "the flown Anaconda's pad, whatever cargo_t says");
+        assert_eq!((&routes["routes"][0]["buy_at"]["stock"], &routes["routes"][0]["sell_at"]["demand"]), (&json!(500), &json!(1_000)));
+    }
+
+    /// The model writes a good with its tonnes first or last, or with none (any amount).
+    #[test]
+    fn a_shopping_good_reads_its_tonnes() {
+        let cases = [
+            ("20 t Cobalt", "Cobalt", 20),
+            ("20t Cobalt", "Cobalt", 20),
+            ("20 Cobalt", "Cobalt", 20),
+            ("Cobalt x20", "Cobalt", 20),
+            ("Cobalt 20 t", "Cobalt", 20),
+            ("5 tonnes of Micro Controllers", "Micro Controllers", 5),
+            ("1,000 t Cobalt", "Cobalt", 1_000),
+            ("99999 Cobalt", "Cobalt", 5_000),
+            ("Micro Controllers", "Micro Controllers", 1),
+            ("  Tritium ", "Tritium", 1),
+        ];
+        for (text, name, tonnes) in cases {
+            assert_eq!(trip_good(text), (name.to_string(), tonnes), "{text}");
+        }
+    }
+
     /// One entry per tool: unique names, Ask's words for it, a schema the providers take, the writers kept from agents,
     /// and every entry answered by `call`.
     #[test]
@@ -2606,8 +2760,10 @@ mod tests {
         // offered to agents only (on_foot, credit_history, system_factions). engineering, which commanders asked Ask for
         // (GitHub issue #4), took it from 13,500; where_to_mine and where_to_buy, the Mining and Fleet pages' searches Ask
         // couldn't run before, to 17,000; conflicts_near, the Combat page's nearest wars (play-test finding 19, its spec
-        // cut to under 400 characters), to 17,500.
-        assert!(ask <= 17_500, "{ask} characters of tool specs go with every Ask question");
+        // cut to under 400 characters), to 17,500; shopping_trip, Market's Shopping trip, which a commander asked Ask for
+        // (GitHub issue #4: goods sold in different places, chained from stop to stop instead of each found near them),
+        // and trade_routes' cargo_t, to 17,800, with near_system's words, in most specs, cut by half to make room.
+        assert!(ask <= 17_800, "{ask} characters of tool specs go with every Ask question");
     }
 
     /// `fit` finds the most detail that fits in a few tries.
