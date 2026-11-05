@@ -382,6 +382,7 @@ pub fn th(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).font(display(size::FOOTNOTE)).color(pal::DIM));
 }
 
+
 /// How a table is sorted: a column (the table's own numbering) and the direction; no column = the
 /// order the rows came in. Remembered per table ([`TableSort::load`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -750,6 +751,395 @@ pub fn pill(ui: &mut Ui, selected: bool, text: &str) -> Response {
 /// A rounded suggestion chip.
 pub fn chip(ui: &mut Ui, text: &str) -> Response {
     ui.add(egui::Button::new(RichText::new(text).size(size::CALLOUT).color(pal::TEXT)).fill(pal::CARD).corner_radius(CornerRadius::same(255)).min_size(Vec2::new(0.0, 32.0)))
+}
+
+// ---------------------------------------------------------------------------------------------
+// Search settings: every setting of a search in view, in one bar
+
+/// Space between two fields of a [`filter_bar`] (its hairline runs down the middle), and between its lines.
+const BAR_GAP: f32 = 24.0;
+const BAR_LINE_GAP: f32 = 12.0;
+/// Space between a field's caption and its controls.
+const BAR_CAPTION_GAP: f32 = 5.0;
+
+/// A bar that shows every setting of a search at once, instead of hiding them behind an "Options" click: each field is
+/// a small caption over its controls, fields sit side by side with hairlines between them, and they wrap onto more lines
+/// when the window is narrow. `id_salt` names the bar: it remembers its fields' widths to know where to wrap.
+///
+/// ```ignore
+/// widgets::filter_bar(ui, "find-commodity", |bar| {
+///     bar.field("Within", |ui| ui.add(widgets::Number::new(&mut p.max_dist, 1.0..=100_000.0).ladder(LY).unit(" ly")));
+///     bar.field("Include", |ui| widgets::chip_toggle(ui, &mut p.carriers, "Fleet carriers"));
+///     bar.end(|ui| widgets::icon_button(ui, icon::ARROW_COUNTER_CLOCKWISE, "Reset"));
+/// });
+/// ```
+pub fn filter_bar<R>(ui: &mut Ui, id_salt: &str, add: impl FnOnce(&mut FilterBar) -> R) -> R {
+    let id = ui.make_persistent_id(id_salt);
+    Frame::new()
+        .fill(pal::CARD)
+        .stroke(Stroke::new(1.0, Color32::from_white_alpha(10)))
+        .corner_radius(CornerRadius::same(14))
+        .inner_margin(Margin { left: 16, right: 16, top: 10, bottom: 12 })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let widths: Vec<f32> = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+            let origin = ui.cursor().min;
+            let right = origin.x + ui.available_width();
+            let caption_h = ui.painter().layout_no_wrap("Ag".into(), FontId::proportional(size::CAPTION), pal::DIM).size().y;
+            let mut bar = FilterBar { ui, id, widths, measured: Vec::new(), left: origin.x, right, top: origin.y, x: origin.x, y: origin.y, line_h: 0.0, seps: Vec::new(), caption_h };
+            let r = add(&mut bar);
+            bar.finish();
+            r
+        })
+        .inner
+}
+
+/// Builder for [`filter_bar`].
+pub struct FilterBar<'a> {
+    ui: &'a mut Ui,
+    id: egui::Id,
+    /// Each field's width last frame: where a line has to wrap is known before the field is drawn.
+    widths: Vec<f32>,
+    measured: Vec<f32>,
+    left: f32,
+    right: f32,
+    top: f32,
+    x: f32,
+    y: f32,
+    line_h: f32,
+    /// Where this line's hairlines go, drawn once the line's height is known.
+    seps: Vec<f32>,
+    caption_h: f32,
+}
+
+impl FilterBar<'_> {
+    /// A field: `caption` over the controls `add` draws, side by side.
+    pub fn field<R>(&mut self, caption: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+        self.place(Some(caption), None, add)
+    }
+
+    /// A field with a tooltip over the whole of it (for controls that have none of their own, like a segmented one).
+    pub fn field_tip<R>(&mut self, caption: &str, tip: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
+        self.place(Some(caption), Some(tip), add)
+    }
+
+    /// Controls at the right end of the bar, level with the fields' controls: a reset button, the search button, a
+    /// quiet note. Call it last.
+    pub fn end<R>(&mut self, add: impl FnOnce(&mut Ui) -> R) -> R {
+        self.place(None, None, add)
+    }
+
+    fn place<R>(&mut self, caption: Option<&str>, tip: Option<&str>, add: impl FnOnce(&mut Ui) -> R) -> R {
+        let i = self.measured.len();
+        let w = self.widths.get(i).copied().unwrap_or(110.0);
+        let first = self.x <= self.left;
+        if !first && self.x + BAR_GAP + w > self.right {
+            self.new_line();
+        }
+        let first = self.x <= self.left;
+        let mut x = if first { self.left } else { self.x + BAR_GAP };
+        let top = match caption {
+            Some(_) => {
+                if !first {
+                    self.seps.push(self.x + BAR_GAP / 2.0);
+                }
+                self.y
+            }
+            // The end: pushed to the right edge, level with the controls under the captions.
+            None => {
+                x = x.max(self.right - w);
+                self.y + self.caption_h + BAR_CAPTION_GAP
+            }
+        };
+        // A field may take a whole line, so it's measured at its natural width (a segmented control squeezed into the
+        // rest of a line would fold into pills and stay there); one wider than the room left moves on next frame.
+        let room = if caption.is_some() { self.right - self.left } else { self.right - x };
+        let rect = Rect::from_min_size(Pos2::new(x, top), Vec2::new(room.max(10.0), f32::INFINITY));
+        let mut child = self.ui.new_child(egui::UiBuilder::new().id_salt(self.id.with(i)).max_rect(rect).layout(Layout::top_down(Align::Min)));
+        let r = match caption {
+            Some(c) => {
+                child.spacing_mut().item_spacing.y = BAR_CAPTION_GAP;
+                child.add(egui::Label::new(RichText::new(c).size(size::CAPTION).color(pal::DIM)).extend());
+                child.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    add(ui)
+                })
+                .inner
+            }
+            None => {
+                child.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    add(ui)
+                })
+                .inner
+            }
+        };
+        let used = child.min_rect();
+        if let Some(t) = tip {
+            self.ui.interact(used, self.id.with((i, "tip")), Sense::hover()).on_hover_text(t);
+        }
+        self.measured.push(used.width());
+        self.x = x + used.width();
+        self.line_h = self.line_h.max(used.bottom() - self.y);
+        r
+    }
+
+    fn close_line(&mut self) {
+        let p = self.ui.painter();
+        for x in self.seps.drain(..) {
+            p.vline(x, (self.y + 2.0)..=(self.y + self.line_h - 2.0), Stroke::new(1.0, Color32::from_white_alpha(20)));
+        }
+    }
+
+    fn new_line(&mut self) {
+        self.close_line();
+        self.y += self.line_h + BAR_LINE_GAP;
+        self.x = self.left;
+        self.line_h = 0.0;
+    }
+
+    fn finish(mut self) {
+        self.close_line();
+        let bottom = self.y + self.line_h;
+        self.ui.advance_cursor_after_rect(Rect::from_min_max(Pos2::new(self.left, self.top), Pos2::new(self.right, bottom)));
+        let moved = self.measured.len() != self.widths.len() || self.measured.iter().zip(&self.widths).any(|(a, b)| (a - b).abs() > 0.5);
+        if moved {
+            let (id, m) = (self.id, std::mem::take(&mut self.measured));
+            self.ui.data_mut(|d| d.insert_temp(id, m));
+            self.ui.ctx().request_repaint();
+        }
+    }
+}
+
+/// How the − and + of a [`Number`] step.
+#[derive(Clone, Copy, Debug)]
+pub enum NumberSteps<'a> {
+    /// Through these round values, smallest first (distances, hours, quantities). A typed value in between steps to the
+    /// next one up or down.
+    Ladder(&'a [f64]),
+    /// By a step that fits the number's size: its second digit (48,300 steps by 1,000, 750 by 10, never less than 1).
+    /// Shift steps ten times as far.
+    Magnitude,
+}
+
+/// The value a step from `v` lands on, up or down (`big`: Shift held), within `lo..=hi`.
+pub fn step_value(v: f64, steps: NumberSteps<'_>, up: bool, big: bool, lo: f64, hi: f64) -> f64 {
+    const EPS: f64 = 1e-6;
+    let next = match steps {
+        NumberSteps::Ladder(rungs) => {
+            let found = if up { rungs.iter().copied().find(|r| *r > v + EPS) } else { rungs.iter().rev().copied().find(|r| *r < v - EPS) };
+            found.unwrap_or(if up { hi } else { lo })
+        }
+        NumberSteps::Magnitude => {
+            // Going down from 10,000 steps by 100 (as up to it does), not by 1,000.
+            let basis = if up { v.abs() } else { (v.abs() - EPS).max(0.0) };
+            let digits = if basis >= 1.0 { basis.log10().floor() } else { 0.0 };
+            let mut step = 10f64.powf(digits - 1.0).max(1.0);
+            if big {
+                step *= 10.0;
+            }
+            if up { ((v / step).floor() + 1.0) * step } else { ((v / step).ceil() - 1.0) * step }
+        }
+    };
+    next.clamp(lo, hi)
+}
+
+/// A typed number in [`Number`]: spaces, commas and the unit are ignored, and k, m or b multiply ("48k", "1.5m").
+pub fn parse_typed(text: &str, unit: &str) -> Option<f64> {
+    let mut t: String = text.chars().filter(|c| !c.is_whitespace() && !matches!(c, ',' | '\'' | '_')).collect::<String>().to_lowercase();
+    let unit = unit.trim().to_lowercase();
+    if !unit.is_empty()
+        && let Some(stripped) = t.strip_suffix(unit.as_str())
+    {
+        t = stripped.to_string();
+    }
+    let (num, mult) = match t.chars().last() {
+        Some('k') => (&t[..t.len() - 1], 1e3),
+        Some('m') => (&t[..t.len() - 1], 1e6),
+        Some('b') => (&t[..t.len() - 1], 1e9),
+        _ => (t.as_str(), 1.0),
+    };
+    num.parse::<f64>().ok().filter(|v| v.is_finite()).map(|v| v * mult)
+}
+
+/// A number to type or step, on a glass capsule: − on the left, + on the right, the value in the middle. A click on the
+/// value selects it for typing (Enter or a click elsewhere takes it, Escape keeps the old one; ↑ and ↓ step while
+/// typing). `ui.add(Number::new(&mut v, 1.0..=100.0).ladder(LY).unit(" ly"))`; the response says `changed()`.
+pub struct Number<'a> {
+    value: &'a mut f64,
+    range: std::ops::RangeInclusive<f64>,
+    steps: NumberSteps<'a>,
+    unit: &'a str,
+    zero: Option<&'a str>,
+    decimals: usize,
+}
+
+impl<'a> Number<'a> {
+    pub fn new(value: &'a mut f64, range: std::ops::RangeInclusive<f64>) -> Self {
+        Number { value, range, steps: NumberSteps::Magnitude, unit: "", zero: None, decimals: 0 }
+    }
+
+    /// − and + step through these values ([`NumberSteps::Ladder`]).
+    pub fn ladder(mut self, rungs: &'a [f64]) -> Self {
+        self.steps = NumberSteps::Ladder(rungs);
+        self
+    }
+
+    /// Shown after the number (" ly", " Cr").
+    pub fn unit(mut self, unit: &'a str) -> Self {
+        self.unit = unit;
+        self
+    }
+
+    fn text(&self, v: f64) -> String {
+        match self.zero {
+            Some(z) if v == 0.0 => z.to_string(),
+            _ if self.decimals == 0 => format!("{}{}", nexus_data::names::group_digits(v.round() as i64), self.unit),
+            _ => format!("{v:.*}{}", self.decimals, self.unit),
+        }
+    }
+}
+
+impl egui::Widget for Number<'_> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        const H: f32 = 30.0;
+        const SIDE: f32 = 28.0;
+        let (lo, hi) = (*self.range.start(), *self.range.end());
+        let before = *self.value;
+        let shown = self.text(before);
+        let font = display(size::CALLOUT);
+        let text_w = ui.painter().layout_no_wrap(shown.clone(), font.clone(), pal::TEXT).size().x;
+        let mid_w = (text_w + 18.0).max(48.0);
+        let (rect, base) = ui.allocate_exact_size(Vec2::new(SIDE * 2.0 + mid_w, H), Sense::hover());
+        let minus = Rect::from_min_size(rect.min, Vec2::new(SIDE, H));
+        let plus = Rect::from_min_size(Pos2::new(rect.right() - SIDE, rect.top()), Vec2::new(SIDE, H));
+        let mid = Rect::from_min_max(Pos2::new(minus.right(), rect.top()), Pos2::new(plus.left(), rect.bottom()));
+        let edit_id = base.id.with("edit");
+        let text_id = base.id.with("text");
+        let big = ui.input(|i| i.modifiers.shift_only());
+        let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        let mut value = before;
+        // Stays focusable while it shows the value, so a click or Tab can hand it the keyboard (as egui's DragValue
+        // does). Tab away moves the focus inside this call.
+        let editing = ui.memory_mut(|m| {
+            m.interested_in_focus(edit_id, ui.layer_id());
+            m.has_focus(edit_id)
+        });
+        // The keyboard left without the text field seeing it (Tab, Escape, a click elsewhere): what was typed counts,
+        // unless it was Escape.
+        if !editing
+            && let Some(typed) = ui.data_mut(|d| d.remove_temp::<String>(text_id))
+            && !escape
+            && let Some(v) = parse_typed(&typed, self.unit)
+        {
+            value = v.clamp(lo, hi);
+        }
+        // Whether it was being typed in last frame: the frame it starts, it gets the value to type over.
+        let was_id = edit_id.with("was");
+        let was = ui.data(|d| d.get_temp::<bool>(was_id)).unwrap_or(false);
+        ui.data_mut(|d| d.insert_temp(was_id, editing));
+        if editing {
+            // Clicked or reached by Tab: the value to type over, selected.
+            if !was || ui.data(|d| d.get_temp::<String>(text_id)).is_none() {
+                let raw = raw_number(value, self.decimals);
+                let mut state = egui::TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
+                state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0), egui::text::CCursor::new(raw.chars().count()))));
+                state.store(ui.ctx(), edit_id);
+                ui.data_mut(|d| d.insert_temp(text_id, raw));
+            }
+            let mut typed: String = ui.data(|d| d.get_temp(text_id)).unwrap_or_default();
+            let (up, down) = ui.input_mut(|i| (i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp), i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)));
+            if up || down {
+                value = step_value(parse_typed(&typed, self.unit).unwrap_or(value), self.steps, up, big, lo, hi);
+                typed = raw_number(value, self.decimals);
+            }
+            let edit = egui::TextEdit::singleline(&mut typed)
+                .id(edit_id)
+                .frame(Frame::NONE)
+                .font(font.clone())
+                .horizontal_align(Align::Center)
+                .vertical_align(Align::Center)
+                .desired_width(mid.width() - 8.0)
+                .margin(Margin::ZERO);
+            let r = ui.put(mid.shrink2(Vec2::new(4.0, 3.0)), edit);
+            if r.lost_focus() {
+                // Enter (Escape never gets here: egui takes the focus away before the field is drawn).
+                if !escape && let Some(v) = parse_typed(&typed, self.unit) {
+                    value = v.clamp(lo, hi);
+                }
+                ui.data_mut(|d| d.remove_temp::<String>(text_id));
+            } else {
+                ui.data_mut(|d| d.insert_temp(text_id, typed));
+            }
+        } else if ui.interact(mid, base.id.with("mid"), Sense::click()).on_hover_cursor(egui::CursorIcon::Text).clicked() {
+            ui.memory_mut(|mem| mem.request_focus(edit_id));
+        }
+        let m = ui.interact(minus, base.id.with("minus"), Sense::click());
+        let p = ui.interact(plus, base.id.with("plus"), Sense::click());
+        if m.clicked() && value > lo {
+            value = step_value(value, self.steps, false, big, lo, hi);
+        }
+        if p.clicked() && value < hi {
+            value = step_value(value, self.steps, true, big, lo, hi);
+        }
+        if (m.clicked() || p.clicked()) && editing {
+            ui.data_mut(|d| d.insert_temp(text_id, raw_number(value, self.decimals)));
+        }
+        // The whole capsule's hover, registered after the click areas so it's on top of them (hovering takes no click):
+        // a caller's tooltip shows over any part of it.
+        let mut resp = ui.interact(rect, base.id.with("hover"), Sense::hover());
+        if value != before {
+            *self.value = value;
+            resp.mark_changed();
+        }
+        if ui.is_rect_visible(rect) {
+            let painter = ui.painter();
+            control_glass(painter, rect);
+            let r = CornerRadius::same((H / 2.0) as u8);
+            for (half, sense, enabled, glyph) in [(minus, &m, value > lo, egui_phosphor::regular::MINUS), (plus, &p, value < hi, egui_phosphor::regular::PLUS)] {
+                if enabled && sense.hovered() {
+                    let wash = if sense.is_pointer_button_down_on() { 30 } else { 14 };
+                    painter.with_clip_rect(half).rect_filled(rect, r, Color32::from_white_alpha(wash));
+                }
+                painter.text(half.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(size::CALLOUT), if enabled { pal::TEXT } else { pal::FAINT });
+            }
+            for x in [minus.right(), plus.left()] {
+                painter.vline(x, rect.y_range().shrink(7.0), Stroke::new(1.0, Color32::from_white_alpha(22)));
+            }
+            if editing {
+                painter.rect_stroke(mid.shrink(2.0), CornerRadius::same(6), Stroke::new(1.0, pal::ACCENT), egui::StrokeKind::Inside);
+            } else {
+                painter.text(mid.center(), Align2::CENTER_CENTER, self.text(value), font, pal::TEXT);
+            }
+        }
+        let shown = self.text(value);
+        resp.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, ui.is_enabled(), &shown));
+        resp
+    }
+}
+
+/// A number as it's typed: no grouping, no unit.
+fn raw_number(v: f64, decimals: usize) -> String {
+    if decimals == 0 { format!("{}", v.round() as i64) } else { format!("{v:.decimals$}") }
+}
+
+/// A filter chip that switches something on and off: "✓ Fleet carriers" on an orange tint when on, "+ Fleet carriers"
+/// on grey when off. The response reports `changed()` when flipped.
+pub fn chip_toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
+    let (glyph, fill, col) = if *on {
+        (egui_phosphor::regular::CHECK, pal::ACCENT_BG, pal::ACCENT_SOFT)
+    } else {
+        (egui_phosphor::regular::PLUS, Color32::from_white_alpha(16), pal::TEXT)
+    };
+    let mut r = ui.add(
+        egui::Button::new(RichText::new(format!("{glyph}  {label}")).size(size::CALLOUT).color(col)).fill(fill).corner_radius(CornerRadius::same(255)).min_size(Vec2::new(0.0, 30.0)),
+    );
+    if r.clicked() {
+        *on = !*on;
+        r.mark_changed();
+    }
+    r.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, ui.is_enabled(), *on, label));
+    r
 }
 
 /// Collapsible "› Options" disclosure; returns true while open.
@@ -1642,6 +2032,35 @@ mod tests {
         assert!(w[2] >= 6.0 && w[0] > w[1] && w[1] > w[2], "{w:?}");
         assert!(share_widths([0.0, 0.0].into_iter(), 100.0, 2.0, 6.0).iter().all(|x| *x == 0.0));
         assert!(share_widths([f64::NAN, 1.0].into_iter(), 100.0, 2.0, 6.0)[1] == 100.0);
+    }
+
+    #[test]
+    fn steps_go_through_round_values() {
+        let ly = [10.0, 25.0, 50.0, 100.0, 250.0];
+        let step = |v, up| step_value(v, NumberSteps::Ladder(&ly), up, false, 1.0, 1000.0);
+        assert_eq!((step(25.0, true), step(25.0, false)), (50.0, 10.0));
+        // A typed value in between goes to the next rung either way.
+        assert_eq!((step(60.0, true), step(60.0, false)), (100.0, 50.0));
+        // Past the ends: the range's limits.
+        assert_eq!((step(250.0, true), step(10.0, false), step(5.0, false)), (1000.0, 1.0, 1.0));
+        // By size: the second digit, both ways the same around a power of ten; Shift ten times as far; never below 1.
+        let mag = |v, up, big| step_value(v, NumberSteps::Magnitude, up, big, 0.0, 1e9);
+        assert_eq!((mag(48_300.0, true, false), mag(48_300.0, false, false)), (49_000.0, 48_000.0));
+        assert_eq!((mag(10_000.0, false, false), mag(9_900.0, true, false)), (9_900.0, 10_000.0));
+        assert_eq!(mag(48_300.0, true, true), 50_000.0);
+        assert_eq!((mag(0.0, true, false), mag(3.0, false, false), mag(0.0, false, false)), (1.0, 2.0, 0.0));
+    }
+
+    #[test]
+    fn typed_numbers_read_like_people_write_them() {
+        assert_eq!(parse_typed("48,300", " Cr"), Some(48_300.0));
+        assert_eq!(parse_typed(" 48 300 cr ", " Cr"), Some(48_300.0));
+        assert_eq!(parse_typed("1.5m", " Cr"), Some(1_500_000.0));
+        assert_eq!(parse_typed("48k", ""), Some(48_000.0));
+        assert_eq!(parse_typed("250ly", " ly"), Some(250.0));
+        assert_eq!(parse_typed("72 h", " h"), Some(72.0));
+        assert_eq!(parse_typed("anywhere", " ly"), None);
+        assert_eq!(parse_typed("", " ly"), None);
     }
 
     #[test]

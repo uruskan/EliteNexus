@@ -114,7 +114,7 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   headers), `cards` (responsive grid with equal-height rows), `split`, `group` rows with switches (System Settings
   style), `tabs`/`segmented` (falls back to pills when too narrow), `choices` (option cards that say what each is
   for), `switch`/`toggle`, `stepper` (a − n + glass capsule), `number`/`whole` (a value to type or step through
-  round values), `settings_bar` (a search's settings in view), `pill`, capsule `button`s, `search_field`, `badge`,
+  round values), `settings_bar` (a search's settings in view), `chip_toggle` (a filter chip that switches on and off), `pill`, capsule `button`s, `search_field`, `badge`,
   `th` table headings. Pages use these instead of raw egui widgets so the look stays uniform
   and every layout adapts to the window width (the sidebar becomes an icon rail below 1180 px).
 * History is folded with alerts **disabled**; only live events raise alerts or get uploaded. Never upload history.

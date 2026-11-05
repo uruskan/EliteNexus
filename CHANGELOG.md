@@ -214,6 +214,11 @@ release time that section becomes the new version and the release workflow publi
 - **Inara**: Developer mode is gone from Accounts & sync (Inara options). Elite Nexus no longer marks what it sends
   as "in development", so Inara now takes the community goals you're part of, and your progress in them, as it does
   from any approved app. A settings file that still has the switch reads as before.
+- **Market › Find commodity**: the search's settings are in view, in a bar under the search field, instead of behind
+  an **Options** click: how far to look, the landing pad (Any, S, M or L; it follows your ship until you pick one),
+  how old prices may be, the least stock or demand, fleet carriers and planetary ports, and the order. Click a number
+  to type it, or step it with − and + through round values (50, 75, 100, 150 ly…); a reset button appears once a
+  filter differs from the defaults.
 
 ### Fixed
 - **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at

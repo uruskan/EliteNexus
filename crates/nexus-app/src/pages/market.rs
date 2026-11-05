@@ -8,7 +8,7 @@ use crate::market::{ImportJob, ImportSource, MarketService, SPANSH_STATIONS_URL}
 use crate::runplan::{self, Order, PlanInput, RunPlan};
 use crate::settings::PriceWatch;
 use crate::theme::{display, pal, size};
-use crate::widgets::{Suggestion, TableSort, badge, bar, card, cmp_opt, cmp_text, duration, empty, short_credits};
+use crate::widgets::{Number, Suggestion, TableSort, badge, bar, card, cmp_opt, cmp_text, duration, empty, short_credits};
 use egui::{Color32, Grid, RichText, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
@@ -85,8 +85,6 @@ pub struct MarketPrefs {
     pub min_qty: i64,
     pub carriers: bool,
     pub planetary: bool,
-    /// Find commodity: the filter row is open.
-    pub show_options: bool,
     /// Find commodity: the category chosen ("" = every category, or the pseudo category [`RARE_GOODS`]).
     pub category: String,
     /// Find commodity: rare goods taken as one are open instead of `commodity`: one category's
@@ -134,7 +132,6 @@ impl Default for MarketPrefs {
             min_qty: 1,
             carriers: true,
             planetary: true,
-            show_options: false,
             category: String::new(),
             rare_goods: None,
             radius: 40.0,
@@ -748,6 +745,69 @@ fn pad_combo(ui: &mut Ui, id: &str, pad: &mut Option<char>) {
         });
 }
 
+/// Distances the − and + of a distance step through, ly.
+const LY: &[f64] = &[
+    5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 75.0, 100.0, 150.0, 200.0, 250.0, 300.0, 400.0, 500.0, 750.0, 1_000.0, 1_500.0, 2_000.0, 2_500.0, 5_000.0, 10_000.0, 25_000.0,
+    50_000.0, 100_000.0,
+];
+/// How old a price may be, hours.
+const HOURS: &[f64] = &[1.0, 2.0, 3.0, 6.0, 12.0, 24.0, 48.0, 72.0, 96.0, 120.0, 168.0, 240.0, 336.0, 504.0, 720.0];
+/// Least stock or demand, tonnes.
+const TONNES: &[f64] = &[1.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1_000.0, 2_500.0, 5_000.0, 10_000.0, 25_000.0, 50_000.0, 100_000.0];
+
+/// What the landing-pad choice means, for its tooltip.
+const PAD_TIP: &str = "The landing pad your ship needs. S fits every station, as Any does; M lists stations with medium or large pads, \
+                       L only those with large ones. M and L leave out stations whose pads were never reported.";
+
+/// The landing pad a search needs: Any, S, M or L. Returns true when changed.
+fn pad_picker(ui: &mut Ui, pad: &mut Option<char>) -> bool {
+    crate::widgets::segmented(ui, pad, &[(None, "Any"), (Some('S'), "S"), (Some('M'), "M"), (Some('L'), "L")])
+}
+
+/// Find commodity's filters, all in view: how far, which pad, how old a price may be, how much stock or demand, which
+/// kinds of market, and the order. A reset shows once any of them differs from the defaults.
+fn search_filters(ui: &mut Ui, p: &mut MarketPrefs, gs: &GameState) {
+    let d = MarketPrefs::default();
+    let changed = p.max_dist != d.max_dist || !p.pad_auto || p.max_age_h != d.max_age_h || p.min_qty != d.min_qty || p.carriers != d.carriers || p.planetary != d.planetary || p.sort != d.sort;
+    crate::widgets::filter_bar(ui, "find-commodity-filters", |bar| {
+        bar.field("Within", |ui| {
+            ui.add(Number::new(&mut p.max_dist, 1.0..=MAX_SEARCH_LY).ladder(LY).unit(" ly"))
+                .on_hover_text("How far from you to look. The local database has no limit of its own: up to the whole galaxy, 100,000 ly.");
+        });
+        let (pad_caption, pad_tip) = if p.pad_auto { ("Landing pad · your ship's", format!("{PAD_TIP}\n\nIt follows the ship you fly until you pick one.")) } else { ("Landing pad", PAD_TIP.to_string()) };
+        bar.field_tip(pad_caption, &pad_tip, |ui| {
+            if pad_picker(ui, &mut p.min_pad) {
+                // Picked by hand: it no longer follows the ship.
+                p.pad_auto = false;
+            }
+        });
+        bar.field("Prices no older than", |ui| {
+            ui.add(Number::new(&mut p.max_age_h, 1.0..=720.0).ladder(HOURS).unit(" h")).on_hover_text("Leaves out prices reported longer ago than this (up to 30 days).");
+        });
+        bar.field("Stock or demand at least", |ui| {
+            let mut q = p.min_qty as f64;
+            if ui.add(Number::new(&mut q, 1.0..=100_000.0).ladder(TONNES).unit(" t")).on_hover_text("Least stock where you buy, least demand where you sell. 1 lists every market.").changed() {
+                p.min_qty = q as i64;
+            }
+        });
+        bar.field("Include", |ui| {
+            crate::widgets::chip_toggle(ui, &mut p.carriers, "Fleet carriers").on_hover_text("Fleet carriers' markets: their owners set the prices and who may dock, and they move.");
+            crate::widgets::chip_toggle(ui, &mut p.planetary, "Planetary").on_hover_text("Ports and settlements on planets' surfaces.");
+        });
+        bar.field("Sort by", |ui| {
+            crate::widgets::segmented(ui, &mut p.sort, &[(Sort::BestPrice, "Best price"), (Sort::Nearest, "Nearest"), (Sort::Freshest, "Newest")]);
+        });
+        if changed {
+            bar.end(|ui| {
+                if crate::widgets::icon_button(ui, icon::ARROW_COUNTER_CLOCKWISE, "Back to the default filters").clicked() {
+                    (p.max_dist, p.min_pad, p.pad_auto, p.max_age_h, p.min_qty, p.carriers, p.planetary, p.sort) =
+                        (d.max_dist, finder::ship_pad(gs), true, d.max_age_h, d.min_qty, d.carriers, d.planetary, d.sort);
+                }
+            });
+        }
+    });
+}
+
 fn pad_rank(p: Option<char>) -> u8 {
     match p {
         Some('L') => 3,
@@ -1126,7 +1186,6 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
         if crate::widgets::primary_button(ui, "Search").clicked() {
             look_up = Some((st.input.clone(), open_rares));
         }
-        crate::widgets::disclosure(ui, &mut st.prefs.show_options, "Options");
         if st.page.busy() && st.page.last.is_some() {
             ui.spinner();
         }
@@ -1139,41 +1198,8 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
     {
         st.open_item(db, &t, rares);
     }
-    if st.prefs.show_options {
-        let p = &mut st.prefs;
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
-            ui.label("within");
-            ui.add(egui::DragValue::new(&mut p.max_dist).range(1.0..=MAX_SEARCH_LY).suffix(" ly")).on_hover_text("Searches every market Elite Nexus knows, up to the whole galaxy (100,000 ly).");
-            let before = p.min_pad;
-            pad_combo(ui, "mpad", &mut p.min_pad);
-            if p.min_pad != before {
-                p.pad_auto = false;
-            }
-            ui.label("max age");
-            ui.add(egui::DragValue::new(&mut p.max_age_h).range(1.0..=720.0).suffix(" h")).on_hover_text("Leave out prices older than this.");
-            ui.label("min qty");
-            ui.add(egui::DragValue::new(&mut p.min_qty).range(1..=100_000)).on_hover_text("Least stock (where you buy) or demand (where you sell). 1 shows every market.");
-            crate::widgets::toggle(ui, &mut p.carriers, "Carriers");
-            crate::widgets::toggle(ui, &mut p.planetary, "Planetary");
-            egui::ComboBox::from_id_salt("msort")
-                .selected_text(match p.sort {
-                    Sort::BestPrice => "Best price",
-                    Sort::Nearest => "Nearest",
-                    Sort::Freshest => "Freshest",
-                })
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut p.sort, Sort::BestPrice, "Best price");
-                    ui.selectable_value(&mut p.sort, Sort::Nearest, "Nearest");
-                    ui.selectable_value(&mut p.sort, Sort::Freshest, "Freshest");
-                });
-            if ui.add(egui::Button::new(RichText::new("Reset").color(pal::DIM)).frame(false)).on_hover_text("Back to the default filters").clicked() {
-                let d = MarketPrefs::default();
-                (p.max_dist, p.min_pad, p.pad_auto, p.max_age_h, p.min_qty, p.carriers, p.planetary, p.sort) =
-                    (d.max_dist, d.min_pad, d.pad_auto, d.max_age_h, d.min_qty, d.carriers, d.planetary, d.sort);
-            }
-        });
-    }
+    ui.add_space(2.0);
+    search_filters(ui, &mut st.prefs, gs);
     if let Some(t) = &st.not_found {
         ui.add_space(6.0);
         ui.label(RichText::new(format!("{} No commodity called \"{t}\". Pick one from the suggestions as you type.", icon::WARNING)).color(pal::WARN));
@@ -1434,7 +1460,8 @@ impl Relax {
         Relax {
             dist: h.distance_ly.filter(|d| have_origin && *d > p.max_dist),
             qty: (h.quantity < p.min_qty).then_some(h.quantity),
-            pad: pad_rank(h.max_pad) < pad_rank(p.min_pad),
+            // S leaves nothing out (every station has one), as in the database's searches.
+            pad: p.min_pad.is_some_and(|m| m != 'S') && pad_rank(h.max_pad) < pad_rank(p.min_pad),
             carriers: h.is_carrier && !p.carriers,
             planetary: h.is_planetary && !p.planetary,
         }
@@ -1473,7 +1500,6 @@ impl Relax {
         }
         p.carriers |= self.carriers;
         p.planetary |= self.planetary;
-        p.show_options = true;
     }
 }
 
@@ -3784,6 +3810,5 @@ mod tests {
         let mut wider = p.clone();
         r.apply(&mut wider);
         assert_eq!((wider.max_dist, wider.min_qty, wider.carriers, wider.min_pad), (820.0, 45, true, Some('L')));
-        assert!(wider.show_options, "the filters that changed are shown");
     }
 }
