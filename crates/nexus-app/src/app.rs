@@ -111,7 +111,9 @@ pub struct NexusApp {
     // Command-line overrides: applied at runtime, never written to settings.json.
     overrides: Overrides,
     shot: Option<ScreenshotJob>,
-    last_jump_count: Option<usize>,
+    /// The commander (FID) and their number of jumps at the last look: one more is a jump, which puts the next system
+    /// on the clipboard (`jumped`). None until the first look after the journals are read.
+    last_jump_count: Option<(String, usize)>,
     /// What the commander was doing at the last Status.json update or journal event (Settings › Follow my flight).
     flight: crate::follow::Follower,
     /// Whether the game's process runs on this computer, for a game that ends without a `Shutdown` (a crash).
@@ -285,9 +287,9 @@ impl NexusApp {
                 let carrier = p.carrier().and_then(|k| gs.carrier_of(k).system.as_deref());
                 p.advance(carrier.unwrap_or(&gs.location.system));
             }
-            let jumps = gs.history.jumps.len();
-            let prev = self.last_jump_count.replace(jumps);
-            if !(self.settings.auto_copy_next_system && prev.is_some_and(|p| jumps > p)) {
+            // Counted with the setting off too, so switching it on never acts on an old jump.
+            let jumped = jumped(&mut self.last_jump_count, &gs.cmdr.fid, gs.history.jumps.len());
+            if !(jumped && self.settings.auto_copy_next_system) {
                 return;
             }
             match pages::navigation::active_route(gs, self.nav.planned.as_ref()).first() {
@@ -896,6 +898,8 @@ impl NexusApp {
             self.flight = Default::default();
             // Another journal folder may be another computer's: the game seen here says nothing about it.
             self.game_seen_here = false;
+            // Nor does the old count of jumps: one more in the journals read now isn't a jump just made.
+            self.last_jump_count = None;
         }
     }
 
@@ -1066,6 +1070,16 @@ fn toolbar_button(ui: &mut Ui, glyph: &str, tip: &str, on: bool) -> egui::Respon
     p.rect_stroke(rect, CornerRadius::same(17), Stroke::new(1.0, Color32::from_white_alpha(16)), egui::StrokeKind::Inside);
     p.text(rect.center(), Align2::CENTER_CENTER, glyph, egui::FontId::proportional(17.0), if on { pal::ACCENT } else { pal::TEXT });
     resp.on_hover_text(tip)
+}
+
+/// A jump since the last look (`last`): one more than then, by the same commander. The first look (after the journals
+/// are read, or read again) and another commander only take the count, so loading one with more jumps copies nothing.
+fn jumped(last: &mut Option<(String, usize)>, fid: &str, jumps: usize) -> bool {
+    let more = last.as_ref().is_some_and(|(f, n)| f == fid && jumps > *n);
+    if last.as_ref().is_none_or(|(f, n)| *n != jumps || f != fid) {
+        *last = Some((fid.to_string(), jumps));
+    }
+    more
 }
 
 /// The game is running and its journal followed live (`phase_live`): it has neither closed nor ended without a
@@ -1347,6 +1361,27 @@ impl NexusApp {
             }
         }
         self.toasts(&ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::jumped;
+
+    /// The next system goes on the clipboard after a jump: not after the journals are read again, nor when another
+    /// commander with more jumps is loaded.
+    #[test]
+    fn a_jump_is_one_more_by_the_same_commander() {
+        let mut last = None;
+        assert!(!jumped(&mut last, "F1", 120), "the first look only counts");
+        assert!(!jumped(&mut last, "F1", 120));
+        assert!(jumped(&mut last, "F1", 121), "a jump");
+        assert!(!jumped(&mut last, "F2", 900), "another commander with more jumps");
+        assert!(!jumped(&mut last, "F1", 121), "back to the first: its count starts again");
+        assert!(jumped(&mut last, "F1", 122));
+        // Reload journals or another journal folder: the app forgets the count.
+        last = None;
+        assert!(!jumped(&mut last, "F1", 5000), "another folder's journals, with more jumps");
     }
 }
 

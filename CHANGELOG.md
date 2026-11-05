@@ -151,6 +151,9 @@ release time that section becomes the new version and the release workflow publi
   checks whether the game's program runs on this computer (Windows and Linux). For a journal folder shared from
   another computer, and on a Mac, the game counts as stopped once neither the journal nor Status.json has been
   written for 15 minutes.
+- **Copy the next system** no longer copies one by itself when you pick another journal folder or log in with
+  another commander: when the journals read then held more jumps than a moment before, that counted as a jump just
+  made, and the next system went on your clipboard.
 - **Voice (SAPI)**: a voice installed while Elite Nexus runs shows up in Settings › Voice when you open Settings or
   the list; it used to appear only after switching the speech engine. A new voice, speed or volume no longer waits
   until the line being spoken, and every alert queued before it, has been said: a new speed or volume applies at
