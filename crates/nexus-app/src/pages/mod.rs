@@ -7,6 +7,7 @@ pub mod bindings;
 pub mod carrier;
 pub mod cockpit;
 pub mod colonisation;
+pub mod combat;
 pub mod dashboard;
 pub mod engineering;
 pub mod exobio;
@@ -44,6 +45,7 @@ pub enum Page {
     Engineering,
     Fleet,
     Missions,
+    Combat,
     Bgs,
     Logbook,
     Statistics,
@@ -58,7 +60,7 @@ impl Page {
         ("Cockpit", &[Page::Ask, Page::Dashboard, Page::Navigation]),
         ("Exploration", &[Page::Exploration, Page::Exobiology, Page::GalaxyMap]),
         ("Economy", &[Page::Market, Page::Mining, Page::Colonisation, Page::Carrier]),
-        ("Commander", &[Page::Engineering, Page::Fleet, Page::Missions, Page::Bgs]),
+        ("Commander", &[Page::Engineering, Page::Fleet, Page::Missions, Page::Combat, Page::Bgs]),
         ("Records", &[Page::Logbook, Page::Statistics]),
         ("System", &[Page::Bindings, Page::Hud, Page::Accounts, Page::Settings]),
     ];
@@ -78,6 +80,7 @@ impl Page {
             Page::Engineering => "Engineering",
             Page::Fleet => "Fleet",
             Page::Missions => "Missions",
+            Page::Combat => "Combat",
             Page::Bgs => "BGS & Powerplay",
             Page::Logbook => "Logbook",
             Page::Statistics => "Statistics",
@@ -103,6 +106,7 @@ impl Page {
             Page::Engineering => icon::WRENCH,
             Page::Fleet => icon::ROCKET,
             Page::Missions => icon::TARGET,
+            Page::Combat => icon::CROSSHAIR,
             Page::Bgs => icon::SCALES,
             Page::Logbook => icon::BOOK_OPEN,
             Page::Statistics => icon::CHART_BAR,

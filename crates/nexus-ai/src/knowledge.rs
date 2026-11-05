@@ -136,6 +136,8 @@ mod tests {
         assert!(hits.iter().any(|h| h.0.contains("Exobiology")), "{:?}", hits.iter().map(|h| &h.0).collect::<Vec<_>>());
         let hits = search("pause EDDN uploads", 3);
         assert!(hits.iter().any(|h| h.0.contains("user guide") || h.1.contains("EDDN")));
+        let hits = search("where can I kill ships legally without getting a bounty", 3);
+        assert!(hits.iter().any(|h| h.0.contains("Combat")), "{:?}", hits.iter().map(|h| &h.0).collect::<Vec<_>>());
         assert!(search("zzzz qqqq", 3).is_empty());
     }
 }

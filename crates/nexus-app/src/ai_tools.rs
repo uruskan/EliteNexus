@@ -11,8 +11,8 @@ use nexus_ai::{ToolHost, ToolSpec};
 use nexus_data::bio_predict::{self as bp, BodyFacts, ParentRef, Prediction, StarFacts, SystemStar};
 use nexus_data::names::compact_credits;
 use nexus_galaxy::{
-    BodyInfo, BodyUpdate, CommodityQuery, DealQuery, GalaxyDb, HotspotQuery, Ingest, MaterialTrader, Seen, Services, Sort, Source, StationQuery,
-    TechBroker, TradeMode, TradeQuery,
+    BodyInfo, BodyUpdate, CommodityQuery, ConflictQuery, ConflictStatus, DealQuery, GalaxyDb, HotspotQuery, Ingest, MaterialTrader, Seen, Services, Sort,
+    Source, StationQuery, TechBroker, TradeMode, TradeQuery,
 };
 use nexus_journal::JournalIndex;
 use nexus_model::exploration::{Body as OwnBody, SystemScan};
@@ -474,6 +474,37 @@ impl NexusTools {
             "hotspots": spots.iter().map(|h| json!({ "ring": h.body_name, "system": h.system, "hotspots": h.count, "distance_ly": r1(h.distance_ly), "ring_type": h.ring_type })).collect::<Vec<_>>(),
             "best_sell_prices": sells.iter().map(|h| json!({ "station": h.station, "system": h.system, "price": h.price, "demand": h.quantity, "distance_ly": h.distance_ly.map(r1), "age_hours": hours_ago(h.updated_unix) })).collect::<Vec<_>>(),
             "note": if spots.is_empty() { "No hotspots known nearby yet: they come from ring scans shared over EDDN and the Spansh import." } else { "" },
+        }))
+    }
+
+    fn conflicts_near(&self, a: &Value) -> Result<Value, String> {
+        let me = self.me()?;
+        let (origin, near) = self.origin(a, &me)?;
+        let radius = arg_f64(a, "max_distance_ly").unwrap_or(100.0).clamp(1.0, 100_000.0);
+        let days = arg_f64(a, "max_age_days").unwrap_or(3.0).clamp(0.1, 30.0);
+        let q = ConflictQuery {
+            origin,
+            max_distance_ly: Some(radius),
+            since_unix: nexus_journal::Timestamp::now().0 - (days * 86_400.0) as i64,
+            elections: arg_bool(a, "elections").unwrap_or(false),
+            limit: arg_f64(a, "limit").map(|v| v as usize).unwrap_or(8).clamp(1, 25),
+        };
+        let scan = self.db()?.conflicts_near(&q).map_err(|e| e.to_string())?;
+        Ok(json!({
+            "near": near, "within_ly": radius, "reported_within_days": days,
+            "populated_systems_reported": scan.systems_reported,
+            "found_in_range": scan.total,
+            "conflicts": scan.hits.iter().map(|h| json!({
+                "system": h.system, "distance_ly": r1(h.distance_ly), "kind": h.kind.label(),
+                "status": match h.status { ConflictStatus::Active => "active", ConflictStatus::Pending => "pending", ConflictStatus::Ended => "ended" },
+                "sides": h.sides.iter().map(|s| json!({ "faction": s.faction, "days_won": s.won_days, "stands_to_lose": s.stake, "allegiance": s.allegiance })).collect::<Vec<_>>(),
+                "days_won_known": h.detailed,
+                "government": h.government, "security": h.security,
+                "report_age_hours": hours_ago(h.updated_unix),
+            })).collect::<Vec<_>>(),
+            "note": "From EDDN reports Elite Nexus received while it ran and the commander's journal, so a war that began after a system's last report is missing. \
+                     Wars and civil wars have conflict zones (fight there after picking a side); elections have none. Without days_won_known only the \
+                     faction states were reported. The Combat page lists these with a route button and explains how to fight legally.",
         }))
     }
 
@@ -2318,6 +2349,29 @@ pub static TOOLS: &[Tool] = &[
         online: true,
         run: NexusTools::where_to_buy,
     },
+    Tool {
+        name: "conflicts_near",
+        title: "Wars near you",
+        // Kept short: every Ask question carries it (ask_specs_stay_small). The reply explains itself.
+        description: "Nearest wars and civil wars (conflict zones) from the local database: factions, days won, stakes, report age.",
+        params: || {
+            schema(
+                json!({
+                    "near_system": { "type": "string", "description": "Default: current system." },
+                    "max_distance_ly": { "type": "number", "description": "Default 100." },
+                    "elections": { "type": "boolean" }
+                }),
+                &[],
+            )
+        },
+        working: "Looking for wars near you…",
+        noun: "wars nearby",
+        read_only: true,
+        ask: true,
+        mcp: true,
+        online: false,
+        run: NexusTools::conflicts_near,
+    },
 ];
 
 /// One line about the commander for each question (location, ship, credits, date).
@@ -2445,6 +2499,43 @@ mod tests {
         let ans = nexus_ai::ask(&script, nexus_ai::SYSTEM_PROMPT, &tools, &mut conv, "Where should I sell my cargo?".into(), &AtomicBool::new(false), |_| {}).unwrap();
         assert!(ans.text.contains("Beta Hub"));
         assert_eq!(ans.tools_used, vec!["sell_my_cargo"]);
+    }
+
+    /// "Where's the nearest war?": wars near the commander from the galaxy database, with the score and the stakes.
+    #[test]
+    fn conflicts_near_lists_the_wars_around_the_commander() {
+        let t = TempDb::new("ai-conflicts");
+        let db = t.db();
+        let ts = nexus_journal::Timestamp::now().to_iso();
+        let war = |name: &str, id: u64, x: f64, kind: &str| {
+            json!({ "$schemaRef": "https://eddn.edcd.io/schemas/journal/1", "header": { "uploaderID": "t", "softwareName": "t", "softwareVersion": "1" },
+                "message": { "timestamp": ts, "event": "FSDJump", "StarSystem": name, "SystemAddress": id, "StarPos": [x, 0.0, 0.0], "Population": 5000,
+                    "SystemGovernment": "$government_Anarchy;",
+                    "Factions": [{ "Name": "Red", "FactionState": "War", "Influence": 0.4, "Allegiance": "Independent", "ActiveStates": [{ "State": "War" }] },
+                                 { "Name": "Blue", "FactionState": "War", "Influence": 0.4, "Allegiance": "Federation", "ActiveStates": [{ "State": "War" }] }],
+                    "Conflicts": [{ "WarType": kind, "Status": "active", "Faction1": { "Name": "Red", "Stake": "Red Port", "WonDays": 2 },
+                                    "Faction2": { "Name": "Blue", "Stake": "", "WonDays": 1 } }] } })
+        };
+        db.ingest_eddn(&war("Beta", 1002, 10.0, "war"));
+        db.ingest_eddn(&war("Gamma", 1003, 60.0, "election"));
+        db.ingest_eddn(&war("Far", 1004, 300.0, "civilwar"));
+        db.flush().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let tools = NexusTools { db: Some(db.clone()), ..model_tools(commander(), &rt) };
+
+        let near = tools.call("conflicts_near", &json!({})).unwrap();
+        let conflicts = near["conflicts"].as_array().unwrap();
+        assert_eq!(conflicts.len(), 1, "the election isn't a fight and Far is out of range: {near}");
+        let beta = &conflicts[0];
+        assert_eq!((&beta["system"], &beta["kind"], &beta["status"], &beta["distance_ly"]), (&json!("Beta"), &json!("War"), &json!("active"), &json!(10.0)));
+        assert_eq!((&beta["sides"][0]["days_won"], &beta["sides"][0]["stands_to_lose"], &beta["sides"][1]["stands_to_lose"]), (&json!(2), &json!("Red Port"), &Value::Null));
+        assert_eq!((&beta["government"], &beta["days_won_known"]), (&json!("Anarchy"), &json!(true)));
+
+        let wider = tools.call("conflicts_near", &json!({ "max_distance_ly": 500, "elections": true })).unwrap();
+        let systems: Vec<&str> = wider["conflicts"].as_array().unwrap().iter().map(|c| c["system"].as_str().unwrap()).collect();
+        assert_eq!(systems, ["Beta", "Gamma", "Far"]);
+        let around = tools.call("conflicts_near", &json!({ "near_system": "Far", "max_distance_ly": 20 })).unwrap();
+        assert_eq!((&around["near"], &around["conflicts"][0]["distance_ly"]), (&json!("Far"), &json!(0.0)));
     }
 
     /// One entry per tool: unique names, Ask's words for it, a schema the providers take, the writers kept from agents,

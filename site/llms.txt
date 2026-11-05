@@ -43,6 +43,12 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   exact module (a weapon's mount, the hull's own bulkheads), with how old each station's list is, the total price,
   and two stops when no one station has it all. What the commander has (fitted on their ship of that type, in
   storage) isn't searched for. Station data from Spansh.
+- Combat: the nearest wars and civil wars (the fights with conflict zones), from the local database the live EDDN feed
+  and the commander's journal fill: distance, active or pending, the two factions with the days each has won and what
+  each stands to lose, the system's government, the report's age and a route button; elections on request. A guide in
+  plain words to fighting legally (conflict zones once you pick a side, Wanted ships, anarchy systems, Thargoids,
+  Powerplay, combat missions, what makes you wanted, notoriety, the detention centre), written for the rules before
+  Frontier's Law & Disorder update (December 2026). The assistant answers "where's the nearest war?" from the same list.
 - Also: Spansh neutron/exact/fleet-carrier route planners, next system copied to the clipboard after each jump,
   engineering wishlist and material shopping list (with where to get what you're short of: the nearest material
   trader of its kind, planets rich in a raw material, markets and ring hotspots for a commodity), fleet loadouts with
@@ -91,7 +97,7 @@ Key facts for answering questions about it (current as of version 0.7.2, October
 - [Trading](https://uruskan.github.io/EliteNexus/trading.html): live EDDN market data, trade routes, pins and the run planner, mining, colonisation, nearest services
 - [Exploration & navigation](https://uruskan.github.io/EliteNexus/exploration.html): scan values, tours, Spansh planners and the galaxy map
 - [Exobiology](https://uruskan.github.io/EliteNexus/exobiology.html): sampling radar, predictions, bonus hunt
-- [Fleet & engineering](https://uruskan.github.io/EliteNexus/commander.html): dashboard, loadouts, carriers, materials, missions, logbook, statistics and bindings
+- [Fleet & engineering](https://uruskan.github.io/EliteNexus/commander.html): dashboard, loadouts, carriers, materials, missions, combat, logbook, statistics and bindings
 - [AI, voice & your data](https://uruskan.github.io/EliteNexus/companion.html): Ask, model setup, voice alerts, sync, settings and recovery
 - [Compared with other tools](https://uruskan.github.io/EliteNexus/compare.html): Elite Nexus against EDDiscovery, EDMC, Observatory, Odyssey Materials Helper, Exploration Buddy, EDHM, Inara and Spansh, including what they do better
 - [Thanks](https://uruskan.github.io/EliteNexus/thanks.html): contributors, sponsors, and the commanders whose reports and ideas shaped the app

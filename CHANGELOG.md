@@ -6,6 +6,15 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
+- **Combat**, a new page (under Commander) for commanders who want a fight without a bounty. **Fights near you**
+  lists the nearest wars and civil wars, the fights with conflict zones: how far, active or pending, the two
+  factions with the days each has won and what each stands to lose, the system's government, how old the report is,
+  and a **Plot route** button. Choose how far to look and how old a report may be; elections can be shown
+  too. Your current system comes first, with its wars, the combat sites your scans logged there and a warning in an
+  anarchy. The list comes from the galaxy database, which now keeps each system's conflicts as the game reports them
+  through EDDN and your journal, so it fills while Elite Nexus runs, and the page says how many systems it has fresh
+  reports for. **How to fight legally** explains where killing isn't a crime and how to pick a side, what makes you
+  wanted, and when you end up in the detention centre. Ask can answer "where's the nearest war?" from the same list.
 - **AI agents** (Settings › AI agents, off by default): Claude Code, Claude Desktop and other AI programs that speak
   MCP can use the tools Ask uses, to read only: your commander, fleet, materials, ranks and engineers, journal, the
   market database, engineering, where to mine or buy, and Spansh. Copy buttons set them up. The program the agent
