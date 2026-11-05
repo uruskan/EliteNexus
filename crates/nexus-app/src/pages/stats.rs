@@ -1293,21 +1293,25 @@ fn ships_table(ui: &mut Ui, rows: &[ShipRow], selected: Option<u64>) -> Option<O
     let wide = ui.available_width() >= 980.0;
     let mut sort = widgets::TableSort::load(ui, TABLE);
     let mut clicked = None;
-    widgets::table(ui, if wide { "stats-ships/wide" } else { "stats-ships/narrow" }, |table| {
-        // The page scrolls; the table doesn't scroll inside it.
-        let mut table = table
+    {
+        // Columns of fixed widths, the ship's taking the rest; the page scrolls, so the table doesn't scroll inside it.
+        let mut table = egui_extras::TableBuilder::new(ui)
+            .id_salt(if wide { "stats-ships/wide" } else { "stats-ships/narrow" })
+            .striped(true)
+            .resizable(false)
             .vscroll(false)
             .sense(egui::Sense::click())
-            .column(widgets::flex_column(170.0))
-            .column(Column::initial(84.0).at_least(56.0).clip(true))
-            .column(Column::initial(60.0).at_least(44.0).clip(true))
-            .column(Column::initial(80.0).at_least(56.0).clip(true))
-            .column(Column::initial(92.0).at_least(60.0).clip(true))
-            .column(Column::initial(56.0).at_least(40.0).clip(true))
-            .column(Column::initial(62.0).at_least(44.0).clip(true))
-            .column(Column::initial(84.0).at_least(56.0).clip(true));
+            .cell_layout(Layout::left_to_right(Align::Center))
+            .column(Column::remainder().at_least(170.0).clip(true))
+            .column(Column::exact(84.0).clip(true))
+            .column(Column::exact(60.0).clip(true))
+            .column(Column::exact(80.0).clip(true))
+            .column(Column::exact(92.0).clip(true))
+            .column(Column::exact(56.0).clip(true))
+            .column(Column::exact(62.0).clip(true))
+            .column(Column::exact(84.0).clip(true));
         if wide {
-            table = table.column(Column::initial(100.0).at_least(70.0).clip(true)).column(Column::initial(100.0).at_least(70.0).clip(true));
+            table = table.column(Column::exact(100.0).clip(true)).column(Column::exact(100.0).clip(true));
         }
         // Sortable columns: 0 ship, 1 time, 2 jumps, 3 distance, 4 earned, 5 kills, 6 deaths, 7 costs, 8 bought, 9 sold.
         let mut heads: Vec<(&str, u8, bool)> =
@@ -1384,7 +1388,7 @@ fn ships_table(ui: &mut Ui, rows: &[ShipRow], selected: Option<u64>) -> Option<O
                 }
             });
         });
-    });
+    }
     clicked
 }
 
