@@ -152,6 +152,27 @@ impl Cards<'_> {
     }
 }
 
+/// Cards of different heights in columns, each card going under the shortest column so far (a masonry layout): no gaps
+/// under short cards, unlike [`cards`], whose rows share a height. Up to `max_cols` columns, each at least `min_width`
+/// wide. `draw` adds the card for one item.
+pub fn masonry<T>(ui: &mut Ui, max_cols: usize, min_width: f32, items: &[T], mut draw: impl FnMut(&mut Ui, &T)) {
+    let avail = ui.available_width();
+    let cols = (((avail + GAP) / (min_width + GAP)).floor() as usize).clamp(1, max_cols.max(1));
+    let width = (avail - GAP * (cols as f32 - 1.0)) / cols as f32;
+    let origin = ui.cursor().min;
+    let key = ui.id().with(("masonry", ui.next_auto_id()));
+    let mut heights = vec![0.0f32; cols];
+    for (i, item) in items.iter().enumerate() {
+        let col = (0..cols).min_by(|a, b| heights[*a].total_cmp(&heights[*b])).unwrap_or(0);
+        let rect = Rect::from_min_size(Pos2::new(origin.x + col as f32 * (width + GAP), origin.y + heights[col]), Vec2::new(width, f32::INFINITY));
+        let mut child = ui.new_child(egui::UiBuilder::new().id_salt(key.with(i)).max_rect(rect).layout(Layout::top_down(Align::Min)));
+        draw(&mut child, item);
+        heights[col] += child.min_rect().height() + GAP;
+    }
+    let bottom = heights.iter().copied().fold(0.0, f32::max) - GAP;
+    ui.advance_cursor_after_rect(Rect::from_min_size(origin, Vec2::new(avail, bottom.max(0.0))));
+}
+
 /// Two panes side by side (`left_frac` of the width for the first) when there is room for both at
 /// `min_width`, otherwise stacked.
 pub fn split(ui: &mut Ui, left_frac: f32, min_width: f32, left: impl FnOnce(&mut Ui), right: impl FnOnce(&mut Ui)) {
@@ -450,6 +471,56 @@ pub fn bar(ui: &mut Ui, frac: f32, color: Color32, height: f32, text: Option<&st
         p.text(rect.center(), Align2::CENTER_CENTER, t, display((height - 3.0).clamp(10.0, 12.0)), Color32::WHITE);
     }
     resp
+}
+
+/// Shares of a whole as one capsule, like the storage bar in Apple's settings: each part in its colour, as wide as its
+/// share (a small share keeps a sliver, so it still shows), with a hairline gap between parts. Returns the bar's
+/// response and the part under the pointer, for its tooltip.
+pub fn share_bar(ui: &mut Ui, parts: &[(f64, Color32)], height: f32) -> (Response, Option<usize>) {
+    let width = ui.available_width().max(40.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let widths = share_widths(parts.iter().map(|(v, _)| *v), width, 2.0, height.min(6.0));
+    let mut hovered = None;
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        let r = (height / 2.0).min(255.0) as u8;
+        p.rect_filled(rect, CornerRadius::same(r), Color32::from_white_alpha(18));
+        let shown: Vec<usize> = (0..parts.len()).filter(|i| widths[*i] > 0.0).collect();
+        let pointer = resp.hover_pos();
+        let mut x = rect.left();
+        for (n, &i) in shown.iter().enumerate() {
+            let seg = Rect::from_min_size(Pos2::new(x, rect.top()), Vec2::new(widths[i], height));
+            // Only the capsule's two ends are round.
+            let (first, last) = (n == 0, n + 1 == shown.len());
+            let round = CornerRadius { nw: if first { r } else { 0 }, sw: if first { r } else { 0 }, ne: if last { r } else { 0 }, se: if last { r } else { 0 } };
+            p.rect_filled(seg, round, parts[i].1);
+            if pointer.is_some_and(|q| q.x >= seg.left() - 1.0 && q.x <= seg.right() + 1.0) {
+                hovered = Some(i);
+            }
+            x = seg.right() + 2.0;
+        }
+    }
+    (resp, hovered)
+}
+
+/// How wide each part of a [`share_bar`] is: its share of `width` less the gaps between parts, at least `least` for any
+/// part above zero (the room comes off the widest), none for the rest.
+pub fn share_widths(values: impl Iterator<Item = f64>, width: f32, gap: f32, least: f32) -> Vec<f32> {
+    let values: Vec<f64> = values.map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 }).collect();
+    let total: f64 = values.iter().sum();
+    let parts = values.iter().filter(|v| **v > 0.0).count();
+    if total <= 0.0 || parts == 0 {
+        return vec![0.0; values.len()];
+    }
+    let room = (width - gap * (parts - 1) as f32).max(0.0);
+    let mut w: Vec<f32> = values.iter().map(|v| if *v > 0.0 { ((v / total) as f32 * room).max(least) } else { 0.0 }).collect();
+    let over = w.iter().sum::<f32>() - room;
+    if over > 0.0
+        && let Some(widest) = (0..w.len()).max_by(|a, b| w[*a].total_cmp(&w[*b]))
+    {
+        w[widest] = (w[widest] - over).max(least);
+    }
+    w
 }
 
 /// A small tinted pill (status, count, tag). Never wraps: in a wrapping row the whole pill moves to
@@ -1258,6 +1329,18 @@ pub fn labelled(marks: Vec<egui_plot::GridMark>, input: &egui_plot::GridInput) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shares_keep_a_sliver_and_fill_the_bar() {
+        // 304 points less the two gaps between the three parts above zero: 300.
+        let w = share_widths([90.0, 9.0, 1.0, 0.0].into_iter(), 304.0, 2.0, 6.0);
+        assert_eq!(w[3], 0.0);
+        assert!((w.iter().sum::<f32>() - 300.0).abs() < 1e-3, "{w:?}");
+        // The 1 % part keeps a sliver; the room comes off the widest.
+        assert!(w[2] >= 6.0 && w[0] > w[1] && w[1] > w[2], "{w:?}");
+        assert!(share_widths([0.0, 0.0].into_iter(), 100.0, 2.0, 6.0).iter().all(|x| *x == 0.0));
+        assert!(share_widths([f64::NAN, 1.0].into_iter(), 100.0, 2.0, 6.0)[1] == 100.0);
+    }
 
     #[test]
     fn a_heading_sorts_reverses_and_lets_go() {

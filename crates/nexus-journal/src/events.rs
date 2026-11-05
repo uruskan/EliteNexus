@@ -2886,6 +2886,8 @@ pub struct Statistics {
     pub cqc: serde_json::Value,
     #[serde(rename = "FLEETCARRIER")]
     pub fleetcarrier: serde_json::Value,
+    #[serde(rename = "Squadron")]
+    pub squadron: serde_json::Value,
 }
 
 /// Events with no payload that still matter to the model.

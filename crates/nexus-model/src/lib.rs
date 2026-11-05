@@ -4,6 +4,7 @@
 
 pub mod alerts;
 pub mod bgs;
+pub mod career;
 pub mod carrier;
 pub mod colonisation;
 pub mod commander;
@@ -16,6 +17,7 @@ pub mod inventory;
 pub mod location;
 pub mod mining;
 pub mod missions;
+pub mod period;
 pub mod session;
 pub mod state;
 
