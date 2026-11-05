@@ -68,10 +68,16 @@ pub struct UplinkConfig {
     pub eddn_paused: bool,
     /// EDSM journal sync (None = off).
     pub edsm: Option<EdsmCredentials>,
+    /// The same pause for EDSM: nothing is sent, and what happens meanwhile is dropped (the queue too).
+    pub edsm_paused: bool,
     /// Inara sync (None = off).
     pub inara: Option<InaraCredentials>,
+    /// The same pause for Inara (no key check either).
+    pub inara_paused: bool,
     /// Send the events EDAstro accepts.
     pub edastro: bool,
+    /// The same pause for EDAstro.
+    pub edastro_paused: bool,
 }
 
 impl Default for UplinkConfig {
@@ -83,8 +89,11 @@ impl Default for UplinkConfig {
             eddn_test_mode: false,
             eddn_paused: false,
             edsm: None,
+            edsm_paused: false,
             inara: None,
+            inara_paused: false,
             edastro: false,
+            edastro_paused: false,
         }
     }
 }
@@ -102,14 +111,24 @@ impl UplinkConfig {
         if s.is_empty() { env!("CARGO_PKG_VERSION") } else { s }
     }
 
-    /// EDSM credentials, if EDSM is enabled and both fields are filled in.
+    /// EDSM credentials, if EDSM is enabled and both fields are filled in (paused or not).
     pub fn edsm_credentials(&self) -> Option<&EdsmCredentials> {
         self.edsm.as_ref().filter(|c| !c.commander_name.trim().is_empty() && !c.api_key.trim().is_empty())
     }
 
-    /// Inara credentials, if Inara is enabled with a key.
+    /// The EDSM credentials to send with now: EDSM is on, with both fields filled in, and not paused.
+    pub fn edsm_sending(&self) -> Option<&EdsmCredentials> {
+        self.edsm_credentials().filter(|_| !self.edsm_paused)
+    }
+
+    /// Inara credentials, if Inara is enabled with a key (paused or not).
     pub fn inara_credentials(&self) -> Option<&InaraCredentials> {
         self.inara.as_ref().filter(|c| !c.api_key.trim().is_empty())
+    }
+
+    /// The Inara credentials to send with now: Inara is on, with a key, and not paused.
+    pub fn inara_sending(&self) -> Option<&InaraCredentials> {
+        self.inara_credentials().filter(|_| !self.inara_paused)
     }
 
     /// EDDN is on and not paused.
@@ -117,16 +136,19 @@ impl UplinkConfig {
         self.eddn && !self.eddn_paused
     }
 
+    /// EDSM is on, with its credentials, and not paused.
     pub fn edsm_enabled(&self) -> bool {
-        self.edsm_credentials().is_some()
+        self.edsm_sending().is_some()
     }
 
+    /// Inara is on, with a key, and not paused.
     pub fn inara_enabled(&self) -> bool {
-        self.inara_credentials().is_some()
+        self.inara_sending().is_some()
     }
 
+    /// EDAstro is on and not paused.
     pub fn edastro_enabled(&self) -> bool {
-        self.edastro
+        self.edastro && !self.edastro_paused
     }
 
     pub fn any_enabled(&self) -> bool {
@@ -184,6 +206,28 @@ mod tests {
         assert!(!c.edsm_enabled());
         assert!(!c.inara_enabled());
         assert!(!format!("{c:?}").contains("api_key: \" \""));
+    }
+
+    /// A paused service keeps its credentials (resuming isn't a new key) but sends nothing.
+    #[test]
+    fn paused_services_send_nothing() {
+        let c = UplinkConfig {
+            eddn: true,
+            eddn_paused: true,
+            edsm: Some(EdsmCredentials { commander_name: "Jameson".into(), api_key: "k".into() }),
+            edsm_paused: true,
+            inara: Some(InaraCredentials { api_key: "k".into(), is_being_developed: false }),
+            inara_paused: true,
+            edastro: true,
+            edastro_paused: true,
+            ..UplinkConfig::default()
+        };
+        assert!(!c.any_enabled());
+        assert!(c.edsm_credentials().is_some() && c.edsm_sending().is_none());
+        assert!(c.inara_credentials().is_some() && c.inara_sending().is_none());
+        let resumed = UplinkConfig { edsm_paused: false, inara_paused: false, edastro_paused: false, ..c };
+        assert!(resumed.edsm_enabled() && resumed.inara_enabled() && resumed.edastro_enabled());
+        assert!(!resumed.eddn_enabled(), "each service has its own pause");
     }
 
     #[test]

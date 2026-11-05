@@ -10,6 +10,10 @@ release time that section becomes the new version and the release workflow publi
   started, newest first, with its time and what it said, so one you missed while its banner was up can still be
   read. A number on the bell counts the alerts that came in since you last looked. It holds the last 200, while
   Elite Nexus runs.
+- **Pause EDSM, Inara and EDAstro**, as you could pause EDDN: Accounts & sync has a pause switch for each service you
+  share with, and the toolbar's button (now **Pause uploads**, or **Pause EDDN** and so on when you share with only
+  one) pauses or resumes them all. As with EDDN, what happens while a service is paused is dropped, not sent later,
+  and the page says so; when Inara resumes, your profile is brought up to date as it is then.
 - **AI agents** (Settings › AI agents, off by default): Claude Code, Claude Desktop and other AI programs that speak
   MCP can use the tools Ask uses, to read only: your commander, fleet, materials, ranks and engineers, journal, the
   market database, engineering, where to mine or buy, and Spansh. Copy buttons set them up. The program the agent

@@ -443,7 +443,7 @@ impl NexusApp {
     fn page_header(&mut self, ui: &mut Ui, title: &str, subtitle: &str) {
         let status = self.core.status.read().clone();
         let narrow = ui.available_width() < 860.0;
-        // Toolbar items, left to right: credits, live feed, uploads, EDDN pause, status.
+        // Toolbar items, left to right: credits, live feed, uploads, their pause, status.
         let mut items: Vec<CapItem> = Vec::new();
         {
             let model = self.core.model.read();
@@ -469,14 +469,23 @@ impl NexusApp {
                 let text = if queued > 0 { format!("{} {sent} · {queued} queued", icon::CLOUD_ARROW_UP) } else { format!("{} {sent}", icon::CLOUD_ARROW_UP) };
                 items.push(CapItem::new(text, if trouble { pal::WARN } else { pal::DIM }, false).action(CapAction::Accounts).tip("Uploads sent this session (EDDN / EDSM / Inara / EDAstro). Click for details."));
             }
-            if self.settings.accounts.eddn_upload {
-                let paused = self.settings.accounts.eddn_paused;
-                let (text, col, tip) = if paused {
-                    (format!("{} Resume EDDN", icon::PLAY), pal::WARN, "Sharing with EDDN is paused. Click to share again.")
+            // One button pauses or resumes every upload that's on; Accounts & sync has a switch for each.
+            let uploads = self.settings.accounts.uploads();
+            if !uploads.is_empty() {
+                let names: Vec<&str> = uploads.iter().map(|u| u.0).collect();
+                let paused: Vec<&str> = uploads.iter().filter(|u| u.1).map(|u| u.0).collect();
+                let what = if let [(one, _)] = uploads.as_slice() { *one } else { "uploads" };
+                let item = if paused.is_empty() {
+                    let mut tip = format!("Stop sharing with {}, e.g. to keep where you are to yourself. What happens while paused is dropped, not sent later.", crate::settings::and_list(&names));
+                    if names.contains(&"EDDN") {
+                        tip += " Prices go to EDDN only when you undock, so pausing while docked keeps a market you just found to yourself.";
+                    }
+                    CapItem::new(format!("{} Pause {what}", icon::PAUSE), pal::TEXT, false).tip(tip)
                 } else {
-                    (format!("{} Pause EDDN", icon::PAUSE), pal::TEXT, "Stop sharing with EDDN, e.g. to keep a market you just found to yourself (prices are only sent when you undock).")
+                    let tip = format!("Paused: {}. What happens meanwhile is dropped, not sent later. Click to share again.", crate::settings::and_list(&paused));
+                    CapItem::new(format!("{} Resume {what}", icon::PLAY), pal::WARN, false).tip(tip)
                 };
-                items.push(CapItem::new(text, col, false).action(CapAction::TogglePause).tip(tip));
+                items.push(item.action(CapAction::TogglePause));
             }
             let (label, col) = match &status.phase {
                 Phase::Live => {
@@ -555,7 +564,10 @@ impl NexusApp {
             }
             Some(CapAction::Accounts) => self.page = Page::Accounts,
             Some(CapAction::TogglePause) => {
-                self.settings.accounts.eddn_paused = !self.settings.accounts.eddn_paused;
+                // Nothing paused: pause them all. Anything paused: resume them all.
+                let acc = &mut self.settings.accounts;
+                let pause = !acc.uploads().iter().any(|u| u.1);
+                acc.pause_uploads(pause);
                 self.sync.apply(&self.settings.accounts);
                 self.settings_dirty = Some(Instant::now());
             }
@@ -936,20 +948,20 @@ struct CapItem {
     color: Color32,
     strong: bool,
     dot: Option<Color32>,
-    tip: &'static str,
+    tip: String,
     action: Option<CapAction>,
 }
 
 impl CapItem {
     fn new(text: String, color: Color32, strong: bool) -> Self {
-        CapItem { text, color, strong, dot: None, tip: "", action: None }
+        CapItem { text, color, strong, dot: None, tip: String::new(), action: None }
     }
     fn dot(mut self, c: Color32) -> Self {
         self.dot = Some(c);
         self
     }
-    fn tip(mut self, t: &'static str) -> Self {
-        self.tip = t;
+    fn tip(mut self, t: impl Into<String>) -> Self {
+        self.tip = t.into();
         self
     }
     fn action(mut self, a: CapAction) -> Self {
@@ -998,7 +1010,7 @@ fn toolbar_capsule(ui: &mut Ui, items: &[CapItem]) -> Option<CapAction> {
             tx += 14.0;
         }
         p.galley(egui::pos2(tx, rect.center().y - g.size().y / 2.0), g, it.color);
-        let r = if it.tip.is_empty() { r } else { r.on_hover_text(it.tip) };
+        let r = if it.tip.is_empty() { r } else { r.on_hover_text(it.tip.as_str()) };
         if r.clicked() {
             clicked = it.action;
         }

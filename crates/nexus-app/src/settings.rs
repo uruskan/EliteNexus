@@ -150,6 +150,42 @@ pub struct Accounts {
     pub edastro_enabled: bool,
     /// EDDN sharing paused by the commander (the header's Pause button).
     pub eddn_paused: bool,
+    /// The same pause for EDSM, Inara and EDAstro (Accounts & sync, or the header's button for all of them).
+    pub edsm_paused: bool,
+    pub inara_paused: bool,
+    pub edastro_paused: bool,
+}
+
+impl Accounts {
+    /// The upload services switched on (EDSM and Inara with their keys saved), each with whether it's paused.
+    pub fn uploads(&self) -> Vec<(&'static str, bool)> {
+        let mut on = Vec::new();
+        if self.eddn_upload {
+            on.push(("EDDN", self.eddn_paused));
+        }
+        if self.edsm_enabled && !self.edsm_api_key.is_empty() && !self.edsm_commander.trim().is_empty() {
+            on.push(("EDSM", self.edsm_paused));
+        }
+        if self.inara_enabled && !self.inara_api_key.is_empty() {
+            on.push(("Inara", self.inara_paused));
+        }
+        if self.edastro_enabled {
+            on.push(("EDAstro", self.edastro_paused));
+        }
+        on
+    }
+
+    /// Pauses or resumes every upload service that's on (the header's button).
+    pub fn pause_uploads(&mut self, pause: bool) {
+        for (name, _) in self.uploads() {
+            match name {
+                "EDDN" => self.eddn_paused = pause,
+                "EDSM" => self.edsm_paused = pause,
+                "Inara" => self.inara_paused = pause,
+                _ => self.edastro_paused = pause,
+            }
+        }
+    }
 }
 
 impl Default for Settings {
@@ -376,7 +412,7 @@ fn recover_keys(text: &str) -> (Settings, Vec<&'static str>) {
 }
 
 /// "A", "A and B", "A, B and C".
-fn and_list(items: &[&str]) -> String {
+pub(crate) fn and_list(items: &[&str]) -> String {
     match items {
         [] => String::new(),
         [one] => (*one).to_string(),

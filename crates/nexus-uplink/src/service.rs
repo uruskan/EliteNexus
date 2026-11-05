@@ -358,8 +358,8 @@ impl Uplink {
             edsm_discard: RwLock::new(EventList::new(&edsm::DEFAULT_DISCARD, edsm_cache)),
             edastro_accepting: RwLock::new(EventList::new(&edastro::DEFAULT_ACCEPTING, edastro_cache)),
             dir,
-            // Confirm the key once per run.
-            inara_check: AtomicBool::new(cfg.inara_enabled()),
+            // Confirm the key once per run (once resumed, if Inara starts paused).
+            inara_check: AtomicBool::new(cfg.inara_credentials().is_some()),
             inara_check_now: AtomicBool::new(false),
             inara_account: Mutex::new(None),
         });
@@ -390,8 +390,9 @@ impl Uplink {
         let _ = self.tx.send(Input::Companion(c.clone(), Box::new(ctx.clone())));
     }
 
-    /// Replaces the configuration. Disabling a service discards its queue (consent withdrawn);
-    /// any change resumes services that were stopped by a rejection.
+    /// Replaces the configuration. Disabling or pausing a service discards its queue (consent
+    /// withdrawn, or what happens while paused isn't kept); any change resumes services that were
+    /// stopped by a rejection.
     pub fn set_config(&self, cfg: UplinkConfig) {
         clear_disabled_queues(&self.shared, &cfg);
         // A new or changed Inara key: find out again who it belongs to.
@@ -574,6 +575,10 @@ impl Processor {
                 if !self.cfg.eddn_enabled() {
                     self.held.clear();
                 }
+                // An EDSM event waiting for its companion file goes with the queue.
+                if !self.cfg.edsm_enabled() {
+                    self.stub = None;
+                }
                 // Anything queued under the old configuration for a now-disabled service goes.
                 clear_disabled_queues(&self.shared, &self.cfg);
             }
@@ -632,7 +637,7 @@ impl Processor {
         // EDSM
         let shared = self.shared.clone();
         if allowed
-            && let (Some(creds), Some(cmdr)) = (self.cfg.edsm_credentials().cloned(), cmdr.as_ref())
+            && let (Some(creds), Some(cmdr)) = (self.cfg.edsm_sending().cloned(), cmdr.as_ref())
             && !edsm::is_discarded(&shared.edsm_discard.read().set, name)
             && self.bound("edsm", fingerprint(&[&creds.commander_name, &creds.api_key]), cmdr, Some(&creds.commander_name), &shared.edsm.counters)
         {
@@ -739,7 +744,7 @@ impl Processor {
     /// Replays the current session through a fresh mapper and queues its "set" events: the
     /// commander's present state, sent at once (the "add" events of past activity are left out).
     fn inara_snapshot(&mut self, events: &[RawEvent], ctx: &UploadContext) {
-        if self.cfg.inara_credentials().is_none() {
+        if self.cfg.inara_sending().is_none() {
             return;
         }
         let mut session = Session::new();
@@ -760,7 +765,7 @@ impl Processor {
     }
 
     fn queue_inara(&mut self, events: Vec<InaraEvent>, ctx: &UploadContext, now: Timestamp) {
-        let (Some(creds), Some(cmdr)) = (self.cfg.inara_credentials().cloned(), self.session.cmdr(ctx).map(str::to_string)) else {
+        let (Some(creds), Some(cmdr)) = (self.cfg.inara_sending().cloned(), self.session.cmdr(ctx).map(str::to_string)) else {
             return;
         };
         let key = fingerprint(&[&creds.api_key]);
@@ -1016,7 +1021,7 @@ async fn run_edsm(shared: Arc<Shared>) {
     while !shared.stopping() {
         let (creds, software, version) = {
             let c = shared.config.read();
-            (c.edsm_credentials().cloned(), c.software().to_string(), c.version().to_string())
+            (c.edsm_sending().cloned(), c.software().to_string(), c.version().to_string())
         };
         let epoch = shared.epoch.load(Ordering::Relaxed);
         let Some(creds) = creds else {
@@ -1170,7 +1175,7 @@ async fn run_inara(shared: Arc<Shared>) {
     while !shared.stopping() {
         let (creds, software, version) = {
             let c = shared.config.read();
-            (c.inara_credentials().cloned(), c.software().to_string(), c.version().to_string())
+            (c.inara_sending().cloned(), c.software().to_string(), c.version().to_string())
         };
         let epoch = shared.epoch.load(Ordering::Relaxed);
         let Some(creds) = creds else {

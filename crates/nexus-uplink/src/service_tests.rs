@@ -552,6 +552,77 @@ fn eddn_pause_while_docked_keeps_the_market_private() {
     assert!(h.wait_for(|r| eddn_bodies(r).len() > before), "sending resumes");
 }
 
+// ---- EDSM, Inara and EDAstro pause ----------------------------------------------------------
+
+/// The journal events EDSM was sent.
+fn edsm_events(reqs: &[HttpRequest]) -> Vec<String> {
+    reqs.iter()
+        .filter(|r| r.url == edsm::JOURNAL_URL)
+        .flat_map(|p| {
+            let f = form_urldecode(&p.body_text());
+            let m = f.into_iter().find(|(k, _)| k == "message").map(|(_, v)| v).unwrap_or_default();
+            serde_json::from_str::<Vec<Value>>(&m).unwrap_or_default()
+        })
+        .filter_map(|e| e["event"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// The event names Inara was sent.
+fn inara_events(reqs: &[HttpRequest]) -> Vec<String> {
+    reqs.iter()
+        .filter(|r| r.url == inara::API_URL)
+        .flat_map(|p| serde_json::from_str::<Value>(&p.body_text()).ok().and_then(|b| b["events"].as_array().cloned()).unwrap_or_default())
+        .filter_map(|e| e["eventName"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Paused as EDDN is: nothing goes out while paused (not even a key check or a list download), what was waiting is
+/// dropped, and what happened meanwhile isn't sent after resuming either.
+#[test]
+fn edsm_inara_and_edastro_pause_like_eddn() {
+    let on = UplinkConfig { edsm: edsm_cfg().edsm, inara: inara_cfg().inara, edastro: true, ..UplinkConfig::default() };
+    let pause = |p: bool| UplinkConfig { edsm_paused: p, inara_paused: p, edastro_paused: p, ..on.clone() };
+    let mut h = Harness::new(pause(true), RecordingTransport::simulated());
+    h.session();
+    h.send(DISCOVERY);
+    h.send(ORGANIC);
+    h.uplink().flush();
+    h.settle();
+    assert!(h.transport.requests().is_empty(), "nothing at all goes out while paused");
+    let st = h.uplink().status();
+    assert_eq!((st.edsm.queued, st.inara.queued, st.edastro.queued), (0, 0, 0), "nothing is kept to send later");
+    assert!(!st.edsm.enabled && !st.inara.enabled && !st.edastro.enabled, "status shows them as not sending");
+
+    h.uplink().set_config(pause(false));
+    h.send(FSDJUMP);
+    h.send(ORGANIC);
+    h.uplink().flush();
+    assert!(h.wait_for(|r| edsm_events(r).iter().any(|e| e == "FSDJump") && !inara_events(r).is_empty() && r.iter().any(|q| q.url == edastro::JOURNAL_URL)));
+    h.settle();
+    let reqs = h.transport.requests();
+    let edsm = edsm_events(&reqs);
+    assert!(!edsm.iter().any(|e| e == "LoadGame" || e == "FSSDiscoveryScan"), "only what happened after resuming: {edsm:?}");
+    let inara = inara_events(&reqs);
+    assert!(inara.iter().any(|e| e == "addCommanderTravelFSDJump"), "{inara:?}");
+    assert!(!inara.iter().any(|e| e == "setCommanderCredits"), "the login during the pause isn't sent: {inara:?}");
+    let edastro: Vec<Value> = reqs.iter().filter(|r| r.url == edastro::JOURNAL_URL).flat_map(|p| serde_json::from_str::<Vec<Value>>(&p.body_text()).unwrap_or_default()).collect();
+    assert_eq!(edastro.iter().filter(|e| e["event"] == "ScanOrganic").count(), 1, "one scan after resuming, none from the pause");
+}
+
+/// Pausing drops what was queued but not sent yet, as switching a service off does.
+#[test]
+fn pausing_drops_the_queue() {
+    let mut h = Harness::new(inara_cfg(), RecordingTransport::simulated());
+    h.session();
+    // The test timings gather Inara's events until a flush: they wait in the queue.
+    assert!(h.wait_for(|_| h.uplink().status().inara.queued > 0));
+    h.uplink().set_config(UplinkConfig { inara_paused: true, ..inara_cfg() });
+    h.uplink().flush();
+    h.settle();
+    assert_eq!(h.uplink().status().inara.queued, 0);
+    assert!(inara_events(&h.transport.requests()).is_empty(), "nothing of it was sent");
+}
+
 // ---- Inara: who is this key, and syncing the current profile -------------------------------
 
 fn wait_status(h: &Harness, pred: impl Fn(&ServiceStatus) -> bool) -> ServiceStatus {

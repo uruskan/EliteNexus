@@ -114,7 +114,11 @@ pub fn show(ui: &mut Ui, acc: &mut Accounts, st: &mut AccountsUi, cmdr_name: &st
                     "The same data EDMC and EDDiscovery send: station prices and services, system and body scans, routes. No credits, cargo or personal data, and no name. It keeps Inara, Spansh, EDSM and everyone else up to date.",
                 );
                 if acc.eddn_upload {
-                    changed |= g.switch(&mut acc.eddn_paused, "Pause sharing", "Send nothing until you resume (also in the toolbar). Prices are only sent when you undock, so pausing while docked keeps a market you just found to yourself.");
+                    changed |= g.switch(
+                        &mut acc.eddn_paused,
+                        "Pause sharing",
+                        "Send nothing until you resume (also in the toolbar). What happens while paused is dropped, not sent later. Prices are only sent when you undock, so pausing while docked keeps a market you just found to yourself.",
+                    );
                 }
                 changed |= g.switch(&mut acc.eddn_test_mode, "Test mode", "Send to EDDN's test schemas only.");
                 status_row(g, &status.uplink.eddn);
@@ -122,6 +126,9 @@ pub fn show(ui: &mut Ui, acc: &mut Accounts, st: &mut AccountsUi, cmdr_name: &st
             section(ui, "EDAstro");
             group(ui, |g| {
                 changed |= g.switch(&mut acc.edastro_enabled, "Send the events EDAstro asks for", "Carrier jumps and stats, docking and organic scans. Feeds EDAstro's galaxy maps and statistics. No key needed.");
+                if acc.edastro_enabled {
+                    changed |= g.switch(&mut acc.edastro_paused, "Pause sharing", "Send nothing until you resume (also in the toolbar). What happens while paused is dropped, not sent later.");
+                }
                 status_row(g, &status.uplink.edastro);
             });
             section(ui, "Frontier Companion API");
@@ -139,6 +146,13 @@ pub fn show(ui: &mut Ui, acc: &mut Accounts, st: &mut AccountsUi, cmdr_name: &st
             section(ui, "EDSM · flight log and star map");
             group(ui, |g| {
                 changed |= g.switch(&mut acc.edsm_enabled, "Sync my journal to EDSM", "");
+                if acc.edsm_enabled {
+                    changed |= g.switch(
+                        &mut acc.edsm_paused,
+                        "Pause sync",
+                        "Send nothing until you resume (also in the toolbar). What happens while paused is dropped, not sent later, so your EDSM flight log has a gap for that time.",
+                    );
+                }
                 g.row("Commander name", "", |ui| {
                     changed |= ui.add(egui::TextEdit::singleline(&mut acc.edsm_commander).desired_width(200.0).margin(egui::Margin::symmetric(10, 6))).changed();
                 });
@@ -149,10 +163,19 @@ pub fn show(ui: &mut Ui, acc: &mut Accounts, st: &mut AccountsUi, cmdr_name: &st
             section(ui, "Inara · commander profile");
             group(ui, |g| {
                 changed |= g.switch(&mut acc.inara_enabled, "Sync my commander profile to Inara", "");
+                if acc.inara_enabled {
+                    changed |= g.switch(
+                        &mut acc.inara_paused,
+                        "Pause sync",
+                        "Send nothing until you resume (also in the toolbar). What happens while paused is dropped, not sent later; when you resume, your profile is brought up to date as it is then.",
+                    );
+                }
                 changed |= key_row(g, &mut acc.inara_api_key, &mut st.inara_key_input, "Inara API key");
                 link_row(g, "Get your Inara API key", "https://inara.cz/elite/cmdr-settings-api/");
                 // Proof that it works: who Inara says the key belongs to, with a link to the profile.
                 let s = &status.uplink.inara;
+                // Paused, nothing goes to Inara: not even the question of who the key belongs to.
+                let paused = acc.inara_paused;
                 if acc.inara_enabled && !acc.inara_api_key.is_empty() {
                     g.content(|ui| {
                         ui.horizontal_wrapped(|ui| {
@@ -168,10 +191,11 @@ pub fn show(ui: &mut Ui, acc: &mut Accounts, st: &mut AccountsUi, cmdr_name: &st
                                     ui.label(RichText::new("Checking the key with Inara…").color(pal::DIM));
                                 }
                                 (None, false) => {
-                                    ui.label(RichText::new("Not confirmed yet").color(pal::DIM));
+                                    ui.label(RichText::new(if paused { "Not confirmed yet: sync is paused" } else { "Not confirmed yet" }).color(pal::DIM));
                                 }
                             }
                             if !s.checking
+                                && !paused
                                 && widgets::button(ui, "Check again").on_hover_text("Asks Inara who this key belongs to (counts towards its limit of about 2 requests a minute)").clicked()
                             {
                                 st.check_inara = true;

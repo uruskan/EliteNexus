@@ -71,8 +71,9 @@ impl SyncService {
         let Some(u) = &self.uplink else { return };
         let cfg = config(acc);
         if cfg != self.applied {
+            // Switched on, a new key, or resumed after a pause: the profile is brought up to date.
             let inara_key = |c: &UplinkConfig| c.inara_credentials().map(|i| i.api_key.clone());
-            if cfg.inara_enabled() && inara_key(&cfg) != inara_key(&self.applied) {
+            if cfg.inara_enabled() && (!self.applied.inara_enabled() || inara_key(&cfg) != inara_key(&self.applied)) {
                 self.inara_due = true;
             }
             u.set_config(cfg.clone());
@@ -161,8 +162,11 @@ pub fn config(acc: &Accounts) -> UplinkConfig {
             commander_name: acc.edsm_commander.trim().to_string(),
             api_key: secrets::open(&acc.edsm_api_key),
         }),
+        edsm_paused: acc.edsm_paused,
         inara: acc.inara_enabled.then(|| InaraCredentials { api_key: secrets::open(&acc.inara_api_key), is_being_developed: acc.inara_dev_mode }),
+        inara_paused: acc.inara_paused,
         edastro: acc.edastro_enabled,
+        edastro_paused: acc.edastro_paused,
         ..UplinkConfig::default()
     }
 }
@@ -183,5 +187,18 @@ mod tests {
         assert!(!config(&acc).edsm_enabled(), "no key yet");
         let acc = Accounts { edsm_api_key: secrets::seal("k"), ..acc };
         assert!(config(&acc).edsm_enabled());
+    }
+
+    /// The header's button pauses every service that's on, and resumes them; one that's off isn't touched.
+    #[test]
+    fn pause_every_upload_that_is_on() {
+        let mut acc = Accounts { eddn_upload: true, edsm_enabled: true, edsm_commander: "Jameson".into(), edsm_api_key: secrets::seal("k"), edastro_enabled: true, ..Default::default() };
+        assert_eq!(acc.uploads(), [("EDDN", false), ("EDSM", false), ("EDAstro", false)], "Inara is off");
+        acc.pause_uploads(true);
+        assert_eq!(acc.uploads(), [("EDDN", true), ("EDSM", true), ("EDAstro", true)]);
+        assert!(!acc.inara_paused);
+        assert!(!config(&acc).any_enabled(), "nothing is sent");
+        acc.pause_uploads(false);
+        assert!(config(&acc).edsm_enabled() && config(&acc).eddn_enabled() && config(&acc).edastro_enabled());
     }
 }
