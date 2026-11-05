@@ -105,7 +105,8 @@ a layout changes.
   theme; add `,options` to open the protection's options; nothing is written). `find`, `untouched`, `known`, `buy`,
   `buy-one`, the `where` tabs and `route-carrier` start their search on the first frame: add
   `-Delay 15` to `-Delay 25` for Spansh to answer. `routes` (Market › Trade routes) searches the local database on the
-  first frame too, and `station` (Market › Station) opens four markets side by side: your system's, then the nearest.
+  first frame too, `station` (Market › Station) opens four markets side by side: your system's, then the nearest, and
+  `browse` opens Market › Find commodity with its search field's whole list open.
 * HUD & cockpit with a game folder of your own making: set `ELITE_NEXUS_GAME_DIR` to a folder holding a dummy
   `EliteDangerous64.exe`; add a `d3dx.ini` starting `; Elite Nexus` with a `[Constants]` section (`x1 = 1` switches
   the HUD colour protection on) and an `EliteNexus-3Dmigoto.json` of `{"migoto_version":"1.4.9","files":[]}` for
