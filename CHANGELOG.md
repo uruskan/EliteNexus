@@ -5,6 +5,8 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+## [0.8.0-beta.1] - 2026-11-05
+
 ### Added
 - **A support card at start**: while Elite Nexus is in beta, each start shows a small card in the middle of the main
   window with the **GitHub Sponsors** and **Buy Me a Coffee** buttons, why support matters and what it pays for, and

@@ -109,8 +109,9 @@ else's report, idea or help. Thank you, commanders.
 
 **Sponsors**
 
-* **[sjgarth](https://github.com/sjgarth)** (Alvarrune on the Frontier Forums), and one sponsor who chose to stay
-  anonymous. Everyone who bought a coffee: thank you too.
+* **[sjgarth](https://github.com/sjgarth)** (Alvarrune on the Frontier Forums),
+  **[Joseph-Davila](https://github.com/Joseph-Davila)**, and one sponsor who chose to stay anonymous. Everyone who
+  bought a coffee: thank you too.
 
 **Bug reports and ideas on GitHub**
 
