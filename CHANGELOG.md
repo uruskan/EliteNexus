@@ -7,9 +7,9 @@ release time that section becomes the new version and the release workflow publi
 
 ## [0.8.0] - 2026-11-05
 
-> **This was going to be a beta.** 0.8.0-beta.1 went out earlier today. This time, though, everything was fixed and
-> polished the way a main version should be, so I'm releasing it as 0.8.0. That way the next big release can come
-> sooner.
+**This was going to be a beta.** 0.8.0-beta.1 went out earlier today. This time, though, everything was fixed and
+polished the way a main version should be, so I'm releasing it as 0.8.0. That way the next big release can come
+sooner.
 
 Everything since 0.7.2: the overlay, a new Combat page, Plan a loadout, a rebuilt Statistics page, and the fixes from a
 long play-test on 4 November, with ideas from GitHub and the Frontier Forums. In short:
