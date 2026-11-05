@@ -63,10 +63,13 @@ does. Switch it on with the round button in the toolbar or under Settings › Ov
 
 What it shows depends on what you're doing:
 
-* **Next jump**: in supercruise with a route, the next star and whether you can scoop it, and the jumps left
-  ("Scoopable · 12 jumps left"). It opens while the FSD charges a hyperspace jump, in hyperspace (the star you're
-  arriving at) and in the galaxy map: the next system's name (on your clipboard when "copy next system" is on),
-  the next neutron star on the route and your fuel.
+* **Next jump**: in supercruise with a route, the next star and whether you can scoop it, and the jumps left with
+  the straight-line distance to where the route ends ("Scoopable · 12 jumps · 231 ly"). It opens while the FSD
+  charges a hyperspace jump, in hyperspace (the star you're arriving at) and in the galaxy map: the next system's
+  name (on your clipboard when "copy next system" is on), the next neutron star on the route, your fuel, and the
+  route's last system with how far it is ("Orrere · 23.4 ly away", or "Last jump of the route"). The route is the
+  one plotted in the galaxy map, or one planned on Navigation; a planned stop Spansh gave no position for shows
+  without a distance.
 * **Arrival**: it opens for five seconds when you arrive somewhere worth it (a body worth at least the high-value
   setting, biology, an Earth-like, water or ammonia world, or a first discovery) and stays open while the FSS, system
   map or orrery is; then it settles to the bodies with biology and what the system is worth once mapped.

@@ -291,12 +291,22 @@ impl Lay {
                 }
             }
             Row::Spread(groups) => {
-                let widths: Vec<f32> = groups.iter().map(|g| self.width(g)).collect();
+                let mut widths: Vec<f32> = groups.iter().map(|g| self.width(g)).collect();
                 let n = groups.len();
+                // Too wide: the first group (a name, say) is cut short, so the values after it stay whole.
+                let others: f32 = widths.iter().skip(1).sum::<f32>() + 12.0 * k * n.saturating_sub(1) as f32;
+                let mut cut = None;
+                if let Some(first) = widths.first_mut()
+                    && *first > rect.width() - others
+                {
+                    *first = (rect.width() - others).max(0.0);
+                    cut = Some(*first);
+                }
                 let gap = if n > 1 { ((rect.width() - widths.iter().sum::<f32>()) / (n - 1) as f32).max(12.0 * k) } else { 0.0 };
                 let mut x = rect.left();
-                for (g, w) in groups.iter().zip(widths) {
-                    self.pieces(g, x, cy, (rect.right() - x).max(0.0));
+                for (i, (g, w)) in groups.iter().zip(widths).enumerate() {
+                    let room = if i == 0 { cut.unwrap_or(rect.right() - x) } else { rect.right() - x };
+                    self.pieces(g, x, cy, room.max(0.0));
                     x += w + gap;
                 }
             }

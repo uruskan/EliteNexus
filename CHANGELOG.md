@@ -106,6 +106,10 @@ release time that section becomes the new version and the release workflow publi
 - **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
   the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
   for later starts.
+- **Overlay: where the route ends.** On a plotted route (the galaxy map's, or one planned on Navigation), the open
+  island names the route's last system and how far it is in a straight line ("Orrere · 23.4 ly away"), under the
+  next jump, and the small island adds the distance to the jumps left ("2 jumps · 23.4 ly"). It showed only the
+  next jump and the jumps left.
 - **Settings › Follow my flight** (off by default) changes the page as you fly: it reads what you're doing from
   the game's Status.json and switches when that changes. Flying a system opens Exploration; getting below
   **Planet view below** (150 km by default) over a

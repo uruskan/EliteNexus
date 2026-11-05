@@ -282,6 +282,23 @@ pub struct Jump {
     pub on_clipboard: bool,
     /// In hyperspace: the system being jumped to and its star class.
     pub arriving: Option<(String, String)>,
+    /// Where the route ends, when it's known.
+    pub destination: Option<Destination>,
+}
+
+/// The route's last system, and how far it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Destination {
+    pub system: String,
+    /// Straight-line light years from here, in tenths (comparable, so the island is rebuilt only when it changes);
+    /// None when either position is unknown.
+    pub tenths_ly: Option<u32>,
+}
+
+impl Destination {
+    fn ly(&self) -> Option<f64> {
+        self.tenths_ly.map(|t| f64::from(t) / 10.0)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -469,6 +486,15 @@ fn read_jump(gs: &GameState, src: &Sources<'_>) -> Option<Jump> {
         return None;
     }
     let fuel = gs.fleet.current().filter(|s| s.fuel_main_capacity > 0.0).map(|s| (gs.fleet.fuel_main / s.fuel_main_capacity * 100.0).round().clamp(0.0, 100.0) as u8);
+    // Where the route ends: every stop of the game's route has its position, a planned one's usually does.
+    let last = match src.route {
+        Some(p) => p.remaining().last().map(|w| (w.system.as_str(), w.pos)),
+        None => gs.route_remaining().last().map(|h| (h.star_system.as_str(), Some(h.star_pos))),
+    };
+    let destination = last.filter(|(s, _)| !s.is_empty()).map(|(s, pos)| Destination {
+        system: s.to_string(),
+        tenths_ly: pos.zip(loc.star_pos).map(|(a, b)| (nexus_model::location::distance(a, b) * 10.0).round().clamp(0.0, f64::from(u32::MAX)) as u32),
+    });
     Some(Jump {
         on_clipboard: src.auto_copy && next.is_some_and(|(s, _)| s.eq_ignore_ascii_case(&system)),
         jumps_left: (jumps > 0).then_some(jumps).or_else(|| fsd.and_then(|t| t.remaining_jumps)),
@@ -477,7 +503,13 @@ fn read_jump(gs: &GameState, src: &Sources<'_>) -> Option<Jump> {
         star_class,
         fuel,
         arriving,
+        destination,
     })
+}
+
+/// A distance in light years: "9.8 ly", "231 ly", "1,234 ly".
+fn ly_words(ly: f64) -> String {
+    if ly < 100.0 { format!("{ly:.1} ly") } else { format!("{} ly", group_digits(ly.round() as i64)) }
 }
 
 /// The route ahead from its stops (system, star class, jumps to it, neutron): the next stop, the jumps left, and the
@@ -1001,9 +1033,11 @@ fn jump_card(j: &Jump, c: &Context) -> Card {
     };
     let (word, tint) = star_word(class);
     let lead_glyph = if class.is_empty() { icon(glyph::NAVIGATION_ARROW, Tint::White, 20) } else { Glyph::Star { class: class.to_string(), size: 22 } };
-    let trail = match j.jumps_left {
-        Some(n) => vec![text(n.to_string(), Style::Value, Tint::White), text(if n == 1 { "jump left" } else { "jumps left" }, Style::Caption, Tint::Dim)],
-        None => vec![text(system, Style::Value, Tint::White)],
+    let ly = j.destination.as_ref().and_then(Destination::ly);
+    let trail = match (j.jumps_left, ly) {
+        (Some(n), Some(ly)) => vec![text(n.to_string(), Style::Value, Tint::White), text(if n == 1 { "jump ·" } else { "jumps ·" }, Style::Caption, Tint::Dim), text(ly_words(ly), Style::Value, Tint::White)],
+        (Some(n), None) => vec![text(n.to_string(), Style::Value, Tint::White), text(if n == 1 { "jump left" } else { "jumps left" }, Style::Caption, Tint::Dim)],
+        (None, _) => vec![text(system, Style::Value, Tint::White)],
     };
     let compact = Compact { lead: vec![Piece::Glyph(lead_glyph), text(word, Style::Label, tint)], trail };
     let top = if jumping {
@@ -1029,6 +1063,20 @@ fn jump_card(j: &Jump, c: &Context) -> Card {
     let mut rows = vec![Row::Header { lead: Some(lead), top: span(top, Style::Caption, Tint::Dim), bottom: span(system, Style::Title, Tint::White), right }];
     if !spread.is_empty() {
         rows.push(Row::Spread(spread));
+    }
+    // Where the route ends, and how far that is. A planned stop can be several jumps (a neutron route's): only one jump
+    // left makes it the last jump.
+    if let Some(d) = &j.destination {
+        let name = match (d.system.eq_ignore_ascii_case(system), j.jumps_left) {
+            (true, Some(1)) => "Last jump of the route".to_string(),
+            (true, _) => "Last stop of the route".to_string(),
+            (false, _) => d.system.clone(),
+        };
+        let mut groups = vec![vec![Piece::Glyph(icon(glyph::FLAG_CHECKERED, Tint::Dim, 16)), text(name, Style::Label, Tint::White)]];
+        if let Some(ly) = d.ly() {
+            groups.push(vec![text(ly_words(ly), Style::Value, Tint::White), text("away", Style::Caption, Tint::Dim)]);
+        }
+        rows.push(Row::Spread(groups));
     }
     Card { moment: Moment::NextJump, compact, expanded: Some(Expanded { rows }) }
 }
@@ -1334,6 +1382,7 @@ pub fn demo(name: &str) -> Option<(IslandView, IslandView)> {
         fuel: Some(78),
         on_clipboard: true,
         arriving: Some(("Pru Aescs NC-M d7-192".into(), "K".into())),
+        destination: Some(Destination { system: "Colonia".into(), tenths_ly: Some(12_841) }),
     };
     let sampling = |far: bool| {
         let marks = vec![
@@ -1458,7 +1507,7 @@ mod tests {
     }
 
     fn jump() -> Jump {
-        Jump { system: "Beta".into(), star_class: "K".into(), jumps_left: Some(12), neutron_in: Some(3), fuel: Some(78), on_clipboard: true, arriving: Some(("Beta".into(), "K".into())) }
+        Jump { system: "Beta".into(), star_class: "K".into(), jumps_left: Some(12), neutron_in: Some(3), fuel: Some(78), on_clipboard: true, arriving: Some(("Beta".into(), "K".into())), destination: None }
     }
 
     fn sampling(stage: u8, nearest: u32) -> Sampling {
@@ -1724,5 +1773,48 @@ mod tests {
         let stops = [("A", "K", 1, false), ("B", "N", 1, true), ("C", "M", 2, false)];
         let (next, jumps, neutron) = summarise(stops.iter().copied());
         assert_eq!((next, jumps, neutron), (Some(("A", "K")), 4, Some(2)));
+    }
+
+    /// Play-test, 2026-11-04: Leesti → Uszaa → Orrere plotted in the galaxy map, and the island showed only Uszaa and
+    /// "2 jumps", not where the route ends or how far that is.
+    #[test]
+    fn the_route_says_where_it_ends_and_how_far() {
+        use nexus_journal::companion::RouteHop;
+        let hop = |name: &str, addr: u64, x: f64| RouteHop { star_system: name.into(), system_address: addr, star_pos: [x, 0.0, 0.0], star_class: "K".into() };
+        let mut gs = GameState::default();
+        gs.location.system = "Leesti".into();
+        gs.location.system_address = 1;
+        gs.location.star_pos = Some([0.0, 0.0, 0.0]);
+        gs.nav_route = vec![hop("Leesti", 1, 0.0), hop("Uszaa", 2, 14.2), hop("Orrere", 3, 23.44)];
+        let mining = MiningPrefs::default();
+        let src = Sources { route: None, pins: &[], mining: &mining, auto_copy: true, high_value: 1_000_000, now: 0 };
+        let j = read_jump(&gs, &src).expect("a route");
+        assert_eq!((j.system.as_str(), j.jumps_left), ("Uszaa", Some(2)));
+        assert_eq!(j.destination, Some(Destination { system: "Orrere".into(), tenths_ly: Some(234) }), "straight-line distance from here");
+        let mut r = Rhythm::default();
+        let mut i = Inputs { context: ctx(Activity::Supercruise), jump: Some(j.clone()), ..Inputs::default() };
+        assert_eq!(compact_words(&r.view(&i, false, 0.0)), ("Scoopable".into(), "2 jumps · 23.4 ly".into()));
+        i.context.focus = GuiFocus::GalaxyMap;
+        let v = r.view(&i, false, 1.0);
+        let Some(Row::Spread(groups)) = v.expanded.as_ref().and_then(|e| e.rows.last()) else { panic!("the destination row") };
+        assert_eq!(groups.iter().map(|g| words(g)).collect::<Vec<_>>(), ["Orrere", "23.4 ly away"]);
+        // The last jump: the row says so rather than naming the system twice.
+        let last = Jump { system: "Orrere".into(), jumps_left: Some(1), ..j.clone() };
+        let v = jump_card(&last, &i.context);
+        let Some(Row::Spread(groups)) = v.expanded.as_ref().and_then(|e| e.rows.last()) else { panic!("the destination row") };
+        assert_eq!(words(&groups[0]), "Last jump of the route");
+        // A planned stop three jumps away (a neutron route's) is the last stop, not the last jump.
+        let far = jump_card(&Jump { jumps_left: Some(3), ..last }, &i.context);
+        let Some(Row::Spread(groups)) = far.expanded.as_ref().and_then(|e| e.rows.last()) else { panic!("the destination row") };
+        assert_eq!(words(&groups[0]), "Last stop of the route");
+        // No position for the destination (a planned stop Spansh gave none): its name, and the jumps left as before.
+        let unknown = Jump { destination: Some(Destination { system: "Orrere".into(), tenths_ly: None }), ..j };
+        i.jump = Some(unknown.clone());
+        i.context.focus = GuiFocus::None;
+        assert_eq!(compact_words(&r.view(&i, false, 10.0)).1, "2 jumps left");
+        let v = jump_card(&unknown, &i.context);
+        let Some(Row::Spread(groups)) = v.expanded.as_ref().and_then(|e| e.rows.last()) else { panic!("the destination row") };
+        assert_eq!(groups.len(), 1, "no distance to show");
+        assert_eq!(ly_words(1_234.4), "1,234 ly");
     }
 }
