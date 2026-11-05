@@ -623,9 +623,14 @@ mod tests {
 
     #[test]
     fn unlocking_starts_where_the_commander_stands() {
+        // Not heard of: the whole way, from the referral.
+        let selene = eng::engineer_by_name("Selene Jean").unwrap();
+        let unknown = to_unlock(selene, None).unwrap();
+        assert!(unknown.starts_with("Learn of them: Reach grade 3") && unknown.contains(selene.meeting.trim()) && unknown.contains(selene.unlock.trim()), "{unknown}");
+        // Known to all from the start, even before the journal lists them: from the invitation.
         let e = eng::engineer_by_name("Felicity Farseer").unwrap();
-        let unknown = to_unlock(e, None).unwrap();
-        assert!(unknown.starts_with("Learn of them: ") && unknown.contains(e.meeting.trim()) && unknown.contains(e.unlock.trim()), "{unknown}");
+        let public = to_unlock(e, None).unwrap();
+        assert!(public.starts_with("Invitation: ") && public.contains(e.unlock.trim()), "{public}");
         assert_eq!(to_unlock(e, Some("Invited")), Some(format!("Unlock: {}", e.unlock.trim())));
         assert_eq!(to_unlock(e, Some("Unlocked")), None);
         // Every step ends its sentence, whether the data has a full stop or not.
