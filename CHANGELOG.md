@@ -257,6 +257,9 @@ release time that section becomes the new version and the release workflow publi
 - **Market › Sell my cargo**: commodity names in **Best buyer per commodity** no longer end in "…" while half the card
   stands empty, and the "planned in … ms" note no longer hides behind the top of the card under it (it's at the end
   of the settings bar now).
+- **Market › Sell my cargo** plans again when how old prices may be changes, also when it's changed on Find
+  commodity, which shares the setting: the plan could have used the old age while the bar showed the new one. Its
+  refresh button no longer does nothing while a plan is being made.
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.

@@ -425,8 +425,8 @@ pub struct MarketUi {
     /// Path typed into "import a downloaded dump".
     import_path: String,
     sell: Slot<Result<SellPlan, String>>,
-    /// (cargo snapshot time, tonnes, system): re-plan when any of them changes.
-    sell_key: (i64, i64, u64),
+    /// (cargo snapshot time, tonnes, system, how far, how old a price may be): re-plan when any of them changes.
+    sell_key: (i64, i64, u64, u64, u64),
     /// The rule being composed in "Price alerts", and the prices it's measured against (with what they were found for).
     new_watch: PriceWatch,
     alert_ref: Slot<Result<AlertRef, String>>,
@@ -496,7 +496,7 @@ impl MarketUi {
             hotspot_prices: Slot::default(),
             import_path: String::new(),
             sell: Slot::default(),
-            sell_key: (0, 0, 0),
+            sell_key: (0, 0, 0, 0, 0),
             new_watch: PriceWatch::default(),
             alert_ref: Slot::default(),
             alert_ref_key: None,
@@ -4233,8 +4233,12 @@ fn sell_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) -> Op
         });
     });
     ui.add_space(10.0);
-    let key = (gs.inventory.cargo.updated.0, tons, gs.location.system_address);
-    if (search || key != st.sell_key) && !st.sell.busy() {
+    let key = (gs.inventory.cargo.updated.0, tons, gs.location.system_address, st.prefs.sell_radius.to_bits(), st.prefs.max_age_h.to_bits());
+    // Asked to plan again while it plans: once it's done (the key it remembers no longer matches).
+    if search {
+        st.sell_key.0 = i64::MIN;
+    }
+    if key != st.sell_key && !st.sell.busy() {
         st.sell_key = key;
         let (db, radius, age_h) = (db.clone(), st.prefs.sell_radius, st.prefs.max_age_h);
         st.sell.run(ui.ctx(), move || finder::sell_plan(&db, origin, &hold, pad, radius, age_h));
