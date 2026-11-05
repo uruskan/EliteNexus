@@ -10,11 +10,15 @@ use nexus_model::fleet::{Ship, ShipModule, ShipPlace};
 use nexus_model::GameState;
 use nexus_spansh::{Coords, Reference, Spansh};
 
+mod plan;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
     #[default]
     Ships,
-    /// Where to buy a build.
+    /// Plan a loadout: a hull's modules and what they come to.
+    Plan,
+    /// Where to buy one ship or module, or a build.
     Buy,
 }
 
@@ -23,15 +27,33 @@ pub struct FleetUi {
     pub selected: Option<u64>,
     pub tab: Tab,
     buy: BuyUi,
+    plan: plan::PlanUi,
+    /// Plan a loadout starts from the current ship (once, in a screenshot run), with engineering planned for its frame
+    /// shift drive (`plan_demo`).
+    plan_autostart: bool,
+    plan_demo: bool,
 }
 
 impl FleetUi {
     /// `--tab buy` opens Where to buy; in a screenshot run it starts from the current ship's build
     /// and searches on the first frame. `--tab buy-one` searches for one module (a 6A frame shift
     /// drive) on the first frame. `--tab buy-build` opens A whole build, with nothing loaded.
+    /// `--tab plan` opens Plan a loadout with the current ship; `--tab plan-fsd` with its frame
+    /// shift drive's list open and engineering planned for it; `--tab plan-new` at its start (a
+    /// hull, a ship or a pasted build to start from).
     pub fn new(tab: Option<&str>, shot: bool) -> Self {
         let mut st = FleetUi::default();
         match tab.map(str::to_ascii_lowercase).as_deref() {
+            Some("plan") => {
+                st.tab = Tab::Plan;
+                st.plan_autostart = true;
+            }
+            Some("plan-fsd") => {
+                st.tab = Tab::Plan;
+                st.plan_autostart = true;
+                st.plan_demo = true;
+            }
+            Some("plan-new") => st.tab = Tab::Plan,
             Some("buy") => {
                 st.tab = Tab::Buy;
                 st.buy.mode = Mode::Build;
@@ -189,17 +211,58 @@ fn found(ui: &mut Ui, slot: &Slot<Found>) -> Option<FleetAction> {
 pub fn show(ui: &mut Ui, gs: &GameState, st: &mut FleetUi, spansh: &Spansh, rt: &tokio::runtime::Handle) -> Option<FleetAction> {
     st.buy.job.tick();
     st.buy.one_job.tick();
-    if let Some(t) = widgets::tabs(ui, st.tab, &[(Tab::Ships, "Ships"), (Tab::Buy, "Where to buy")]) {
+    if let Some(t) = widgets::tabs(ui, st.tab, &[(Tab::Ships, "Ships"), (Tab::Plan, "Plan a loadout"), (Tab::Buy, "Where to buy")]) {
         st.tab = t;
     }
     ui.add_space(12.0);
+    if std::mem::take(&mut st.plan_autostart)
+        && let Some(s) = gs.fleet.current()
+    {
+        st.plan.start_from_ship(s);
+        if st.plan_demo {
+            st.plan.demo_fsd();
+        }
+    }
     match st.tab {
         Tab::Ships => {
+            // Plan changes: the planner, starting from the ship as it is.
             if let Some(id) = ships_tab(ui, gs, st)
                 && let Some(s) = gs.fleet.ships.get(&id)
             {
-                st.buy.load_ship(s, gs);
-                st.tab = Tab::Buy;
+                st.plan.start_from_ship(s);
+                st.tab = Tab::Plan;
+            }
+            None
+        }
+        Tab::Plan => {
+            match plan::show(ui, gs, &mut st.plan) {
+                // Where to buy what the plan adds: a refit of their ship of that type, so what's fitted isn't bought.
+                // Either way Where to buy opens, with the search or with why there's none.
+                Some(plan::PlanOut::Buy { loadout, source }) => {
+                    match shopping::parse_build(&loadout) {
+                        Ok(b) => st.buy.load(b, source, gs),
+                        Err(e) => {
+                            st.buy.mode = Mode::Build;
+                            st.buy.error = Some(e);
+                        }
+                    }
+                    st.tab = Tab::Buy;
+                }
+                Some(plan::PlanOut::BuyOne(symbol)) => {
+                    match shopping::find_item(&symbol) {
+                        Ok(item) => {
+                            st.buy.pick(item);
+                            st.buy.autorun = true;
+                        }
+                        Err(e) => {
+                            st.buy.mode = Mode::One;
+                            st.buy.item_text = nexus_data::outfitting::display_name(&symbol);
+                            st.buy.unpick(e);
+                        }
+                    }
+                    st.tab = Tab::Buy;
+                }
+                None => {}
             }
             None
         }
@@ -207,7 +270,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut FleetUi, spansh: &Spansh, rt: 
     }
 }
 
-/// The ships and the selected one's loadout. Returns a ship whose "Where to buy" was clicked.
+/// The ships and the selected one's loadout. Returns a ship whose "Plan changes" was clicked.
 fn ships_tab(ui: &mut Ui, gs: &GameState, st: &mut FleetUi) -> Option<u64> {
     if gs.fleet.ships.is_empty() {
         empty(ui, icon::ROCKET, "No ships yet", "Ships appear after the game writes a Loadout or StoredShips event.");
@@ -216,7 +279,7 @@ fn ships_tab(ui: &mut Ui, gs: &GameState, st: &mut FleetUi) -> Option<u64> {
     let selected = st.selected.or(gs.fleet.current_ship_id);
     let mut ships: Vec<&Ship> = gs.fleet.ships.values().collect();
     ships.sort_by(|a, b| (Some(b.id) == gs.fleet.current_ship_id).cmp(&(Some(a.id) == gs.fleet.current_ship_id)).then(b.total_value().cmp(&a.total_value())));
-    let mut buy = None;
+    let mut plan = None;
     // The ship list goes beside the loadout only where that leaves the loadout about 700 pt, which its module table
     // needs for long module names and engineering badges; in a narrower window the ships are pills above it.
     if ui.available_width() < 1050.0 {
@@ -233,9 +296,9 @@ fn ships_tab(ui: &mut Ui, gs: &GameState, st: &mut FleetUi) -> Option<u64> {
         if let Some(s) = selected.and_then(|id| gs.fleet.ships.get(&id))
             && ship_detail(ui, gs, s)
         {
-            buy = Some(s.id);
+            plan = Some(s.id);
         }
-        return buy;
+        return plan;
     }
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
@@ -253,11 +316,11 @@ fn ships_tab(ui: &mut Ui, gs: &GameState, st: &mut FleetUi) -> Option<u64> {
             if let Some(s) = selected.and_then(|id| gs.fleet.ships.get(&id))
                 && ship_detail(ui, gs, s)
             {
-                buy = Some(s.id);
+                plan = Some(s.id);
             }
         });
     });
-    buy
+    plan
 }
 
 fn ship_tile(ui: &mut Ui, gs: &GameState, s: &Ship, selected: bool, st: &mut FleetUi) {
@@ -332,19 +395,19 @@ fn slot_group(slot: &str) -> (u8, &'static str) {
 /// The Loadout card's buttons for the ship's build, as they read from left to right.
 #[derive(Clone, Copy)]
 enum BuildButton {
-    WhereToBuy,
-    CopyJson,
+    PlanChanges,
+    CopyBuild,
     Edsy,
     Coriolis,
 }
 
 impl BuildButton {
-    const ALL: [BuildButton; 4] = [BuildButton::WhereToBuy, BuildButton::CopyJson, BuildButton::Edsy, BuildButton::Coriolis];
+    const ALL: [BuildButton; 4] = [BuildButton::PlanChanges, BuildButton::CopyBuild, BuildButton::Edsy, BuildButton::Coriolis];
 
     fn label(self) -> String {
         match self {
-            BuildButton::WhereToBuy => format!("{} Where to buy", icon::SHOPPING_CART),
-            BuildButton::CopyJson => format!("{} Copy JSON", icon::COPY),
+            BuildButton::PlanChanges => format!("{} Plan changes", icon::WRENCH),
+            BuildButton::CopyBuild => format!("{} Copy build", icon::COPY),
             BuildButton::Edsy => format!("{} EDSY", icon::ARROW_SQUARE_OUT),
             BuildButton::Coriolis => format!("{} Coriolis", icon::ARROW_SQUARE_OUT),
         }
@@ -352,8 +415,8 @@ impl BuildButton {
 
     fn tip(self) -> Option<&'static str> {
         match self {
-            BuildButton::WhereToBuy => Some("Open this build in Where to buy. It's all yours already, so nothing starts ticked: tick what you'd buy again, for a second ship like it"),
-            BuildButton::CopyJson => None,
+            BuildButton::PlanChanges => Some("Plan changes to this ship's modules and see what they come to (jump range, speed, shields, armour, power, cost), then find where to buy what's new"),
+            BuildButton::CopyBuild => Some("Copy the build as the game records it, to paste into EDSY, Coriolis or Where to buy"),
             BuildButton::Edsy => Some("Open this exact build in edsy.org"),
             BuildButton::Coriolis => Some("Open this exact build in coriolis.io"),
         }
@@ -382,9 +445,9 @@ fn build_buttons(ui: &mut Ui, right_to_left: bool) -> Option<BuildButton> {
     clicked
 }
 
-/// The selected ship's loadout. Returns true when "Where to buy" was clicked.
+/// The selected ship's loadout. Returns true when "Plan changes" was clicked.
 fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) -> bool {
-    let mut buy = false;
+    let mut plan = false;
     card(ui, "Loadout", |ui| {
         let name = RichText::new(s.display_name()).font(display(22.0));
         match &s.loadout_json {
@@ -410,8 +473,8 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) -> bool {
                     ui.horizontal_wrapped(|ui| build_buttons(ui, false)).inner
                 };
                 match clicked {
-                    Some(BuildButton::WhereToBuy) => buy = true,
-                    Some(BuildButton::CopyJson) => ui.ctx().copy_text(json.clone()),
+                    Some(BuildButton::PlanChanges) => plan = true,
+                    Some(BuildButton::CopyBuild) => ui.ctx().copy_text(json.clone()),
                     Some(BuildButton::Edsy) => {
                         if let Some(url) = crate::export::edsy_url(json) {
                             ui.ctx().open_url(egui::OpenUrl::new_tab(url));
@@ -454,7 +517,7 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) -> bool {
         card(ui, "Modules", |ui| {
             ui.label(RichText::new("No loadout recorded for this ship yet — fly it once and Elite Nexus captures the full build.").color(pal::DIM));
         });
-        return buy;
+        return plan;
     }
     let mut modules: Vec<&ShipModule> = s.modules.iter().filter(|m| !m.item.contains("_cockpit") && !m.slot.eq_ignore_ascii_case("VesselVoice") && !m.slot.contains("Paint") && !m.slot.contains("Decal") && !m.slot.contains("Name") && !m.slot.contains("Bobble") && !m.slot.contains("Livery")).collect();
     modules.sort_by(|a, b| slot_group(&a.slot).0.cmp(&slot_group(&b.slot).0).then(a.slot.cmp(&b.slot)));
@@ -551,7 +614,7 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) -> bool {
                 });
             });
         });
-    buy
+    plan
 }
 
 fn kv_inline(ui: &mut Ui, k: &str, v: String) {
@@ -644,7 +707,7 @@ fn build_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi) {
             // A build they have all of (one of their own ships): say so, rather than leave an empty list to puzzle over.
             if to_buy == 0 && st.needs.iter().all(|n| n.had) {
                 ui.add_space(4.0);
-                ui.add(Label::new(RichText::new(format!("{} You have all of it already: the hull, and every module fitted on it or in your storage. Tick what you'd buy again, for a second ship like it.", icon::CHECK_CIRCLE)).color(pal::GOOD)).wrap());
+                ui.add(Label::new(RichText::new(format!("{} You have all of it already: the hull, and every module fitted on it or in your storage. Tick what you'd buy again, for a second ship like it, or plan changes to it on the Plan a loadout tab.", icon::CHECK_CIRCLE)).color(pal::GOOD)).wrap());
             }
             ui.add_space(2.0);
             let mut last = None;
@@ -736,7 +799,7 @@ fn paste_box(ui: &mut Ui, gs: &GameState, st: &mut BuyUi) {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
             for s in &mine {
-                let name = if s.name.trim().is_empty() { s.type_name.clone() } else { format!("{} · {}", s.name.trim(), s.type_name) };
+                let name = ship_label(s);
                 let known = s.loadout_json.is_some();
                 // A pill as widgets::pill draws it, greyed when there's no build. (Not add_enabled_ui: its child Ui gets
                 // only the rest of the row, and the name then wraps a letter a line.)
@@ -764,6 +827,13 @@ fn paste_box(ui: &mut Ui, gs: &GameState, st: &mut BuyUi) {
             st.load_ship(s, gs);
         }
     }
+}
+
+/// A ship as a pill names it: "Wayfarer · Krait Phantom", or the type alone when it has no name of its own (or is
+/// named after its type).
+fn ship_label(s: &Ship) -> String {
+    let name = s.name.trim();
+    if name.is_empty() || name.eq_ignore_ascii_case(&s.type_name) { s.type_name.clone() } else { format!("{name} · {}", s.type_name) }
 }
 
 /// Why a ship has no build to start from.

@@ -80,7 +80,20 @@ release time that section becomes the new version and the release workflow publi
   prices in credits is flagged as possibly ARX-only. Every station shows how old its outfitting list is and what the
   build costs there, with a route button. Spansh can't tell a fixed weapon from a gimballed one, so each station's own
   list is checked for the exact modules. When no station sells everything, it suggests two stops, or the nearest
-  seller of each missing piece. Ships › **Where to buy** opens it with that ship's build.
+  seller of each missing piece.
+- **Fleet › Plan a loadout**: plan a ship's modules and see what they come to as you change them: jump range (the
+  game's own "max", with a full tank, laden, and on one tank), speed and boost, shields and armour with their
+  resistances, power drawn retracted and deployed against what the power plant makes, mass, cargo and fuel, cost and
+  rebuy. Start from a new hull with the modules the shipyard sells it with, one of your ships (each figure then says
+  how it changed) or a pasted build. A slot lists only the modules the game lets you fit there. **What's new** adds
+  up what you'd buy at list prices and takes it to Where to buy, which leaves out what's fitted on your ship or in your
+  storage; a slot's **Where to buy it** finds one module. Plan engineering for a module (a blueprint, the grade to
+  reach, an experimental effect), and **Materials for the engineering** adds up what it takes against the materials
+  you hold; planned engineering doesn't change the figures yet (EDSY and Coriolis open the plan to see it there). The
+  figures come from EDCD's coriolis-data and match the game's own for an unengineered Kestrel Mk II; engineering on
+  your ship counts with the game's own values. On a
+  ship's Loadout card, **Plan changes** replaces Where to buy (a ship you own has nothing to buy), and **Copy JSON**
+  is now **Copy build**.
 - **Fleet › Where to buy: one ship or module.** Type a ship or a module ("Anaconda", "6A FSD", "gimballed
   multi-cannon"), pick it from the suggestions, and Elite Nexus finds the nearest stations that sell it, with its
   price there and how old the station's list is. A module is searched where the ship you fly can land; a hull, where
