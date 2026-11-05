@@ -364,28 +364,40 @@ fn spelled_out(asked: &str) -> String {
     asked.split_whitespace().map(|w| if w.eq_ignore_ascii_case("fsd") { "Frame Shift Drive" } else { w }).collect::<Vec<_>>().join(" ")
 }
 
+/// A name to compare by: FSD spelled out (some modules' names say "FSD", others "Frame Shift Drive"), lower-case,
+/// letters and digits only.
+fn key(name: &str) -> String {
+    name_key(&spelled_out(name))
+}
+
 /// The modules sold under their own name: a MercGear row shares the symbol of the module it's based on, which is what
-/// stations list.
+/// stations list, and so does the plain twin of a module a new hull comes with.
 fn sold_modules() -> impl Iterator<Item = &'static outfitting::Module> {
-    outfitting::all().iter().filter(|m| m.category != outfitting::ModuleCategory::MercGear && outfitting::module(&m.symbol).is_some_and(|r| std::ptr::eq(r, *m)))
+    outfitting::all().iter().filter(|m| m.category != outfitting::ModuleCategory::MercGear && !free_twin(m) && outfitting::module(&m.symbol).is_some_and(|r| std::ptr::eq(r, *m)))
+}
+
+/// A module given with a new hull (`…_free`: the Sidewinder's 2E drive, the free vessel hangars) that has a plain twin
+/// of the same name: stations sell the twin.
+fn free_twin(m: &outfitting::Module) -> bool {
+    m.symbol.strip_suffix("_free").is_some_and(|plain| outfitting::module(plain).is_some())
 }
 
 /// A module or hull asked for: its name as the game shows it ("6A Frame Shift Drive", "2A Gimballed Multi-cannon",
 /// "Mandalay"), its journal symbol, or words only one module's name has.
 pub fn find_item(asked: &str) -> Result<Item, String> {
-    let asked = spelled_out(asked);
-    let k = name_key(&asked);
-    if let Some(s) = ships::all().iter().find(|s| name_key(&s.name) == k || name_key(&s.fdev_name) == k || s.symbol.eq_ignore_ascii_case(asked.trim())) {
+    let k = key(asked);
+    if let Some(s) = ships::all().iter().find(|s| key(&s.name) == k || key(&s.fdev_name) == k || s.symbol.eq_ignore_ascii_case(asked.trim())) {
         return Ok(Item::Hull(s));
     }
-    if let Some(m) = outfitting::module(&asked) {
+    if let Some(m) = outfitting::module(asked) {
         return Ok(Item::Module(m));
     }
+    let asked = spelled_out(asked);
     let named = |exact: bool| {
         let words: Vec<String> = asked.split_whitespace().map(name_key).filter(|w| !w.is_empty()).collect();
         let mut hits: Vec<&'static outfitting::Module> = Vec::new();
-        for m in outfitting::all() {
-            let name = name_key(&m.display_name());
+        for m in outfitting::all().iter().filter(|m| !free_twin(m)) {
+            let name = key(&m.display_name());
             let hit = if exact { name == k } else { !words.is_empty() && words.iter().all(|w| name.contains(w.as_str())) };
             // MercGear rows share their module's symbol: the module is what's sold.
             if hit && !hits.iter().any(|h| h.symbol == m.symbol) {
@@ -418,12 +430,12 @@ pub fn suggest(typed: &str, limit: usize) -> Vec<Item> {
         return Vec::new();
     }
     let rank = |name: &str| -> Option<u8> {
-        let key = name_key(name);
-        if key == k {
+        let name = key(name);
+        if name == k {
             Some(0)
-        } else if key.starts_with(&k) {
+        } else if name.starts_with(&k) {
             Some(1)
-        } else if words.iter().all(|w| key.contains(w.as_str())) {
+        } else if words.iter().all(|w| name.contains(w.as_str())) {
             Some(2)
         } else {
             None
@@ -865,13 +877,13 @@ mod tests {
         let mut fleet = Fleet::default();
         let fit = |s: &mut Ship, slot: &str, item: &str| s.modules.push(ShipModule { slot: slot.into(), item: item.into(), on: true, ..Default::default() });
         // Their Anaconda has the FSD and one of the build's two beam lasers; the other laser is in storage.
-        let mut mine = Ship::new(7, "anaconda");
+        let mut mine = Ship::new(8, "anaconda");
         mine.name = "Bonecrusher".into();
         fit(&mut mine, "FrameShiftDrive", "int_hyperdrive_size6_class5");
         fit(&mut mine, "LargeHardpoint1", "hpt_beamlaser_gimbal_large");
-        fleet.ships.insert(7, mine);
-        // Another Anaconda with less of the build fitted isn't the one compared.
-        fleet.ships.insert(8, Ship::new(8, "anaconda"));
+        fleet.ships.insert(8, mine);
+        // Another Anaconda with less of the build fitted, listed first, isn't the one compared.
+        fleet.ships.insert(7, Ship::new(7, "anaconda"));
         fleet.stored_modules.push(StoredModuleInfo { name: "hpt_beamlaser_gimbal_large".into(), system: Some("Sol".into()), ..Default::default() });
         let list = needs(&b, &fleet);
         let row = |sym: &str| list.iter().find(|n| n.symbol == sym).expect(sym);
@@ -882,6 +894,16 @@ mod tests {
         assert_eq!((beams.buy, beams.note.as_deref()), (false, Some("1 fitted on your Bonecrusher (Anaconda), 1 in your storage in Sol")));
         let plant = row("int_powerplant_size8_class5");
         assert_eq!((plant.buy, plant.note.as_deref()), (true, None), "not fitted: still to buy");
+        // Two with as much of it fitted: the one they fly.
+        let mut twin = Ship::new(9, "anaconda");
+        twin.name = "Twin".into();
+        fit(&mut twin, "FrameShiftDrive", "int_hyperdrive_size6_class5");
+        fit(&mut twin, "LargeHardpoint1", "hpt_beamlaser_gimbal_large");
+        fleet.ships.insert(9, twin);
+        fleet.current_ship_id = Some(9);
+        assert!(needs(&b, &fleet)[0].note.as_deref().is_some_and(|n| n.starts_with("You own one: Twin (Anaconda) (your current ship)")), "{:?}", needs(&b, &fleet)[0].note);
+        fleet.current_ship_id = Some(8);
+        assert!(needs(&b, &fleet)[0].note.as_deref().is_some_and(|n| n.starts_with("You own one: Bonecrusher (Anaconda) (your current ship)")));
         // A ship's own build: all of it is fitted, nothing to buy.
         let mut whole = Ship::new(9, "anaconda");
         for m in &b.modules {
@@ -906,10 +928,12 @@ mod tests {
         let fsd = names("6a fsd");
         assert_eq!(fsd[0], "6A Frame Shift Drive", "{fsd:?}");
         assert!(fsd.iter().all(|n| n.starts_with("6A")), "{fsd:?}");
-        // Words in any order, parts of words too; the biggest first.
+        // Words in any order, parts of words too (the AX multi-cannons are gimballed multi-cannons as well); of each
+        // kind, the biggest first.
         let mc = names("multi gimb");
-        assert!(!mc.is_empty() && mc.iter().all(|n| n.contains("Gimballed Multi-cannon")), "{mc:?}");
-        assert!(mc[0].starts_with('4'), "{mc:?}");
+        assert!(!mc.is_empty() && mc.iter().all(|n| n.contains("Gimballed") && n.contains("Multi-cannon")), "{mc:?}");
+        let plain: Vec<&String> = mc.iter().filter(|n| n.contains("Gimballed Multi-cannon")).collect();
+        assert!(plain.len() == 4 && plain[0].starts_with('4') && plain[3].starts_with('1'), "{mc:?}");
         assert!(suggest("", 8).is_empty() && suggest("toaster", 8).is_empty());
         // A MercGear twin shares its module's symbol: each symbol is offered once.
         let mut symbols: Vec<&str> = suggest("power distributor", 500).into_iter().map(Item::symbol).collect();
@@ -917,6 +941,15 @@ mod tests {
         symbols.sort_unstable();
         symbols.dedup();
         assert_eq!(all, symbols.len());
+        // A pick is a name, so no two modules offered share one, and each name finds its module: the free twins a new
+        // hull comes with (the Sidewinder's 2E drive, free vessel hangars) aren't offered, as stations sell the plain one.
+        let mut by_name: std::collections::HashMap<String, &str> = std::collections::HashMap::new();
+        let clashes: Vec<String> = sold_modules().filter_map(|m| by_name.insert(m.display_name(), &m.symbol).map(|other| format!("{} ({other}, {})", m.display_name(), m.symbol))).collect();
+        assert!(clashes.is_empty(), "{clashes:?}");
+        for m in sold_modules() {
+            assert!(matches!(find_item(&m.display_name()), Ok(Item::Module(x)) if x.symbol == m.symbol), "{} doesn't find {}", m.display_name(), m.symbol);
+        }
+        assert!(matches!(find_item("5D Vessel Hangar"), Ok(Item::Module(m)) if m.symbol == "int_fighterbay_size5_class1"));
         // What each is, for the list.
         let kind = |asked: &str| find_item(asked).expect(asked).kind();
         assert_eq!(kind("Mandalay"), "Ship · M pad");

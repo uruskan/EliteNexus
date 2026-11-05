@@ -147,7 +147,7 @@ fn shape_buy(what: &str, from: &str, needs: &[Need], q: &Search, out: &Outcome, 
             notes.push(format!("Spansh knows no station near {from} that sells {}{}. Try without the data-age limit, with fleet carriers, or from another system.", if n == 1 { q.wanted[0].name.clone() } else { "any of these".into() }, match q.pad { 'L' => " with a large pad", 'M' => " with a medium or large pad", _ => "" }));
         }
         if level > 0 && !skipped.is_empty() {
-            notes.push("What isn't searched for (in storage, or come with the hull) left out to fit.".into());
+            notes.push("What isn't searched for (fitted on their ship, in storage, come with the hull, or not asked for) left out to fit.".into());
         }
         v["notes"] = json!(notes);
         v
@@ -226,7 +226,7 @@ impl NexusTools {
             let mut v = json!({
                 "searched_for": what, "to_buy": [],
                 "not_searched": needs.iter().map(|x| json!({ "item": x.name, "why": x.note })).collect::<Vec<_>>(),
-                "notes": ["Nothing to buy: the commander has all of it (fitted on their own ship of that type, in storage, or the hull itself), or it comes with the hull."],
+                "notes": ["Nothing to buy: the commander has all of it (fitted on their own ship of that type, in storage, or the hull itself), or it comes with the hull. To buy modules again (for a second ship like it), name them in items, without ship or build."],
             });
             strip_nulls(&mut v);
             return Ok(v);

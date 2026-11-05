@@ -28,7 +28,7 @@ pub struct FleetUi {
 impl FleetUi {
     /// `--tab buy` opens Where to buy; in a screenshot run it starts from the current ship's build
     /// and searches on the first frame. `--tab buy-one` searches for one module (a 6A frame shift
-    /// drive) on the first frame.
+    /// drive) on the first frame. `--tab buy-build` opens A whole build, with nothing loaded.
     pub fn new(tab: Option<&str>, shot: bool) -> Self {
         let mut st = FleetUi::default();
         match tab.map(str::to_ascii_lowercase).as_deref() {
@@ -36,6 +36,10 @@ impl FleetUi {
                 st.tab = Tab::Buy;
                 st.buy.mode = Mode::Build;
                 st.buy.autorun = shot;
+            }
+            Some("buy-build") => {
+                st.tab = Tab::Buy;
+                st.buy.mode = Mode::Build;
             }
             Some("buy-one") => {
                 st.tab = Tab::Buy;
@@ -64,15 +68,19 @@ enum Mode {
     Build,
 }
 
-/// Where to buy: one ship or module, or a build and its shopping list; the search and what it found.
+/// A search's answer with what it searched for and from where, so results always go with their own query.
+type Found = (Search, String, Result<Outcome, String>);
+
+/// Where to buy: one ship or module, or a build and its shopping list; the searches and what they found.
 struct BuyUi {
     mode: Mode,
     /// One ship or module: what's typed, and what was picked.
     item_text: String,
     item: Option<shopping::Item>,
     item_error: Option<String>,
-    one_job: Slot<Result<Outcome, String>>,
-    one_searched: Option<(Search, String)>,
+    one_job: Slot<Found>,
+    /// A setting changed while a search ran: search again once it's done.
+    one_pending: bool,
     paste: String,
     error: Option<String>,
     build: Option<Build>,
@@ -83,9 +91,8 @@ struct BuyUi {
     near: String,
     carriers: bool,
     max_age: Option<u32>,
-    job: Slot<Result<Outcome, String>>,
-    /// What the shown results were searched for, and from where.
-    searched: Option<(Search, String)>,
+    job: Slot<Found>,
+    pending: bool,
     autorun: bool,
 }
 
@@ -97,7 +104,7 @@ impl Default for BuyUi {
             item: None,
             item_error: None,
             one_job: Slot::default(),
-            one_searched: None,
+            one_pending: false,
             paste: String::new(),
             error: None,
             build: None,
@@ -107,7 +114,7 @@ impl Default for BuyUi {
             carriers: true,
             max_age: None,
             job: Slot::default(),
-            searched: None,
+            pending: false,
             autorun: false,
         }
     }
@@ -121,26 +128,61 @@ impl BuyUi {
         self.error = None;
         self.paste.clear();
         self.job = Slot::default();
-        self.searched = None;
+        self.pending = false;
         self.mode = Mode::Build;
     }
 
-    /// Looks for one ship or module from now on (a click elsewhere, such as the planner's).
+    /// Looks for one ship or module from now on (a pick here, or a click elsewhere such as the planner's).
     fn pick(&mut self, item: shopping::Item) {
         self.item_text = item.name();
         self.item = Some(item);
         self.item_error = None;
         self.mode = Mode::One;
         self.one_job = Slot::default();
-        self.one_searched = None;
+        self.one_pending = false;
+    }
+
+    /// What's typed names nothing: say so, and drop the last pick and its results rather than show them beside it.
+    fn unpick(&mut self, error: String) {
+        self.item = None;
+        self.item_error = Some(error);
+        self.one_job = Slot::default();
+        self.one_pending = false;
     }
 
     fn load_ship(&mut self, s: &Ship, gs: &GameState) {
         match s.loadout_json.as_deref().map(shopping::parse_build) {
             Some(Ok(b)) => self.load(b, s.display_name(), gs),
-            Some(Err(e)) => self.error = Some(e),
-            None => self.error = Some("No loadout recorded for this ship yet: fly it once and Elite Nexus captures the build.".into()),
+            Some(Err(e)) => {
+                self.error = Some(e);
+                self.mode = Mode::Build;
+            }
+            None => {
+                self.error = Some("No loadout recorded for this ship yet: fly it once and Elite Nexus captures the build.".into());
+                self.mode = Mode::Build;
+            }
         }
+    }
+}
+
+/// Starts a search for `q` from `from` in `slot`.
+fn start_search(ui: &Ui, slot: &mut Slot<Found>, spansh: &Spansh, rt: &tokio::runtime::Handle, q: Search, from: String) {
+    let sp = spansh.clone();
+    slot.run_async(ui.ctx(), rt, async move {
+        let out = shopping::find(&sp, &q).await;
+        (q, from, out)
+    });
+}
+
+/// A search's answer under the search, or its error.
+fn found(ui: &mut Ui, slot: &Slot<Found>) -> Option<FleetAction> {
+    match &slot.last {
+        Some((_, _, Err(e))) => {
+            ui.add(Label::new(RichText::new(format!("{} {e}", icon::WARNING_CIRCLE)).color(pal::BAD)).wrap());
+            None
+        }
+        Some((q, from, Ok(out))) => outcome(ui, out, q, from),
+        None => None,
     }
 }
 
@@ -306,7 +348,7 @@ fn ship_detail(ui: &mut Ui, _gs: &GameState, s: &Ship) -> bool {
                     if ui.button(format!("{} Copy JSON", icon::COPY)).clicked() {
                         ui.ctx().copy_text(json.clone());
                     }
-                    buy = ui.button(format!("{} Where to buy", icon::SHOPPING_CART)).on_hover_text("Find the nearest stations that sell this build's modules and hull").clicked();
+                    buy = ui.button(format!("{} Where to buy", icon::SHOPPING_CART)).on_hover_text("Open this build in Where to buy. It's all yours already, so nothing starts ticked: tick what you'd buy again, for a second ship like it").clicked();
                 }
             });
         });
@@ -450,9 +492,12 @@ fn buy_tab(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt: &to
     let mut one_now = false;
     if std::mem::take(&mut st.autorun) {
         match st.mode {
+            // A screenshot run: the current ship's build, every row ticked as for a second ship like it (the ship's own
+            // modules are all fitted, so none would be), searched on the first frame.
             Mode::Build => {
                 if let Some(s) = gs.fleet.current() {
                     st.load_ship(s, gs);
+                    st.needs.iter_mut().for_each(|n| n.buy = true);
                     search_now = st.build.is_some();
                 }
             }
@@ -542,7 +587,7 @@ fn build_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi) {
     if change {
         // Another build: the search settings and the one-item search stay.
         let old = std::mem::take(st);
-        *st = BuyUi { mode: Mode::Build, near: old.near, carriers: old.carriers, max_age: old.max_age, item_text: old.item_text, item: old.item, one_job: old.one_job, one_searched: old.one_searched, ..BuyUi::default() };
+        *st = BuyUi { mode: Mode::Build, near: old.near, carriers: old.carriers, max_age: old.max_age, item_text: old.item_text, item: old.item, item_error: old.item_error, one_job: old.one_job, one_pending: old.one_pending, ..BuyUi::default() };
     }
 }
 
@@ -618,7 +663,10 @@ fn paste_box(ui: &mut Ui, gs: &GameState, st: &mut BuyUi) {
             for s in &mine {
                 let name = if s.name.trim().is_empty() { s.type_name.clone() } else { format!("{} · {}", s.name.trim(), s.type_name) };
                 let known = s.loadout_json.is_some();
-                let r = ui.add_enabled_ui(known, |ui| widgets::pill(ui, false, &name)).inner;
+                // A pill as widgets::pill draws it, greyed when there's no build. (Not add_enabled_ui: its child Ui gets
+                // only the rest of the row, and the name then wraps a letter a line.)
+                let text = RichText::new(&name).size(size::CALLOUT).color(pal::TEXT);
+                let r = ui.add_enabled(known, egui::Button::new(text).fill(pal::CARD_HI).corner_radius(egui::CornerRadius::same(255)).min_size(egui::vec2(0.0, 30.0)));
                 if r.clicked() {
                     pick = Some(*s);
                 }
@@ -656,7 +704,8 @@ fn search_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt:
         };
         let ship = build.ship.clone();
         let name = nexus_data::ships::ship_name(&ship);
-        let changed = search_settings(ui, gs, st, &ship, &format!("{} {name}", a_or_an(&name)));
+        // A changed setting searches again once there are results to change, after the search running now if one is.
+        st.pending |= search_settings(ui, gs, st, &ship, &format!("{} {name}", a_or_an(&name)));
         ui.add_space(4.0);
         let busy = st.job.busy();
         let wanted = st.needs.iter().filter(|n| n.buy).count();
@@ -664,13 +713,10 @@ fn search_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt:
             ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
             let label = if busy { format!("{} Searching…", icon::HOURGLASS) } else { format!("{} Find stations", icon::MAGNIFYING_GLASS) };
             let clicked = ui.add_enabled_ui(!busy && wanted > 0, |ui| widgets::primary_button(ui, &label)).inner.clicked();
-            // A changed setting searches again, once there are results to change.
-            if (clicked || search_now || (changed && st.searched.is_some())) && !busy && wanted > 0 {
+            if (clicked || search_now || (st.pending && st.job.last.is_some())) && !busy && wanted > 0 {
                 let (near, from) = near_ref(gs, &st.near);
-                let q = Search::new(&st.needs, &ship, near, st.carriers, st.max_age);
-                let (sp, query) = (spansh.clone(), q.clone());
-                st.job.run_async(ui.ctx(), rt, async move { shopping::find(&sp, &query).await });
-                st.searched = Some((q, from));
+                start_search(ui, &mut st.job, spansh, rt, Search::new(&st.needs, &ship, near, st.carriers, st.max_age), from);
+                st.pending = false;
             }
             if busy {
                 ui.spinner();
@@ -680,13 +726,7 @@ fn search_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt:
             }
         });
         ui.add_space(8.0);
-        match (&st.job.last, &st.searched) {
-            (Some(Err(e)), _) => {
-                ui.add(Label::new(RichText::new(format!("{} {e}", icon::WARNING_CIRCLE)).color(pal::BAD)).wrap());
-            }
-            (Some(Ok(out)), Some((q, from))) => action = outcome(ui, out, q, from),
-            _ => {}
-        }
+        action = found(ui, &st.job);
         ui.add_space(6.0);
         footnote(
             ui,
@@ -709,12 +749,12 @@ fn one_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt: &t
         });
         let mut run = search_now;
         if let Some(name) = done.picked.or_else(|| done.submitted.then(|| st.item_text.clone())) {
-            match shopping::find_item(&name) {
+            match pick_by_name(&name) {
                 Ok(item) => {
                     st.pick(item);
                     run = true;
                 }
-                Err(e) => st.item_error = Some(e),
+                Err(e) => st.unpick(e),
             }
         }
         if let Some(e) = &st.item_error {
@@ -724,26 +764,34 @@ fn one_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt: &t
         ui.add_space(10.0);
         // A hull is bought where it lands (its own pad); a module, where the ship you fly lands.
         let flying = gs.fleet.current();
-        let (hull, who) = match st.item {
-            Some(shopping::Item::Hull(s)) => (s.symbol.clone(), format!("{} {}", a_or_an(&s.name), s.name)),
-            _ => (flying.map(|s| s.ship_type.clone()).unwrap_or_default(), flying.map_or_else(|| "Your ship".into(), |s| format!("Your {}", s.type_name))),
+        let flying_type = flying.map(|s| s.ship_type.clone()).unwrap_or_default();
+        let hull = st.item.map_or_else(|| flying_type.clone(), |i| i.pad_hull(&flying_type));
+        let who = match st.item {
+            Some(shopping::Item::Hull(s)) => format!("{} {}", a_or_an(&s.name), s.name),
+            _ => flying.map_or_else(|| "Your ship".into(), |s| format!("Your {}", s.type_name)),
         };
-        let changed = search_settings(ui, gs, st, &hull, &who);
+        st.one_pending |= search_settings(ui, gs, st, &hull, &who);
         ui.add_space(4.0);
         let busy = st.one_job.busy();
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
             let label = if busy { format!("{} Searching…", icon::HOURGLASS) } else { format!("{} Find stations", icon::MAGNIFYING_GLASS) };
-            let clicked = ui.add_enabled_ui(!busy && st.item.is_some(), |ui| widgets::primary_button(ui, &label)).inner.clicked();
+            let typed = !st.item_text.trim().is_empty();
+            let clicked = ui.add_enabled_ui(!busy && (st.item.is_some() || typed), |ui| widgets::primary_button(ui, &label)).inner.clicked();
+            // A click searches for what the field says: typed over the last pick, it's looked up first.
+            if clicked && st.item.is_none_or(|i| i.name() != st.item_text.trim()) {
+                match pick_by_name(&st.item_text) {
+                    Ok(item) => st.pick(item),
+                    Err(e) => st.unpick(e),
+                }
+            }
             if let Some(item) = st.item
                 && !busy
-                && (clicked || run || (changed && st.one_searched.is_some()))
+                && (clicked || run || (st.one_pending && st.one_job.last.is_some()))
             {
                 let (near, from) = near_ref(gs, &st.near);
-                let q = Search::new(&[item.need()], &hull, near, st.carriers, st.max_age);
-                let (sp, query) = (spansh.clone(), q.clone());
-                st.one_job.run_async(ui.ctx(), rt, async move { shopping::find(&sp, &query).await });
-                st.one_searched = Some((q, from));
+                start_search(ui, &mut st.one_job, spansh, rt, Search::new(&[item.need()], &item.pad_hull(&flying_type), near, st.carriers, st.max_age), from);
+                st.one_pending = false;
             }
             if busy {
                 ui.spinner();
@@ -758,13 +806,7 @@ fn one_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt: &t
             }
         });
         ui.add_space(8.0);
-        match (&st.one_job.last, &st.one_searched) {
-            (Some(Err(e)), _) => {
-                ui.add(Label::new(RichText::new(format!("{} {e}", icon::WARNING_CIRCLE)).color(pal::BAD)).wrap());
-            }
-            (Some(Ok(out)), Some((q, from))) => action = outcome(ui, out, q, from),
-            _ => {}
-        }
+        action = found(ui, &st.one_job);
         ui.add_space(6.0);
         footnote(
             ui,
@@ -773,6 +815,15 @@ fn one_card(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt: &t
         ui.label(RichText::new("Station data © Spansh (spansh.co.uk)").size(size::CAPTION).color(pal::FAINT));
     });
     action
+}
+
+/// What a picked or typed name is: the suggestion of that name (each is offered once), else a lookup by name.
+fn pick_by_name(name: &str) -> Result<shopping::Item, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Type a ship or module first.".into());
+    }
+    shopping::suggest(name, 200).into_iter().find(|i| i.name().eq_ignore_ascii_case(name)).map_or_else(|| shopping::find_item(name), Ok)
 }
 
 /// Where to search from and which stations count, all in view: near which system, the landing pad `hull` needs
@@ -858,7 +909,7 @@ fn outcome(ui: &mut Ui, out: &Outcome, q: &Search, from: &str) -> Option<FleetAc
     for (i, seller) in &out.elsewhere {
         match seller {
             Some(o) => rows.push(Row { offer: o, items: vec![*i], distance: format!("{:.1} ly", o.distance_ly) }),
-            None => nowhere.push(q.wanted[*i].name.as_str()),
+            None => nowhere.extend(q.wanted.get(*i).map(|w| w.name.as_str())),
         }
     }
     let action = offers_table(ui, "buy-stops", &rows, q);

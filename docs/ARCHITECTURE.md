@@ -20,8 +20,8 @@ Parallel builds: set your own `CARGO_TARGET_DIR` (e.g. `target-agents\<name>`) t
 the window is placed off-screen and never takes focus). `--size 1000x700` tests responsive layouts, `--tab <name>` opens
 a Market section (`abnormal`, `database`, …; `routes` finds trade routes on the first frame), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
-screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build and searches on the
-first frame; `buy-one`: it searches for one module, a 6A frame shift drive), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
+screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build, every row ticked as for a second
+ship like it, and searches on the first frame; `buy-one`: it searches for one module, a 6A frame shift drive), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
 `royalpurple`, …), `--demo` adds a sample Ask conversation and an alert banner, `--overlay <moment>` shows an overlay
 moment compact and expanded with sample content (`overlay::DEMOS`), `--shot-delay 8` waits longer (the
 galaxy image paints in the background, Spansh searches take 5–20 s). `ELITE_NEXUS_GAME_DIR` points HUD & cockpit at

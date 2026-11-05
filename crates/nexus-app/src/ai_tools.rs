@@ -2296,7 +2296,7 @@ pub static TOOLS: &[Tool] = &[
     Tool {
         name: "where_to_buy",
         title: "Where to buy a build",
-        description: "The nearest stations that sell a whole ship build (default: the current ship's), or the stops that cover it between them, with cost and data age, from Spansh's outfitting lists. What the commander has isn't searched for: a hull of that type they own, the modules fitted on it (a build for a hull they own is a refit of it) and modules in storage. items= narrows it to some modules or a hull; items alone searches for those, also to buy them again.",
+        description: "The nearest stations that sell a ship build (pasted, or one of the commander's ships: by default the current one), or the stops that cover it between them, with cost and data age, from Spansh's outfitting lists. What the commander has isn't searched for: a hull of that type they own, the modules fitted on it (a build for a hull they own is a refit of it) and modules in storage, so one of their own ships' builds has nothing to buy. items= narrows a build to some of its modules or its hull; items alone (no ship or build) searches for those, also to buy them again.",
         params: || {
             schema(
                 json!({
