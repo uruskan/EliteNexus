@@ -174,8 +174,17 @@ fn scrapped(ui: &mut Ui, c: &Carrier, alone: bool) {
     }
 }
 
-/// Returns true when the carrier picked changed (it's kept in the settings).
-pub fn show(ui: &mut Ui, gs: &GameState, choice: &mut CarrierKind) -> bool {
+/// What the Fleet carrier page asks of the Navigation page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CarrierAction {
+    /// A route for the ship to this system.
+    RouteShipTo(String),
+    /// Navigation's fleet carrier planner: the carrier's jumps and the nearest Fleet Carrier Administration.
+    Plan,
+}
+
+/// Returns true when the carrier picked changed (it's kept in the settings), and what was asked of Navigation.
+pub fn show(ui: &mut Ui, gs: &GameState, choice: &mut CarrierKind) -> (bool, Option<CarrierAction>) {
     let now = Timestamp::now();
     let live = gs.carriers(now);
     let gone = gs.carrier.owned() && gs.carrier.decommissioned(now);
@@ -191,19 +200,20 @@ pub fn show(ui: &mut Ui, gs: &GameState, choice: &mut CarrierKind) -> bool {
                 "Carrier data appears when the game writes CarrierStats: open the carrier management screen. That goes for your squadron's carrier too.",
             );
         }
-        return false;
+        return (false, None);
     };
     let changed = carrier_switch(ui, gs, choice, now);
     if live.len() > 1 {
         ui.add_space(GAP);
     }
-    carrier_view(ui, gs, kind, gs.carrier_of(kind));
-    changed
+    let action = carrier_view(ui, gs, kind, gs.carrier_of(kind));
+    (changed, action)
 }
 
-fn carrier_view(ui: &mut Ui, gs: &GameState, kind: CarrierKind, c: &Carrier) {
+fn carrier_view(ui: &mut Ui, gs: &GameState, kind: CarrierKind, c: &Carrier) -> Option<CarrierAction> {
     let squadron = kind == CarrierKind::Squadron;
     let stats = !c.stats_updated.is_zero();
+    let mut action = None;
     crate::widgets::cards(ui, 2, 300.0, |col| {
         col.add(|ui| {
             card(ui, kind.label(), |ui| {
@@ -237,6 +247,27 @@ fn carrier_view(ui: &mut Ui, gs: &GameState, kind: CarrierKind, c: &Carrier) {
                     let more = if squadron { " Changes other members make show the next time you open it." } else { "" };
                     note(ui, &format!("From carrier management, {}.{more}", ago(c.stats_updated)));
                 }
+                // Getting back to it, or to where carriers are administered.
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                    if let Some(sys) = &c.system {
+                        let here = c.system_address.map_or(sys.eq_ignore_ascii_case(&gs.location.system), |a| a == gs.location.system_address);
+                        if !here
+                            && crate::widgets::primary_button(ui, &format!("{} Route my ship here", icon::NAVIGATION_ARROW))
+                                .on_hover_text(format!("Navigation plots a route from {} to {sys} for your ship: every jump with the exact plotter, or with Neutron while your ship's loadout isn't known.", gs.location.system))
+                                .clicked()
+                        {
+                            action = Some(CarrierAction::RouteShipTo(sys.clone()));
+                        }
+                    }
+                    if crate::widgets::button(ui, &format!("{} Nearest carrier administration", icon::BUILDINGS))
+                        .on_hover_text("Navigation › Fleet carrier lists the stations with Fleet Carrier Administration nearest the carrier or you, with a route there.")
+                        .clicked()
+                    {
+                        action = Some(CarrierAction::Plan);
+                    }
+                });
             });
         });
         col.add(|ui| {
@@ -251,7 +282,7 @@ fn carrier_view(ui: &mut Ui, gs: &GameState, kind: CarrierKind, c: &Carrier) {
             "No carrier management data yet",
             "Tritium, finances, capacity and services come from CarrierStats, which the game writes when you open the carrier management screen.",
         );
-        return;
+        return action;
     }
     crate::widgets::cards(ui, 2, 300.0, |col| {
         col.add(|ui| {
@@ -261,7 +292,13 @@ fn carrier_view(ui: &mut Ui, gs: &GameState, kind: CarrierKind, c: &Carrier) {
                     bar(ui, c.fuel as f32 / PERSONAL_TANK_T, pal::CYAN, 10.0, None);
                 }
                 ui.label(RichText::new(format!("Jump range {:.0} / {:.0} ly", c.jump_range_curr, c.jump_range_max)).color(pal::DIM));
-                note(ui, "Navigation › Fleet carrier plans a route with this tritium and cargo (Spansh).");
+                if ui
+                    .link(RichText::new(format!("{} Plan jumps with this tritium and cargo", icon::PATH)).size(size::FOOTNOTE))
+                    .on_hover_text("Navigation › Fleet carrier plans the carrier's jumps (Spansh).")
+                    .clicked()
+                {
+                    action = Some(CarrierAction::Plan);
+                }
             });
         });
         col.add(|ui| {
@@ -366,4 +403,5 @@ fn carrier_view(ui: &mut Ui, gs: &GameState, kind: CarrierKind, c: &Carrier) {
             });
         });
     });
+    action
 }

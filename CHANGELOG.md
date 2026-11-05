@@ -138,6 +138,14 @@ release time that section becomes the new version and the release workflow publi
 - **Speech engine and voice** (Windows, Settings › Voice and alerts): speak through Windows speech, as before, or
   through **SAPI**, Windows' classic speech engine, which also has the voices other programs install for it (IVONA,
   CereProc, …). **Voice** picks one of the engine's voices instead of always the Windows default.
+- **Back to your carrier**: Navigation › Fleet carrier shows where your carrier is (the system the game last reported,
+  and when) and how far that is from you, with **Route my ship here**: one click plans every jump there for your ship.
+  While the carrier has a jump scheduled, **Route to** its destination is there too. The Fleet carrier page has the
+  same button.
+- **Fleet Carrier Administration**: Navigation › Fleet carrier lists the stations with that service nearest your
+  carrier, or nearest you, from Spansh's station search, with the nearest picked: plan a route there for your ship or
+  your carrier in one click, or pick another station. Without Spansh it falls back to the local database and says what
+  that one knows.
 
 ### Changed
 - **Statistics** is rebuilt in three tabs. **Career** turns the game's own statistics into plain words: time in the
@@ -168,6 +176,12 @@ release time that section becomes the new version and the release workflow publi
 - **Fleet › Where to buy offers every ship to start from.** It offered only ships whose modules the game had recorded,
   one of seventeen in a play-test. The others are listed too, greyed, saying why: the game writes a ship's modules to
   its journal only while you fly it.
+- **Navigation** says what each planner is for: four cards replace the tabs. **Exact plotter** plans every jump for
+  your ship and suits most trips; **Neutron** is for long trips, with only a jump range and no fuel planning; **In-game
+  route** says it mirrors the galaxy map's route, and that it's empty because nothing is plotted there. The planners'
+  settings are in view under them instead of behind **Options**, and the Fleet carrier planner, which had none, no
+  longer offers an empty Options. **From** follows you as you jump (the carrier planner's follows the carrier) until
+  you type another system.
 - **Exploration** › Current system lists a system's signals by kind (stations, installations, megaships, conflict
   zones, carriers…) with counts, plain names and callsigns, in columns that use the page's width, and says where they
   come from. Signals kept from earlier visits show when they were seen, since carriers come and go. Click one to copy

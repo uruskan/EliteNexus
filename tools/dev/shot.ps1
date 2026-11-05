@@ -12,7 +12,9 @@
 #        to start the HUD colours tab from; add ,options (empireblue,options) to open the
 #        protection's options. Set ELITE_NEXUS_GAME_DIR to show the page for a test copy of the
 #        game folder instead of the real one (AGENTS.md says how to fake the installed hook).
-#        With -Page Navigation: carrier opens the fleet carrier planner (and its jump timer).
+#        With -Page Navigation: carrier, exact or neutron opens that planner; route-carrier opens
+#        the fleet carrier planner and presses Route my ship here on the first frame (give it
+#        -Delay 15-25 for Spansh).
 #        With -Page Fleet: buy opens Where to buy with the current ship's build, every row
 #        ticked (a second ship like it), and searches on the first frame (give it -Delay 15-25
 #        for Spansh); buy-one searches for one module (a 6A frame shift drive) the same way;

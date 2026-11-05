@@ -15,3 +15,6 @@ Decommissioning a carrier takes a while: the game sets a scrap time, and until t
 
 ## Services and access
 Services can include refuel, repair, rearm, shipyard, outfitting, Universal Cartographics, Vista Genomics, a bartender, redemption office and secure storage. Docking access can be open to all, friends, squadron members or nobody.
+
+## Getting back to the carrier, and carrier administration
+Navigation > Fleet carrier in Elite Nexus shows where the commander's carrier is (the system the game last reported) and how far that is, with "Route my ship here", which plots every jump there for the current ship at once (the exact plotter, or the neutron plotter when the ship's loadout isn't known). The Fleet carrier page has the same button. The same tab lists the stations with the Fleet Carrier Administration service nearest the carrier or the commander, from Spansh's station search, with one-click routes there for the ship or the carrier. Spansh lists several hundred such stations, mostly large starports.

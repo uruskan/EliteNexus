@@ -600,6 +600,8 @@ impl NexusApp {
         let mut follow = None;
         // A "where to get it" panel (Engineering, Missions) opens the Market page on its answer.
         let mut market_goto = None;
+        // The Fleet carrier page asks Navigation for a route to the carrier, or its planner.
+        let mut carrier_action = None;
         let route = if page == Page::GalaxyMap { pages::navigation::active_route(gs, self.nav.planned.as_ref()) } else { Vec::new() };
         let mut body = |ui: &mut Ui| match page {
             Page::Dashboard => pages::dashboard::show(ui, gs, &self.settings.colonisation.hidden),
@@ -644,7 +646,11 @@ impl NexusApp {
                 pages::ask::AskAction::SettingsChanged => settings_changed = true,
                 pages::ask::AskAction::None => {}
             },
-            Page::Carrier => settings_changed |= pages::carrier::show(ui, gs, &mut self.settings.carrier),
+            Page::Carrier => {
+                let (changed, action) = pages::carrier::show(ui, gs, &mut self.settings.carrier);
+                settings_changed |= changed;
+                carrier_action = action;
+            }
             Page::Engineering => {
                 let sources = pages::where_to_get::Sources { db: self.market.db.as_ref(), spansh: &self.spansh, rt: self.rt.handle() };
                 let (changed, goto) = pages::engineering::show(ui, gs, &mut self.eng, &mut self.settings.wishlist, &sources);
@@ -690,7 +696,8 @@ impl NexusApp {
                 restart = cx.restart_core;
             }
             Page::Navigation => {
-                settings_changed |= pages::navigation::show(ui, gs, &mut self.nav, &mut self.settings.auto_copy_next_system, &mut self.settings.carrier, &self.spansh, self.rt.handle())
+                settings_changed |=
+                    pages::navigation::show(ui, gs, &mut self.nav, &mut self.settings.auto_copy_next_system, &mut self.settings.carrier, &self.spansh, self.market.db.as_ref(), self.rt.handle())
             }
             Page::Bindings => settings_changed |= pages::bindings::show(ui, &mut self.binds, &self.data_dir, &mut self.settings.game_dir),
             Page::Hud => {
@@ -735,13 +742,24 @@ impl NexusApp {
         }
         if let Some(pages::galaxy_map::MapAction::PlotTo(system)) = map_action {
             self.nav.to = system;
-            self.nav.planner = pages::navigation::Planner::Exact;
+            self.nav.pick(pages::navigation::Planner::Exact);
             self.page = Page::Navigation;
+        }
+        match carrier_action {
+            Some(pages::carrier::CarrierAction::RouteShipTo(system)) => {
+                self.nav.route_ship_to(&system);
+                self.page = Page::Navigation;
+            }
+            Some(pages::carrier::CarrierAction::Plan) => {
+                self.nav.pick(pages::navigation::Planner::Carrier);
+                self.page = Page::Navigation;
+            }
+            None => {}
         }
         // A tour picked on Exploration, Exobiology or Mining becomes the active route.
         if let Some(route) = follow {
             self.nav.planned = Some(route);
-            self.nav.planner = pages::navigation::Planner::InGame;
+            self.nav.pick(pages::navigation::Planner::InGame);
             self.page = Page::Navigation;
         }
         match self.nav.goto.take() {

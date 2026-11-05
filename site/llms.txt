@@ -35,7 +35,9 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   orders, price alerts, nearest material traders, brokers, Interstellar Factors, Vista Genomics, shipyards,
   outfitting and black markets, any station's whole market.
 - Fleet carrier: your own carrier and your squadron's: tritium, finances, capacity, crew, orders, jump schedule and
-  history, a live jump countdown and cooldown, decommissioning. The journal records only the jumps and orders the
+  history, a live jump countdown and cooldown, decommissioning, where the carrier is with a one-click route back to it
+  for your ship, and the nearest stations with Fleet Carrier Administration (from Spansh's station search, near the
+  carrier or near you) with a route there for the ship or the carrier. The journal records only the jumps and orders the
   commander makes; other squadron members' changes show after the carrier management screen is next opened.
 - Where to buy (Fleet page): type one ship or module ("Anaconda", "6A FSD"), or paste a ship build (a SLEF export
   from EDSY or Coriolis, a link from either that opens a build, a ship's build copied on the Ships tab) or pick an
