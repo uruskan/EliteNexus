@@ -202,6 +202,11 @@ release time that section becomes the new version and the release workflow publi
   in EDSY as "Import failed: Unrecognized JSON format / No builds found": Coriolis leaves out the field that marks a
   ship's build (`"event":"Loadout"`), and EDSY looks for it. The EDSY and Coriolis buttons now always send the build
   marked as one, on Where to buy and on the Ships tab alike.
+- **Fleet › Where to buy lists every module of a Type-11 Prospector, Panther Clipper Mk II or Anaconda Mk II.**
+  Modules in slots that take only one kind of module (the Type-11's mining hardpoints, limpet controller and hangar
+  slots, the cargo slots of the Panther Clipper Mk II and Anaconda Mk II) were left off the shopping list as if they
+  came with the ship, and Ask didn't see them in a ship's loadout either. They're listed now, under Hardpoints and
+  Optional internals, and the Ships tab names those slots ("Large mining hardpoint 1", "Limpet slot 1").
 - **Missions and Statistics say why a wingmate's shared mission isn't counted** (GitHub issue #4). Your own missions,
   wing missions included, are counted as always. When a wingmate hands in a mission they shared with you, though, the
   game writes nothing about it in your journal, reward included, so there is nothing for Elite Nexus to count. The

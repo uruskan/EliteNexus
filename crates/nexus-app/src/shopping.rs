@@ -609,6 +609,34 @@ mod tests {
         crate::export::tests::both_sites_import(&from_link.loadout);
     }
 
+    /// Coriolis's SLEF export as its `Serializer` writes it: the game's slot names, the cargo hatch,
+    /// and the slots a Type-11 Prospector keeps for mining tools, limpet controllers and hangars.
+    #[test]
+    fn named_slots_are_bought_too() {
+        let t11 = r#"[{"header":{"appName":"Coriolis","appVersion":"4.0","appURL":"https://coriolis.io/outfit/type_11_prospector"},"data":{"Ship":"LakonMiner","Modules":[
+            {"Slot":"Armour","Item":"lakonminer_armour_grade1","On":true,"Priority":1},
+            {"Slot":"CargoHatch","Item":"modularcargobaydoor","On":true,"Priority":2},
+            {"Slot":"PowerPlant","Item":"int_powerplant_size6_class5","On":true,"Priority":1},
+            {"Slot":"LargeMiningHardpoint1","Item":"hpt_miningtoolv2_fixed_large","On":true,"Priority":1},
+            {"Slot":"MediumMiningHardpoint1","Item":"hpt_mininglaser_turret_medium","On":true,"Priority":1},
+            {"Slot":"MediumHardpoint1","Item":"hpt_pulselaser_gimbal_medium","On":true,"Priority":1},
+            {"Slot":"TinyHardpoint1","Item":"hpt_shieldbooster_size0_class5","On":true,"Priority":1},
+            {"Slot":"Slot01_Size6","Item":"int_shieldgenerator_size6_class5","On":true,"Priority":1},
+            {"Slot":"LimpetController01","Item":"int_dronecontrol_prospector_size5_class5","On":true,"Priority":1},
+            {"Slot":"FighterBay01","Item":"int_buggybay_size4_class2","On":true,"Priority":1}]}}]"#;
+        let b = parse_build(t11).expect("build");
+        let slots: Vec<&str> = b.modules.iter().map(|m| m.slot.as_str()).collect();
+        // The bulkheads every hull comes with stay on the list (unticked later); only the hatch is left out.
+        assert_eq!(slots, ["Armour", "PowerPlant", "LargeMiningHardpoint1", "MediumMiningHardpoint1", "MediumHardpoint1", "TinyHardpoint1", "Slot01_Size6", "LimpetController01", "FighterBay01"]);
+        let list = needs(&b, &Fleet::default());
+        let group = |sym: &str| list.iter().find(|n| n.symbol == sym).map(|n| n.group);
+        assert_eq!(group("hpt_miningtoolv2_fixed_large"), Some(Group::Hardpoints));
+        assert_eq!(group("hpt_mininglaser_turret_medium"), Some(Group::Hardpoints));
+        assert_eq!(group("int_dronecontrol_prospector_size5_class5"), Some(Group::Optional));
+        assert_eq!(group("int_buggybay_size4_class2"), Some(Group::Optional));
+        crate::export::tests::both_sites_import(&b.loadout);
+    }
+
     #[test]
     fn says_why_a_paste_cant_be_read() {
         assert!(parse_build("").is_err());
