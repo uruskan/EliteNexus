@@ -150,6 +150,9 @@ release time that section becomes the new version and the release workflow publi
   **Live** badge stays, with the feed's rate and the database's size beside it.
 
 ### Fixed
+- **Inara**: switching sync on, or starting Elite Nexus during a game session, no longer sends missions you handed
+  in, failed or abandoned, or ship transfers you made, earlier in that session. The profile sent then is your state
+  as it is (credits, ranks, reputation, ship, cargo, materials, location), and it brought those along with it.
 - **After the game crashes, Elite Nexus no longer says it's running.** A crash leaves no Shutdown in the journal, so
   the toolbar kept saying Live, the overlay and Follow my flight went on as if you were in the game, HUD & cockpit
   said the game was running and Ask told you it was, even when you started Elite Nexus the next day. Elite Nexus now

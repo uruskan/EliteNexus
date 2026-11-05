@@ -439,9 +439,11 @@ impl Uplink {
     }
 
     /// Brings the Inara profile up to date from the current game session: journal lines from the
-    /// session's start (`Fileheader`/`LoadGame`) to now. Only "set" events (current state: credits,
-    /// ranks, reputation, ship, loadout, materials, cargo, location, …) are sent, so repeating it
-    /// is harmless; nothing goes to EDDN, EDSM or EDAstro.
+    /// session's start (`Fileheader`/`LoadGame`) to now. Only the events that describe the
+    /// commander as they are now are sent (`inara::STATE_EVENTS`: credits, ranks, reputation,
+    /// ship, loadout, materials, cargo, location, …), so repeating it is harmless, and nothing done
+    /// earlier in the session goes out (a mission handed in before sync was switched on, or while
+    /// it was paused); nothing goes to EDDN, EDSM or EDAstro.
     pub fn sync_inara_profile(&self, session: Vec<RawEvent>, ctx: &UploadContext) {
         let _ = self.tx.send(Input::InaraSnapshot(session, Box::new(ctx.clone())));
     }
@@ -741,8 +743,10 @@ impl Processor {
         self.queue_eddn_inner(held, now, false);
     }
 
-    /// Replays the current session through a fresh mapper and queues its "set" events: the
-    /// commander's present state, sent at once (the "add" events of past activity are left out).
+    /// Replays the current session through a fresh mapper and queues its state events
+    /// (`inara::is_state`): the commander's present state, sent at once. Past activity is left
+    /// out, the "add" events and the "set" events that record something done (missions handed in,
+    /// failed or abandoned, ship transfers) alike.
     fn inara_snapshot(&mut self, events: &[RawEvent], ctx: &UploadContext) {
         if self.cfg.inara_sending().is_none() {
             return;
@@ -753,7 +757,7 @@ impl Processor {
         for raw in events {
             let Some(ev) = parse_object(&raw.line) else { continue };
             session.apply(&raw.name, &ev);
-            out.extend(mapper.on_event(&raw.name, &ev, &session, ctx).into_iter().filter(|e| e.name.starts_with("set")));
+            out.extend(mapper.on_event(&raw.name, &ev, &session, ctx).into_iter().filter(|e| inara::is_state(&e.name)));
         }
         // The same rules as live syncing: Live galaxy only, no beta, not as someone's crew.
         if out.is_empty() || session.is_beta(ctx) || !session.is_live_galaxy(ctx) || session.blocked(None).is_some() {
