@@ -6,8 +6,8 @@
   "heading": "Find the planet. Finish the samples.",
   "lead": "Choose promising worlds before you land. Know when you’ve travelled far enough for the next sample. Keep your progress and unsold value in view from the first biological signal to Vista Genomics.",
   "hero_image": "exobiology.png",
-  "hero_alt": "Elite Nexus Exobiology page showing sample progress, a live sampling radar with colony-range circles and unsold biological data.",
-  "hero_caption": "The sampling radar shows previous sample locations, required spacing and whether you are far enough away.",
+  "hero_alt": "Elite Nexus Exobiology bonus hunt for Stratum Tectonicas, counting the planets with no record of sampling and listing the ones to try.",
+  "hero_caption": "The bonus hunt says how many planets it found, why it left each group out, and which ones nobody has a record of sampling.",
   "toc": [
     {
       "id": "sampling-radar",

@@ -109,7 +109,8 @@ a layout changes.
   `merc`, `rolls` (Engineering; `rolls`: four hull reinforcement packages with the rolls at each grade open), `where`, `where:Monazite`, `where-route` (Mining > Where to mine: near
   you, near you for that material, or along a route towards Colonia), `career`, `activity`, `ships`, `all` (Statistics), `support`, `support-close` (any page: the support card shown at
   each start, which screenshot runs otherwise never show; its countdown running, or over with Close showing), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from that
-  theme; add `,options` to open the protection's options; nothing is written). `find`, `untouched`, `known`, `buy`,
+  theme; add `,options` to open the protection's options, or `,hue:120` to set the Colour slider to 120° on top of
+  the theme; nothing is written). `find`, `untouched`, `known`, `buy`,
   `buy-one`, the `where` tabs and `route-carrier` start their search on the first frame: add
   `-Delay 15` to `-Delay 25` for Spansh to answer. `routes` (Market › Trade routes) searches the local database on the
   first frame too, `station` (Market › Station) opens four markets side by side: your system's, then the nearest,

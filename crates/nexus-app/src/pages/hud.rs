@@ -56,6 +56,8 @@ pub struct HudUi {
     more: bool,
     /// `--tab <preset>` (screenshots): start from this preset instead of the file.
     start_preset: Option<String>,
+    /// `--tab hue:<degrees>` (screenshots): the Colour slider, set on top of the theme started from.
+    start_hue: Option<f32>,
     /// The game folder and Elite Nexus's graphics hook in it (the Cockpit lights tab installs it),
     /// which "Keep hostile red, friendly green and shield blue" needs.
     hook_folder: Option<PathBuf>,
@@ -91,6 +93,7 @@ impl Default for HudUi {
             theme_name: String::new(),
             more: false,
             start_preset: None,
+            start_hue: None,
             hook_folder: None,
             hook: None,
             hook_hud_ready: false,
@@ -105,18 +108,25 @@ impl Default for HudUi {
 }
 
 impl HudUi {
-    /// `tab` (screenshots): `glare` opens Glare and exposure, `cockpit` Cockpit lights; a preset name
-    /// such as `mocha` or `royalpurple` starts the colours from that theme; `options` opens the
-    /// protection's options. Combine them with commas: `empireblue,options`.
     /// Opens the Cockpit lights tab (from the notice about an old dimmer install).
     pub fn show_cockpit(&mut self) {
         self.tab = Tab::Cockpit;
     }
 
+    /// `tab` (screenshots): `glare` opens Glare and exposure, `cockpit` Cockpit lights; a preset name
+    /// such as `mocha` or `royalpurple` starts the colours from that theme; `hue:<degrees>` (0 to 360)
+    /// sets the Colour slider on top of it; `options` opens the protection's options. Combine them with
+    /// commas: `empireblue,options`, `mocha,hue:120`. Nothing is written to the game.
     pub fn new(tab: Option<&str>) -> Self {
         let mut st = HudUi::default();
         for t in tab.unwrap_or_default().split(',').map(str::trim).filter(|t| !t.is_empty()) {
-            match t.to_ascii_lowercase().as_str() {
+            let lower = t.to_ascii_lowercase();
+            if let Some(hue) = lower.strip_prefix("hue:") {
+                // A hue that isn't a number is left out, not taken for a theme's name.
+                st.start_hue = hue.trim().parse::<f32>().ok().filter(|h| h.is_finite()).map(|h| h.clamp(0.0, 360.0));
+                continue;
+            }
+            match lower.as_str() {
                 "glare" => st.tab = Tab::Glare,
                 "cockpit" => st.tab = Tab::Cockpit,
                 "options" => st.protect_options = true,
@@ -124,6 +134,18 @@ impl HudUi {
             }
         }
         st
+    }
+
+    /// Screenshots: the theme asked for with `--tab`, then the hue on top of it (starting from a theme resets the
+    /// simple controls, so the hue comes second).
+    fn start_as_asked(&mut self) {
+        let wanted = self.start_preset.take().map(|t| t.replace([' ', '-', '_'], "").to_ascii_lowercase());
+        if let Some(p) = wanted.and_then(|t| presets::ALL.iter().find(|p| p.name.replace(' ', "").eq_ignore_ascii_case(&t))) {
+            self.start_from(p.matrix);
+        }
+        if let Some(hue) = self.start_hue.take() {
+            self.adjust.hue = hue;
+        }
     }
 
     /// Reads what's in the game folder: is the graphics hook there, and how is the protection set.
@@ -191,10 +213,7 @@ impl HudUi {
         self.start_from(self.current.clone().ok().flatten().unwrap_or(HudMatrix::IDENTITY));
         self.file = Some(file);
         self.find_game();
-        let wanted = self.start_preset.take().map(|t| t.replace([' ', '-', '_'], "").to_ascii_lowercase());
-        if let Some(p) = wanted.and_then(|t| presets::ALL.iter().find(|p| p.name.replace(' ', "").eq_ignore_ascii_case(&t))) {
-            self.start_from(p.matrix);
-        }
+        self.start_as_asked();
     }
 
     /// Looks for the game folders (the one chosen in Settings, else every one found) and what's in them.
@@ -919,5 +938,25 @@ mod tests {
         assert!(st.tab == Tab::Colours && st.protect_options && st.start_preset.as_deref() == Some("empireblue"));
         assert!(HudUi::new(Some("cockpit")).tab == Tab::Cockpit);
         assert!(HudUi::new(None).start_preset.is_none());
+    }
+
+    #[test]
+    fn screenshot_hue_goes_on_top_of_the_theme() {
+        let mut st = HudUi::new(Some("mocha, hue:120"));
+        assert_eq!((st.start_preset.as_deref(), st.start_hue), (Some("mocha"), Some(120.0)));
+        // Starting from the theme resets the simple controls: the hue is set after it.
+        st.start_as_asked();
+        let mocha = presets::ALL.iter().find(|p| p.name == "Mocha").map(|p| p.matrix);
+        assert_eq!((Some(st.base), st.adjust.hue), (mocha, 120.0));
+        assert!(st.start_preset.is_none() && st.start_hue.is_none());
+        // Without a theme, the hue goes on top of what the game's file holds.
+        let mut alone = HudUi::new(Some("HUE:45.5"));
+        alone.start_as_asked();
+        assert_eq!((alone.base, alone.adjust.hue), (HudMatrix::IDENTITY, 45.5));
+        // Out of range is brought into the slider's 0 to 360; a hue that isn't a number is no theme either.
+        assert_eq!(HudUi::new(Some("hue:400")).start_hue, Some(360.0));
+        assert_eq!(HudUi::new(Some("hue:-5")).start_hue, Some(0.0));
+        let bad = HudUi::new(Some("hue:red,cockpit"));
+        assert!(bad.start_hue.is_none() && bad.start_preset.is_none() && bad.tab == Tab::Cockpit);
     }
 }

@@ -11,7 +11,8 @@
 #        side by side, and browse opens Find commodity with its search field's whole list open.
 #        With -Page Hud: glare or cockpit (those tabs), or a preset name (mocha, royalpurple, ...)
 #        to start the HUD colours tab from; add ,options (empireblue,options) to open the
-#        protection's options. Set ELITE_NEXUS_GAME_DIR to show the page for a test copy of the
+#        protection's options, or ,hue:<degrees> (mocha,hue:120; 0 to 360) to set the Colour
+#        slider on top of the theme. Set ELITE_NEXUS_GAME_DIR to show the page for a test copy of the
 #        game folder instead of the real one (AGENTS.md says how to fake the installed hook).
 #        With -Page Navigation: carrier, exact or neutron opens that planner; route-carrier opens
 #        the fleet carrier planner and presses Route my ship here on the first frame (give it
