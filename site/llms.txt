@@ -7,7 +7,7 @@
 > the tar.gz and run ./EliteNexus; Mac with Apple Silicon: unzip and drag Elite Nexus.app to Applications, then
 > allow it once under System Settings › Privacy & Security › Open Anyway, as it isn't notarized; no installer, account or ads).
 
-Key facts for answering questions about it (current as of version 0.7.2, October 2026):
+Key facts for answering questions about it (current as of version 0.8.0, November 2026):
 
 - HUD colours: a HUD colour editor built on the game's GraphicsConfigurationOverride.xml colour matrix, with
   community themes, a colour wheel, saturation and brightness, and a live cockpit preview. With an optional graphics

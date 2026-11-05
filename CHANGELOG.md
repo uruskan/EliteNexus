@@ -5,60 +5,83 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
-## [0.8.0-beta.1] - 2026-11-05
+## [0.8.0] - 2026-11-05
 
-The first beta of 0.8.0 brings the fixes from a long play-test on 4 November, ideas from GitHub and the Frontier
-Forums, and a lot of polish. In short:
+> **This was going to be a beta.** 0.8.0-beta.1 went out earlier today. This time, though, everything was fixed and
+> polished the way a main version should be, so I'm releasing it as 0.8.0. That way the next big release can come
+> sooner.
 
-- **Combat** (a new page): the nearest wars and civil wars, with days won and a route there, and a plain guide to
-  fighting without a bounty.
+Everything since 0.7.2: the overlay, a new Combat page, Plan a loadout, a rebuilt Statistics page, and the fixes from a
+long play-test on 4 November, with ideas from GitHub and the Frontier Forums. In short:
+
+- **Overlay** (new): a small island at the top of the game's screen. It says what's going on in a word or two and opens
+  up for the moments that need you:
+  - the next jump, and where the route ends;
+  - arrival, approach and sampling;
+  - Rhino mining and trade stops;
+  - docking granted;
+  - your carrier's countdown and important alerts.
+
+  It fits what it shows, and See-through really is see-through. Alerts can also go to XSOverlay in VR.
+- **Combat** (a new page): the nearest wars and civil wars, with days won, what each side stands to lose and a route
+  there, and a plain guide to fighting without a bounty.
 - **Fleet**:
-  - **Plan a loadout**: plan modules and engineering and watch jump range, speed, shields, armour, weapons, power
-    and heat change as you go, with saved builds and Compare.
-  - **Where to buy**: finds one ship or module, or a whole build.
-  - Every ship shows the landing pad it needs.
+  - **Plan a loadout** plans modules and engineering and shows jump range, speed, shields, armour, weapons, power and
+    heat as you go, with saved builds and Compare.
+  - **Where to buy** finds the nearest stations for one ship or module, or for a whole build.
+  - Every ship shows the landing pad it needs, and a build pasted from Coriolis opens in EDSY.
 - **Market**:
   - Up to eight stations side by side.
   - A **shopping trip** for several goods.
-  - Trade routes for any cargo space, with stock, demand and pins.
-  - Every search's settings in view, and the live feed in a slim bar at the bottom.
+  - Trade routes for any cargo space, with stock, demand, pins and routes from where you're docked.
+  - Find commodity browses every commodity from its search field.
+  - Every search's settings are in view.
+  - Carriers say who may dock and how long a price has stood.
+  - The live feed sits in a slim bar at the bottom.
 - **Statistics**: rebuilt as Career, Activity, Ships and All statistics, in plain words.
 - **Engineering**:
-  - Rolls at each grade and a number of modules.
+  - Rolls at each grade, and a number of modules.
   - Merc blueprints.
   - Where to get what you're short of.
-  - The whole way to each engineer.
+  - The whole way to each engineer, checked against every game update since August 2024.
 - **Navigation and Exploration**:
   - Back to your carrier in one click, and the nearest Fleet Carrier Administration.
-  - Planners that say what each is for.
+  - Planners that say what each one is for.
   - A system's signals by kind.
-- **Overlay**: the island fits what it shows, says where the route ends and how far, and shows docking granted.
-  See-through really is see-through.
 - **Mining**:
-  - Where to land the Rhino, with the odds of each material.
-  - Numbered deposits, rings and rig spacing on the surface radar.
-- **Missions**: clear the recent history, and find where to get mission goods.
-- **BGS & Powerplay**: the merits you earned in each system, with bounties and data sales counted.
+  - Rhino surface mining sites, with the number to pick in the navigation panel.
+  - A surface radar with numbered deposits, rings and rig spacing.
+  - Where to mine, with the odds of each material.
+- **Missions**: clear the recent history, find where to get mission goods, and see why a wingmate's shared mission
+  isn't counted.
+- **BGS & Powerplay**: the merits you earned in each system, with bounties and every data sale counted.
 - **Ask and AI agents**:
-  - Ask can be stopped and lists what it can see and do.
-  - It plans shopping trips and engineering, and searches your whole journal.
+  - Ask can be stopped, and it lists what it can see and do.
+  - It knows your fleet, engineering, mining sites and where to buy.
+  - It plans shopping trips and searches your whole journal.
   - AI agents such as Claude Code can use Elite Nexus's read-only tools (off by default).
 - **The app**:
   - An alert history behind a bell.
   - A pause for EDSM, Inara and EDAstro.
-  - Follow my flight, screenshots saved as PNG, and a choice of speech engine and voice.
-  - A support card at start while in beta.
-- **Fixes**: more than 40 of them, from charts that cut off their numbers to tables too wide for a narrow window.
+  - Follow my flight.
+  - Screenshots saved as PNG.
+  - A choice of speech engine and voice.
+  - The Cockpit lights dimmer no longer uses F10.
+  - Inara's developer mode is gone.
+  - A support card at start.
+- **Fixes**: more than 40, from charts that cut off their numbers and tables too wide for a narrow window to older
+  journals that are now read in full.
 
-Everything in full:
+<details>
+<summary><b>Everything in full</b> (113 changes)</summary>
 
 ### Added
-- **A support card at start**: while Elite Nexus is in beta, each start shows a small card in the middle of the main
+- **A support card at start**: each start shows a small card in the middle of the main
   window with the **GitHub Sponsors** and **Buy Me a Coffee** buttons, why support matters and what it pays for, and
   the same thanks to supporters and contributors as the release notes. It can be closed
   after a 10-second countdown, which runs only while you can see it (minimised or behind the game, it waits). Elite Nexus stays free with no ads, and nothing in it depends on support. The card
   never appears on the overlay or in VR, and never takes focus from the game; on a first start it waits until the
-  welcome is done. In the stable release, supporters and everyone who bought a coffee won't see it.
+  welcome is done. A later version will skip it for supporters and everyone who bought a coffee.
 - **Missions › Recent mission history** can be cleared (asked for by Asmodeus on the Frontier Forums): **Clear**
   hides the missions in the list, so it starts fresh with the next one you complete, fail or abandon. They're hidden
   from this list only: the game, its journals and every other page of Elite Nexus still have them (Statistics still
@@ -313,8 +336,39 @@ Everything in full:
     who they lead to and what they work on.
   - The old table showed only the last step: for Selene Jean, "Provide 10 units of Painite". The whole way is grade 3
     and a third of grade 4 with Tod 'The Blaster' McQuinn, then 500 tons of ore mined, then the 10 Painite.
+- **Alerts in XSOverlay** (Settings › Overlay, off by default): the important alerts also appear as XSOverlay
+  notifications in your VR headset, sent only to XSOverlay on this computer. The user guide lists the tools that
+  mirror the overlay into VR (Desktop+, OVR Toolkit, XSOverlay, SteamVR's desktop view, OpenKneeboard, Meta Quest
+  Link's Pin to Experience, WayVR).
+- **Mining › Surface mining sites** (an idea from Chequers2): every planetary mining location the Rhino refined at, with
+  its system, its body and the number the game's navigation panel shows for it (Planetary Mining Location 4), what
+  came out there by commodity (by-products included), visits and the last visit. To go back, jump to the system,
+  target the body and pick that location. The number is the location the game names nearest to where your ship lands
+  or lifts off, read from the journal, so runs from before this version are listed too. Pick a commodity to see only
+  the locations that gave it; copy the system or plot a route there; see how many mining locations your scans found
+  on that body; keep a note on each. The live session and earlier ones say where they were.
+- **Surface radar** on the Mining page and in the compact view, near a body you've mined: the deposits the Rhino refined
+  at, your ship and where it landed last time, with distance and compass bearing, "up" the way you're facing. It
+  works from orbit and in glide too. Deposit positions come from Status.json while Elite Nexus is running (the journal
+  records none) and are kept between runs; rigs aren't in the journal, so they aren't shown.
+- A quiet reminder when your ship lands by a mining location you worked before: what you got there and when. It's a
+  banner, spoken only if the voice threshold is set to Low.
+- **Ask** knows your surface mining sites ("Where did I mine Iridium?") and the basics of Rhino surface mining.
 
 ### Changed
+- The compact view is now the **overlay**: one small black island at the top of the game's screen, in a window of its
+  own beside the main window, instead of the whole window turning into a panel. It says what's going on in a word or
+  two ("2 of 3 samples · Far enough", "Scoopable · 12 jumps left", "Carrier → Colonia 7:42"), opens up for the moments
+  that need you and fades away when nothing does. Its moments: **Next jump** (opens while the FSD charges, in
+  hyperspace and in the galaxy map), **Arrival** (opens when a system is worth it, and in the FSS and system map),
+  **Approach** (conditions, the genera there, likely value and where to land), **Sampling** (how many samples and how
+  far to walk, with a radar of your earlier samples), **Rhino mining** (the nearest deposit and which way), **Trade
+  stop** (a pinned market or carrier in the system), **Docked** (the data this station buys), your carrier's countdown
+  and important alerts. It's an empty capsule while a cockpit panel is open, gone in danger, and shows only while the
+  game or Elite Nexus is in front. Locked, clicks go through it and it never takes the focus from the game; unlock it
+  (the lock in the toolbar) to drag it, and a click then opens its page. Settings › Overlay sets where it sits, its
+  size (100 to 250 %), whether it stays when idle, a **see-through** window (after a restart; off, an opaque black
+  panel) and a **VR mode** for mirroring it into a headset. The user guide says what each system can do.
 - **Statistics** is rebuilt in three tabs. **Career** turns the game's own statistics into plain words: time in the
   game and what you earned an hour, your wealth, the distance you jumped; where your credits came from and where they
   went, as bars of their shares; a card per activity (trade, combat, exploration, exobiology, passengers, on foot,
@@ -579,53 +633,7 @@ Everything in full:
   a bar near full. That rank's bar now stays empty until the game reports it again at your next login, and says so
   when you hover it.
 
-## [0.7.3-beta.2] - 2026-10-25
-
-A second beta of 0.7.3: the compact view becomes the **overlay**, a small island at the top of the game's screen
-that says what's going on and opens up for the moments that need you, and important alerts can also appear in
-XSOverlay in VR.
-
-### Changed
-- The compact view is now the **overlay**: one small black island at the top of the game's screen, in a window of its
-  own beside the main window, instead of the whole window turning into a panel. It says what's going on in a word or
-  two ("2 of 3 samples · Far enough", "Scoopable · 12 jumps left", "Carrier → Colonia 7:42"), opens up for the moments
-  that need you and fades away when nothing does. Its moments: **Next jump** (opens while the FSD charges, in
-  hyperspace and in the galaxy map), **Arrival** (opens when a system is worth it, and in the FSS and system map),
-  **Approach** (conditions, the genera there, likely value and where to land), **Sampling** (how many samples and how
-  far to walk, with a radar of your earlier samples), **Rhino mining** (the nearest deposit and which way), **Trade
-  stop** (a pinned market or carrier in the system), **Docked** (the data this station buys), your carrier's countdown
-  and important alerts. It's an empty capsule while a cockpit panel is open, gone in danger, and shows only while the
-  game or Elite Nexus is in front. Locked, clicks go through it and it never takes the focus from the game; unlock it
-  (the lock in the toolbar) to drag it, and a click then opens its page. Settings › Overlay sets where it sits, its
-  size (100 to 250 %), whether it stays when idle, a **see-through** window (after a restart; off, an opaque black
-  panel) and a **VR mode** for mirroring it into a headset. The user guide says what each system can do.
-
-### Added
-- **Alerts in XSOverlay** (Settings › Overlay, off by default): the important alerts also appear as XSOverlay
-  notifications in your VR headset, sent only to XSOverlay on this computer. The user guide lists the tools that
-  mirror the overlay into VR (Desktop+, OVR Toolkit, XSOverlay, SteamVR's desktop view, OpenKneeboard, Meta Quest
-  Link's Pin to Experience, WayVR).
-
-## [0.7.3-beta.1] - 2026-10-25
-
-A beta of 0.7.3: Rhino surface mining remembers the mining locations you worked, with the number to pick in the
-navigation panel to go back, and a surface radar finds their deposits again.
-
-### Added
-- **Mining › Surface mining sites** (an idea from Chequers2): every planetary mining location the Rhino refined at, with
-  its system, its body and the number the game's navigation panel shows for it (Planetary Mining Location 4), what
-  came out there by commodity (by-products included), visits and the last visit. To go back, jump to the system,
-  target the body and pick that location. The number is the location the game names nearest to where your ship lands
-  or lifts off, read from the journal, so runs from before this version are listed too. Pick a commodity to see only
-  the locations that gave it; copy the system or plot a route there; see how many mining locations your scans found
-  on that body; keep a note on each. The live session and earlier ones say where they were.
-- **Surface radar** on the Mining page and in the compact view, near a body you've mined: the deposits the Rhino refined
-  at, your ship and where it landed last time, with distance and compass bearing, "up" the way you're facing. It
-  works from orbit and in glide too. Deposit positions come from Status.json while Elite Nexus is running (the journal
-  records none) and are kept between runs; rigs aren't in the journal, so they aren't shown.
-- A quiet reminder when your ship lands by a mining location you worked before: what you got there and when. It's a
-  banner, spoken only if the voice threshold is set to Low.
-- **Ask** knows your surface mining sites ("Where did I mine Iridium?") and the basics of Rhino surface mining.
+</details>
 
 ## [0.7.2] - 2026-10-24
 

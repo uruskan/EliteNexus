@@ -106,6 +106,9 @@ else's report, idea or help. Thank you, commanders.
   ([PR #2](https://github.com/uruskan/EliteNexus/pull/2)).
 * **[Nillecram](https://github.com/Nillecram)**: showed from their own Vista Genomics sales when the first-logged
   bonus is really paid, and fixed it ([PR #7](https://github.com/uruskan/EliteNexus/pull/7)).
+* **[Za-Pa-Al](https://github.com/Za-Pa-Al)**: Windows speech (SAPI) as a second voice engine, with a voice picker
+  ([PR #15](https://github.com/uruskan/EliteNexus/pull/15)), and browsing Find commodity by category, with rare
+  goods as one entry ([PR #16](https://github.com/uruskan/EliteNexus/pull/16)).
 
 **Sponsors**
 
@@ -120,21 +123,25 @@ else's report, idea or help. Thank you, commanders.
 * **[docfallingapart](https://github.com/docfallingapart)**: the Linux app-menu entry, and a folder with a space in
   its name.
 * **[nhok0169](https://github.com/nhok0169)**: Ask answering from old data, the empty Services tab, the window
-  freezing with the live feed, the synthesis and chart drawing, long module names, shared missions, and the "where do
-  I get this material" idea ([issue #4](https://github.com/uruskan/EliteNexus/issues/4)).
+  freezing with the live feed, the synthesis and chart drawing, long module names, shared missions, the "where do
+  I get this material" idea, the shopping trip for several goods, trade routes for another ship's cargo with stock
+  and demand, rolls at each grade, a number of modules, and the whole way to each engineer
+  ([issue #4](https://github.com/uruskan/EliteNexus/issues/4)).
 * **[hangerhead](https://github.com/hangerhead)**: a carrier's docking access in the market lists, how long a buy
   order has been live, and a louder voice.
-* **[Chequers2](https://github.com/Chequers2)**: a surface mining map that remembers the body and the site.
+* **[Chequers2](https://github.com/Chequers2)**: a surface mining map that remembers the body and the site, and
+  numbered deposits on the surface radar.
 
 **Bug reports and ideas on the Frontier Forums**
 
 * **cmdr chequers**: journals on a network share, the fleet carrier jump and cooldown timers, and the memory
   comparison with EDDiscovery.
-* **Alvarrune**: a Steam library on another drive, a colonisation depot that wasn't theirs, the route countdown, and
-  the dimmer crash.
-* **Asmodeus**: Elite Nexus changing bindings (it never touches them now).
+* **Alvarrune**: a Steam library on another drive, a colonisation depot that wasn't theirs, the route countdown, the
+  dimmer crash, and screenshots saved as PNG.
+* **Asmodeus**: Elite Nexus changing bindings (it never touches them now), and clearing the recent mission history.
 * **Smallfishnz**: the window vanishing, which is why there is a crash log.
-* **NetworX**: the BGS tick hour resetting.
+* **NetworX**: the BGS tick hour resetting, the merits earned in each system, trade routes from the station you're
+  docked at, and Where to mine for the Rhino.
 * **BigOldChicken**: searching outfitting for a module, and **Jo Bangles**: the first impressions.
 
 **Community knowledge Elite Nexus is built on**

@@ -140,7 +140,7 @@ impl Card {
                     let note = (ui.available_width() - 190.0).max(120.0);
                     ui.allocate_ui(Vec2::new(note, 30.0), |ui| {
                         ui.add(
-                            egui::Label::new(RichText::new("Shown at every start during the beta. In the release, supporters and everyone who bought a coffee won't see it.").size(size::FOOTNOTE).color(pal::FAINT))
+                            egui::Label::new(RichText::new("Shown at every start. A later version will skip it for supporters and everyone who bought a coffee.").size(size::FOOTNOTE).color(pal::FAINT))
                                 .wrap(),
                         );
                     });
