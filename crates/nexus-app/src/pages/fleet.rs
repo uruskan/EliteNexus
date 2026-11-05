@@ -40,7 +40,7 @@ impl FleetUi {
     /// drive) on the first frame. `--tab buy-build` opens A whole build, with nothing loaded.
     /// `--tab plan` opens Plan a loadout with the current ship; `--tab plan-fsd` with its frame
     /// shift drive's list open and engineering planned for it; `--tab plan-new` at its start (a
-    /// hull, a ship or a pasted build to start from).
+    /// hull, a ship or a pasted build to start from); `--tab plan-hull` with a new Python.
     pub fn new(tab: Option<&str>, shot: bool) -> Self {
         let mut st = FleetUi::default();
         match tab.map(str::to_ascii_lowercase).as_deref() {
@@ -54,6 +54,10 @@ impl FleetUi {
                 st.plan_demo = true;
             }
             Some("plan-new") => st.tab = Tab::Plan,
+            Some("plan-hull") => {
+                st.tab = Tab::Plan;
+                st.plan.start_new("python");
+            }
             Some("buy") => {
                 st.tab = Tab::Buy;
                 st.buy.mode = Mode::Build;
@@ -116,6 +120,8 @@ struct BuyUi {
     job: Slot<Found>,
     pending: bool,
     autorun: bool,
+    /// Search for the build just loaded on the next frame (the planner's Find stations).
+    search: bool,
 }
 
 impl Default for BuyUi {
@@ -138,6 +144,7 @@ impl Default for BuyUi {
             job: Slot::default(),
             pending: false,
             autorun: false,
+            search: false,
         }
     }
 }
@@ -240,7 +247,10 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut FleetUi, spansh: &Spansh, rt: 
                 // Either way Where to buy opens, with the search or with why there's none.
                 Some(plan::PlanOut::Buy { loadout, source }) => {
                     match shopping::parse_build(&loadout) {
-                        Ok(b) => st.buy.load(b, source, gs),
+                        Ok(b) => {
+                            st.buy.load(b, source, gs);
+                            st.buy.search = true;
+                        }
                         Err(e) => {
                             st.buy.mode = Mode::Build;
                             st.buy.error = Some(e);
@@ -626,7 +636,7 @@ fn kv_inline(ui: &mut Ui, k: &str, v: String) {
 // Where to buy
 
 fn buy_tab(ui: &mut Ui, gs: &GameState, st: &mut BuyUi, spansh: &Spansh, rt: &tokio::runtime::Handle) -> Option<FleetAction> {
-    let mut search_now = false;
+    let mut search_now = std::mem::take(&mut st.search) && st.build.is_some();
     let mut one_now = false;
     if std::mem::take(&mut st.autorun) {
         match st.mode {

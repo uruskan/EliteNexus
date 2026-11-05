@@ -10,7 +10,7 @@
 
 use nexus_data::commodities::name_key;
 use nexus_data::outfitting::{self, SlotKind};
-use nexus_data::{ships, sku};
+use nexus_data::{fitting, ships, sku};
 use nexus_model::fleet::{Fleet, Ship};
 use nexus_spansh::{Coords, ModuleFilter, OutfittingQuery, Reference, Spansh, StationRecord};
 use serde_json::Value;
@@ -184,7 +184,8 @@ pub struct Need {
 /// What `build` needs bought: the hull, then each module once with how many the build fits.
 /// What the commander has already starts unticked, with a note saying why: a hull of that type
 /// they own and the modules fitted on it (a build for a hull they own is a refit of it), modules in
-/// their storage, and the bulkheads every new hull comes with.
+/// their storage, and what a new hull comes with (its bulkheads; for a hull they'd buy, its
+/// standard modules where the build keeps them).
 pub fn needs(build: &Build, fleet: &Fleet) -> Vec<Need> {
     let ship_name = ships::ship_name(&build.ship);
     // Their ship of this type with most of the build fitted, the one they fly when that's a tie.
@@ -223,8 +224,16 @@ pub fn needs(build: &Build, fleet: &Fleet) -> Vec<Need> {
         });
     }
     let ship = owned.map(Ship::display_name).unwrap_or_default();
+    // A new hull comes with its standard modules, as a shipyard sells it: the build's copies that are just that, plain
+    // in their own slot, aren't bought. Only for a hull they'd buy: with one of theirs, the build is a refit of it.
+    let stock: Vec<&fitting::SlotDef> = match (owned, fitting::hull(&build.ship)) {
+        (None, Some(h)) => h.slots.iter().filter(|s| s.default.is_some()).collect(),
+        _ => Vec::new(),
+    };
+    let given = |item: &str| build.modules.iter().filter(|f| f.item == item && f.engineering.is_none() && stock.iter().any(|s| s.name.eq_ignore_ascii_case(&f.slot) && s.default.as_deref() == Some(item))).count() as u32;
     for n in out.iter_mut().filter(|n| n.group != Group::Hull) {
-        if comes_with_hull(&n.symbol) {
+        let given = given(&n.symbol);
+        if comes_with_hull(&n.symbol) || given >= n.count {
             n.buy = false;
             n.had = true;
             n.note = Some(format!("Comes with every new {ship_name}"));
@@ -237,7 +246,11 @@ pub fn needs(build: &Build, fleet: &Fleet) -> Vec<Need> {
         places.dedup();
         let at = if places.is_empty() { String::new() } else { format!(" in {}", places.join(", ")) };
         n.note = have_note(n.count, fitted, &ship, stored.len() as u32, &at);
-        if fitted + stored.len() as u32 >= n.count {
+        if given > 0 {
+            let with = format!("{given} of {} come with every new {ship_name}", n.count);
+            n.note = Some(n.note.take().map_or_else(|| with.clone(), |more| format!("{with}; {more}")));
+        }
+        if given + fitted + stored.len() as u32 >= n.count {
             n.buy = false;
             n.had = true;
         }
@@ -914,6 +927,25 @@ mod tests {
         assert!(needs(&b, &fleet).iter().all(|n| !n.buy && n.had));
         // Without a ship of that type or storage, only the bulkheads every hull comes with are had.
         assert!(needs(&b, &Fleet::default()).iter().all(|n| n.had == comes_with_hull(&n.symbol)));
+    }
+
+    /// Fleet › Plan a loadout's What to buy for a new hull goes here: the standard modules a new hull comes with aren't
+    /// bought again, only what the plan changes.
+    #[test]
+    fn a_new_hulls_standard_modules_come_with_it() {
+        let python = fitting::hull("python").expect("Python");
+        let mut plan = fitting::Plan::stock(python);
+        plan.set("FrameShiftDrive", Some("int_hyperdrive_size5_class5"));
+        let b = parse_build(&plan.to_loadout().to_string()).expect("build");
+        let list = needs(&b, &Fleet::default());
+        assert!(list[0].buy, "the hull");
+        let to_buy: Vec<&str> = list.iter().skip(1).filter(|n| n.buy).map(|n| n.symbol.as_str()).collect();
+        assert_eq!(to_buy, ["int_hyperdrive_size5_class5"], "{list:?}");
+        assert!(list.iter().skip(1).filter(|n| !n.buy).all(|n| n.note.as_deref() == Some("Comes with every new Python")), "{list:?}");
+        // With a Python of theirs it's a refit of that one: its modules are what count.
+        let mut fleet = Fleet::default();
+        fleet.ships.insert(3, nexus_model::fleet::Ship::new(3, "python"));
+        assert!(needs(&b, &fleet).iter().skip(1).filter(|n| !comes_with_hull(&n.symbol)).all(|n| n.buy));
     }
 
     /// Play-test finding 14: "I can't even type one ship name or one ship module to find it."

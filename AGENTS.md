@@ -99,7 +99,7 @@ a layout changes.
 * `-Tab`: `abnormal`, `database`, ... (Market), `galaxy` (whole-galaxy map), `find`, `history`, `unsold`
   (Exploration), `carrier`, `exact`, `neutron`, `route-carrier` (Navigation: that planner; `route-carrier` plots a
   route for your ship to your carrier on the first frame), `untouched`, `known` (Exobiology > Find planets), `buy` (Fleet > Where to buy, from the current
-  ship's build with every row ticked, as for a second ship like it; `buy-build`: nothing loaded), `buy-one` (Fleet > Where to buy, one module: a 6A frame shift drive), `plan`, `plan-fsd`, `plan-new` (Fleet > Plan a loadout with the current ship; `plan-fsd` opens its frame shift drive's list, with engineering planned for it; `plan-new`: its start), `materials`, `engineers`,
+  ship's build with every row ticked, as for a second ship like it; `buy-build`: nothing loaded), `buy-one` (Fleet > Where to buy, one module: a 6A frame shift drive), `plan`, `plan-fsd`, `plan-new`, `plan-hull` (Fleet > Plan a loadout with the current ship; `plan-fsd` opens its frame shift drive's list, with engineering planned for it; `plan-new`: its start; `plan-hull`: a new Python), `materials`, `engineers`,
   `suits`, `synthesis`, `merc` (Engineering), `where`, `where:Monazite`, `where-route` (Mining > Where to mine: near
   you, near you for that material, or along a route towards Colonia), `career`, `activity`, `all` (Statistics), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from that
   theme; add `,options` to open the protection's options; nothing is written). `find`, `untouched`, `known`, `buy`,

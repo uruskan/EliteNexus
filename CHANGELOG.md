@@ -75,8 +75,9 @@ release time that section becomes the new version and the release workflow publi
   Alvarrune on the Frontier Forums).
 - **Fleet › Where to buy**: paste a ship build (a SLEF export from EDSY or Coriolis, a journal Loadout or an import
   link) or pick one of your ships, and Elite Nexus finds the nearest stations that sell all of it, modules and hull:
-  starports, outposts, settlements and fleet carriers with a pad your ship fits. Modules in your storage and the
-  bulkheads a new hull comes with start unticked, and unlocks (tech brokers, Powerplay) are marked; a hull no station
+  starports, outposts, settlements and fleet carriers with a pad your ship fits. Modules in your storage and what a
+  new hull comes with (its bulkheads, and its standard modules where the build keeps them) start unticked, and
+  unlocks (tech brokers, Powerplay) are marked; a hull no station
   prices in credits is flagged as possibly ARX-only. Every station shows how old its outfitting list is and what the
   build costs there, with a route button. Spansh can't tell a fixed weapon from a gimballed one, so each station's own
   list is checked for the exact modules. When no station sells everything, it suggests two stops, or the nearest
@@ -84,16 +85,20 @@ release time that section becomes the new version and the release workflow publi
 - **Fleet › Plan a loadout**: plan a ship's modules and see what they come to as you change them: jump range (the
   game's own "max", with a full tank, laden, and on one tank), speed and boost, shields and armour with their
   resistances, power drawn retracted and deployed against what the power plant makes, mass, cargo and fuel, cost and
-  rebuy. Start from a new hull with the modules the shipyard sells it with, one of your ships (each figure then says
-  how it changed) or a pasted build. A slot lists only the modules the game lets you fit there. **What's new** adds
-  up what you'd buy at list prices and takes it to Where to buy, which leaves out what's fitted on your ship or in your
-  storage; a slot's **Where to buy it** finds one module. Plan engineering for a module (a blueprint, the grade to
-  reach, an experimental effect), and **Materials for the engineering** adds up what it takes against the materials
-  you hold; planned engineering doesn't change the figures yet (EDSY and Coriolis open the plan to see it there). The
-  figures come from EDCD's coriolis-data and match the game's own for an unengineered Kestrel Mk II; engineering on
-  your ship counts with the game's own values. On a
-  ship's Loadout card, **Plan changes** replaces Where to buy (a ship you own has nothing to buy), and **Copy JSON**
-  is now **Copy build**.
+  rebuy. Start from a new hull with the modules the shipyard sells it with, one of your ships or a pasted build; each
+  figure says how it changed against your ship as it is, or against the hull as a shipyard sells it. A slot lists only
+  the modules the game lets you fit there: its size (life support, sensors and supercruise overcharge drives only
+  their slot's own), military and named slots their kinds, fighter hangars and luxury cabins only on hulls built for
+  them, no thrusters or shield generator the hull alone is too heavy for, and one fuel scoop, refinery, Guardian FSD
+  booster, surface scanner or hangar of each kind per ship. **What's new** (for a new hull, **What to buy**: the hull
+  at a shipyard's price, then what you change) adds up what you'd buy at list prices and takes it to Where to buy,
+  which searches at once and leaves out what you have; a slot's **Where to buy it** finds one module. Plan
+  engineering for a module (a blueprint, the grade to reach, an experimental effect), and **Materials for the
+  engineering** adds up what it takes against the materials you hold; planned engineering doesn't change the figures
+  yet. **EDSY**, **Coriolis** and **Copy build** take the plan out with the engineering already on its modules. The
+  figures come from EDCD's coriolis-data: an unengineered Kestrel Mk II comes to the unladen mass and jump range its
+  journal reports, and engineering on your ship counts with the game's own values. On a ship's Loadout card, **Plan
+  changes** replaces Where to buy (a ship you own has nothing to buy), and **Copy JSON** is now **Copy build**.
 - **Fleet › Where to buy: one ship or module.** Type a ship or a module ("Anaconda", "6A FSD", "gimballed
   multi-cannon"), pick it from the suggestions, and Elite Nexus finds the nearest stations that sell it, with its
   price there and how old the station's list is. A module is searched where the ship you fly can land; a hull, where

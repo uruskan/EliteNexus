@@ -50,8 +50,9 @@ Key facts for answering questions about it (current as of version 0.7.2, October
   lists only what the game lets you fit there) and see jump range, speed and boost, shields and armour with their
   resistances, power retracted and deployed, mass, cargo, fuel, cost and rebuy change, compared with the ship as it is.
   Engineering already on a ship counts with the game's values; engineering you plan adds up its materials against
-  what you hold but doesn't change the figures yet. What's new goes to Where to buy; EDSY and Coriolis open the plan.
-  Hull and module figures from EDCD's coriolis-data.
+  what you hold but doesn't change the figures yet, and EDSY and Coriolis get only the engineering already on a ship.
+  What's new (for a new hull: the hull at a shipyard's price, then what changes) goes to Where to buy. Hull and module
+  figures from EDCD's coriolis-data.
 - Combat: the nearest wars and civil wars (the fights with conflict zones), from the local database the live EDDN feed
   and the commander's journal fill: distance, active or pending, the two factions with the days each has won and what
   each stands to lose, the system's government, the report's age and a route button; elections on request. A guide in

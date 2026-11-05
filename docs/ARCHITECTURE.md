@@ -23,7 +23,7 @@ a Market section (`abnormal`, `database`, …; `routes` finds trade routes on th
 screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build, every row ticked as for a second
 ship like it, and searches on the first frame; `buy-one`: it searches for one module, a 6A frame shift drive), Fleet ›
 Plan a loadout (`plan`: the current ship; `plan-fsd`: with its frame shift drive's list open and engineering planned
-for it; `plan-new`: its start), a Statistics tab (`career`, `activity`, `all`), Navigation's
+for it; `plan-new`: its start; `plan-hull`: a new Python), a Statistics tab (`career`, `activity`, `all`), Navigation's
 planners (`carrier`, `exact`, `neutron`; `route-carrier` plots a route for the ship to the carrier on the first frame),
 HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
 `royalpurple`, …), `--demo` adds a sample Ask conversation, an alert banner and sample alerts in the alert history
@@ -87,8 +87,11 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   only, and lists MercGear-shared symbols under the MercGear name: `docs/research/spansh.md` §4.8).
   `pages/fleet/plan.rs` is Fleet › Plan a loadout over `nexus_data::fitting`: a `Plan` (hull, bulkheads, the module in
   each of the game's slots, engineering goals) read from and written back to a build, and `figures`, the game's own
-  sums (its test checks them against a real ship's journal figures). Engineering already on a module counts through
-  the journal's modifiers; planned goals only add up materials. The page hands a plan to Where to buy as a build.
+  sums (its test checks them against a real ship's journal figures), and `Hull::fits`, what the game lets go in a slot.
+  Engineering already on a module counts through the journal's modifiers and goes back out with the build
+  (`to_loadout`, for EDSY, Coriolis and Copy build); planned goals only add up materials. The page compares with the
+  commander's ship as it is, or with the hull as a shipyard sells it (`Plan::stock`), and hands a plan to Where to buy
+  as a build, where `shopping::needs` leaves out what a new hull comes with.
 * The overlay (`overlay.rs`, `overlay/`): one black island at the top of the game's screen, in its own deferred
   viewport (a borderless always-on-top window beside the main one). `overlay.rs` is its view model, pure and tested:
   `Inputs::read` copies what it needs from the model (via `nexus_model::context`), `Rhythm::view` picks the moment,
