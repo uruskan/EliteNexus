@@ -171,8 +171,10 @@ impl NexusApp {
         let mut market_ui = pages::market::MarketUi::new(settings.market.clone());
         if let Some(t) = ov.tab.as_deref().and_then(pages::market::Tab::from_name) {
             market_ui.tab = t;
-            // Trade routes search, and the Station tab opens this system's markets side by side.
+            // Trade routes search, the Station tab opens this system's markets side by side, and `browse` opens Find
+            // commodity's whole list.
             market_ui.autorun = shot.is_some() && matches!(t, pages::market::Tab::Routes | pages::market::Tab::Docked);
+            market_ui.browse = shot.is_some() && ov.tab.as_deref().is_some_and(|n| n.eq_ignore_ascii_case("browse"));
         }
         let map = pages::galaxy_map::MapUi::new(ov.tab.as_deref() == Some("galaxy"));
         pages::stats::open_tab(&cc.egui_ctx, ov.tab.as_deref());

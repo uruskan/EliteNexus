@@ -1175,10 +1175,6 @@ pub struct Completion {
     pub picked: Option<String>,
     /// Enter pressed while no suggestion list was open.
     pub submitted: bool,
-    /// The field has the keyboard focus (it's being typed in).
-    pub focused: bool,
-    /// `picked` came from the whole list (`suggest("")`: the ▾, or the field empty), not from matches to typed text.
-    pub whole_list: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1193,43 +1189,88 @@ struct CompletionState {
     scroll: bool,
 }
 
-/// A combobox's list opens on what the field holds (the blank entry when it's empty, if the list has one).
-fn current_entry(items: &[Suggestion], text: &str) -> usize {
-    items.iter().position(|it| it.text == text).unwrap_or(0)
+/// One line of a [`combobox_grouped`] list: an entry to pick, or a heading over the entries under it.
+pub enum ListRow {
+    Item(Suggestion),
+    /// A group's name. It can't be picked: the highlight and the arrow keys pass over it.
+    Heading(String),
+}
+
+impl ListRow {
+    fn item(&self) -> Option<&Suggestion> {
+        match self {
+            ListRow::Item(s) => Some(s),
+            ListRow::Heading(_) => None,
+        }
+    }
+}
+
+/// The list's first entry that can be picked (0 when it has none).
+fn first_entry(items: &[ListRow]) -> usize {
+    items.iter().position(|r| r.item().is_some()).unwrap_or(0)
+}
+
+/// A combobox's list opens on what the field holds, or else on its first entry.
+fn current_entry(items: &[ListRow], text: &str) -> usize {
+    items.iter().position(|r| r.item().is_some_and(|it| it.text == text)).unwrap_or_else(|| first_entry(items))
+}
+
+/// The next entry down (or up) from `from` that can be picked, going round the list; `from` when there's none.
+fn step_entry(items: &[ListRow], from: usize, down: bool) -> usize {
+    let n = items.len();
+    (1..=n).map(|k| if down { (from + k) % n } else { (from + n - k % n) % n }).find(|&i| items[i].item().is_some()).unwrap_or(from)
 }
 
 /// A capsule search field with a suggestion list underneath. The list opens as you type (or when you
 /// click into the empty field), ↑/↓ move the highlight, Enter or a click takes a suggestion, Escape
 /// or a click elsewhere closes it. `suggest` gets the text and returns suggestions, best first.
 pub fn autocomplete(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: f32, suggest: impl Fn(&str) -> Vec<Suggestion>) -> Completion {
-    completion(ui, id_salt, text, hint, width, false, suggest)
+    completion(ui, id_salt, text, hint, width, false, |t| suggest(t).into_iter().map(ListRow::Item).collect())
 }
 
 /// An [`autocomplete`] field with a ▾ button that opens the whole list (`suggest("")`): type to narrow it, or pick.
 /// Unlike [`autocomplete`]: entering the field selects its text, the list opens on the entry the field holds, and
 /// Tab takes the highlighted entry as Enter does.
 pub fn combobox(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: f32, suggest: impl Fn(&str) -> Vec<Suggestion>) -> Completion {
+    completion(ui, id_salt, text, hint, width, true, |t| suggest(t).into_iter().map(ListRow::Item).collect())
+}
+
+/// A [`combobox`] whose list can group its entries under headings ([`ListRow::Heading`]), which can't be picked.
+pub fn combobox_grouped(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: f32, suggest: impl Fn(&str) -> Vec<ListRow>) -> Completion {
     completion(ui, id_salt, text, hint, width, true, suggest)
 }
 
-fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: f32, dropdown: bool, suggest: impl Fn(&str) -> Vec<Suggestion>) -> Completion {
+/// Opens a combobox's whole list, as its ▾ does, with the field focused. Call it just before the combobox, in the same
+/// `ui`: screenshot runs show the list open.
+pub fn open_combobox(ui: &Ui, id_salt: &str) {
+    let id = ui.make_persistent_id(id_salt);
+    let mut s: CompletionState = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+    s.open = true;
+    s.all = true;
+    s.scroll = true;
+    ui.data_mut(|d| d.insert_temp(id, s));
+    ui.memory_mut(|m| m.request_focus(id.with("edit")));
+}
+
+fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: f32, dropdown: bool, suggest: impl Fn(&str) -> Vec<ListRow>) -> Completion {
     let id = ui.make_persistent_id(id_salt);
     let edit_id = id.with("edit");
     let mut s: CompletionState = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     let mut items = if s.open { suggest(if s.all { "" } else { text }) } else { Vec::new() };
-    // The items are the whole list, not matches to typed text.
-    let mut whole = s.all || text.trim().is_empty();
-    // Arrow keys move the highlight; they are taken before the text field sees them.
+    // The whole list, just opened (the ▾, or `open_combobox`): on the entry the field holds.
+    if s.open && s.all && s.scroll {
+        s.sel = current_entry(&items, text);
+    }
+    // Arrow keys move the highlight over the entries (not the headings); they are taken before the text field sees them.
     let mut moved = false;
-    if s.open && !items.is_empty() && ui.memory(|m| m.has_focus(edit_id)) {
-        let n = items.len();
+    if s.open && items.iter().any(|r| r.item().is_some()) && ui.memory(|m| m.has_focus(edit_id)) {
         ui.input_mut(|i| {
             if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown) {
-                s.sel = (s.sel + 1) % n;
+                s.sel = step_entry(&items, s.sel, true);
                 moved = true;
             }
             if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) {
-                s.sel = (s.sel + n - 1) % n;
+                s.sel = step_entry(&items, s.sel, false);
                 moved = true;
             }
         });
@@ -1248,20 +1289,24 @@ fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: 
         s.open = true;
         s.all = false;
         items = suggest(text);
-        whole = text.trim().is_empty();
-        s.sel = if dropdown && !resp.changed() { current_entry(&items, text) } else { 0 };
+        s.sel = if dropdown && !resp.changed() { current_entry(&items, text) } else { first_entry(&items) };
     }
     let arrow = dropdown.then(|| {
         ui.add(egui::Button::new(RichText::new(egui_phosphor::regular::CARET_DOWN).size(15.0).color(pal::DIM)).frame(false)).on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text("Show the list")
     });
     s.sel = s.sel.min(items.len().saturating_sub(1));
+    // The highlight never rests on a heading.
+    if items.get(s.sel).is_some_and(|r| r.item().is_none()) {
+        s.sel = step_entry(&items, s.sel, true);
+    }
+    let pickable = items.get(s.sel).is_some_and(|r| r.item().is_some());
     let mut picked = None;
     let mut submitted = false;
     if resp.lost_focus() {
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let tab = dropdown && s.open && !items.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Tab));
+        let tab = dropdown && s.open && pickable && ui.input(|i| i.key_pressed(egui::Key::Tab));
         if enter || tab {
-            if s.open && !items.is_empty() {
+            if s.open && pickable {
                 picked = Some(s.sel);
             } else {
                 submitted = true;
@@ -1278,12 +1323,23 @@ fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: 
         s.open = true;
         s.all = true;
         items = suggest("");
-        whole = true;
         s.sel = current_entry(&items, text);
         s.scroll = true;
         ui.memory_mut(|m| m.request_focus(edit_id));
     }
+    // A press on the list that picked nothing (its scroll bar) took the focus from the field, which kept the list open:
+    // a click anywhere else closes it then, as it would have with the field focused.
+    if s.open
+        && !opened
+        && !resp.has_focus()
+        && ui.input(|i| i.pointer.any_click())
+        && !s.list.zip(ui.ctx().pointer_latest_pos()).is_some_and(|(r, p)| r.contains(p))
+        && !capsule.response.contains_pointer()
+    {
+        s.open = false;
+    }
     s.list = None;
+    let mut refocus = false;
     if s.open && !items.is_empty() && !opened {
         let mut open = true;
         let shown = egui::Popup::new(id.with("list"), ui.ctx().clone(), &capsule.response, ui.layer_id())
@@ -1297,13 +1353,25 @@ fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: 
                 ui.set_min_width(capsule.response.rect.width() - 16.0);
                 egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    for (i, it) in items.iter().enumerate() {
-                        let r = suggestion_row(ui, it, i == s.sel);
+                    for (i, row) in items.iter().enumerate() {
+                        let r = match row {
+                            ListRow::Item(it) => suggestion_row(ui, it, i == s.sel),
+                            ListRow::Heading(h) => heading_row(ui, h, i > 0),
+                        };
                         if r.clicked() {
-                            picked = Some(i);
+                            match row {
+                                ListRow::Item(_) => picked = Some(i),
+                                // Nothing to pick: the field keeps the keyboard, so typing and ↑/↓ go on working.
+                                ListRow::Heading(_) => refocus = true,
+                            }
                         }
-                        if (moved || s.scroll) && i == s.sel {
-                            r.scroll_to_me(None);
+                        if i == s.sel {
+                            if s.scroll {
+                                // Just opened: the entry in the middle, its heading and neighbours in view.
+                                r.scroll_to_me(Some(Align::Center));
+                            } else if moved {
+                                r.scroll_to_me(None);
+                            }
                         }
                     }
                 });
@@ -1314,14 +1382,35 @@ fn completion(ui: &mut Ui, id_salt: &str, text: &mut String, hint: &str, width: 
             s.open = false;
         }
     }
-    let picked = picked.and_then(|i| items.into_iter().nth(i)).map(|it| {
+    if refocus {
+        ui.memory_mut(|m| m.request_focus(edit_id));
+    }
+    let picked = picked.and_then(|i| items.into_iter().nth(i)).and_then(|r| match r {
+        ListRow::Item(it) => Some(it),
+        ListRow::Heading(_) => None,
+    });
+    let picked = picked.map(|it| {
         text.clone_from(&it.text);
         s.open = false;
         it.text
     });
     ui.data_mut(|d| d.insert_temp(id, s));
-    let whole_list = whole && picked.is_some();
-    Completion { picked, submitted, focused: ui.memory(|m| m.has_focus(edit_id)), whole_list }
+    Completion { picked, submitted }
+}
+
+/// A group's heading in a suggestion list: small and dim, a hairline above it when entries come before. It senses a
+/// click only to give the field its focus back.
+fn heading_row(ui: &mut Ui, text: &str, after_entries: bool) -> Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::click());
+    if ui.is_rect_visible(rect) {
+        let p = ui.painter();
+        if after_entries {
+            p.hline(rect.x_range().shrink(8.0), rect.top() + 3.0, Stroke::new(1.0, Color32::from_white_alpha(18)));
+        }
+        let g = p.layout_no_wrap(text.to_owned(), display(size::FOOTNOTE), pal::DIM);
+        p.galley(Pos2::new(rect.left() + 8.0, rect.bottom() - 5.0 - g.size().y), g, pal::DIM);
+    }
+    resp
 }
 
 fn suggestion_row(ui: &mut Ui, it: &Suggestion, selected: bool) -> Response {
@@ -1742,6 +1831,24 @@ mod tests {
         assert_eq!(Steps::Through(&ladder).step(60.0, false, 1.0, 1000.0), 50.0);
         assert_eq!(Steps::Through(&ladder).step(250.0, true, 1.0, 1000.0), 1000.0);
         assert_eq!(Steps::Through(&ladder).step(25.0, false, 1.0, 1000.0), 1.0);
+    }
+
+    /// A list's highlight passes over its headings, round the list either way, and opens on the entry the field holds
+    /// or else on the first one that can be picked.
+    #[test]
+    fn list_headings_are_passed_over() {
+        let item = |t: &str| ListRow::Item(Suggestion { text: t.into(), detail: String::new(), starred: false });
+        let rows = vec![ListRow::Heading("Recent".into()), item("Gold"), ListRow::Heading("Metals".into()), item("Silver"), item("Gold")];
+        assert_eq!(first_entry(&rows), 1);
+        assert_eq!(current_entry(&rows, "Silver"), 3);
+        assert_eq!(current_entry(&rows, "Gold"), 1, "the first of two");
+        assert_eq!(current_entry(&rows, "typed"), 1, "not in the list: the first entry");
+        assert_eq!(step_entry(&rows, 1, true), 3, "down, over the heading");
+        assert_eq!(step_entry(&rows, 4, true), 1, "round to the top, over the first heading");
+        assert_eq!(step_entry(&rows, 1, false), 4, "up, round to the bottom");
+        assert_eq!(step_entry(&rows, 3, false), 1, "up, over the heading");
+        assert_eq!(step_entry(&[ListRow::Heading("Only".into())], 0, true), 0, "nothing to pick: it stays");
+        assert_eq!(first_entry(&[]), 0);
     }
 
     #[test]

@@ -117,13 +117,12 @@ release time that section becomes the new version and the release workflow publi
   multi-cannon"), pick it from the suggestions, and Elite Nexus finds the nearest stations that sell it, with its
   price there and how old the station's list is. A module is searched where the ship you fly can land; a hull, where
   it can. A whole build is one click away, under **A whole build**.
-- **Market** › Find commodity: a **Category** field beside the search, and a ▾ on both that opens the whole list. The
-  category narrows only the list the search field's ▾ opens: typing still finds every commodity. A category's rare
-  goods are one item, **Rare Goods**, and the category **Rare Goods** holds them all: one page lists
-  every place selling or buying any of them, each row naming its rare good and comparing it with that good's own
-  average. Rare goods are marked ★ in yellow, and the lists name the commodity in their first column. Clicking into
-  either field selects its text; Tab takes the highlighted entry. The retired event rares (Classified Experimental
-  Equipment, Galactic Travel Guide) are left out.
+- **Market** › Find commodity: browse every commodity from the search field. Empty, or with its new ▾, its list shows
+  the commodities you opened lately, then every commodity under its category's heading, and **Rare Goods** as one
+  entry: one page lists every place selling or buying any rare good, each row naming its rare good and comparing it
+  with that good's own average. Typing still finds every commodity, a rare good by its name too. Rare goods are marked
+  ★ in yellow. Clicking into the field selects its text; Tab takes the highlighted entry. The retired event rares
+  (Classified Experimental Equipment, Galactic Travel Guide) are left out.
 - **Market**: fleet carriers say who may dock right in the lists (Find commodity, Abnormal prices, Sell my cargo,
   your pins and the Station tab's carriers): **open**, **friends**, **squadron**, **squadron, friends** or **owner
   only**, as last reported with the carrier's market, or **?** when no report has said. Until now it showed only

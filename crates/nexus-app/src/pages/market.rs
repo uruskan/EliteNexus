@@ -8,7 +8,7 @@ use crate::market::{ImportJob, ImportSource, MarketService, SPANSH_STATIONS_URL}
 use crate::runplan::{self, Order, PlanInput, RunPlan};
 use crate::settings::PriceWatch;
 use crate::theme::{display, pal, size};
-use crate::widgets::{Steps, Suggestion, TableSort, badge, bar, card, cmp_opt, cmp_text, duration, empty, short_credits};
+use crate::widgets::{ListRow, Steps, Suggestion, TableSort, badge, bar, card, cmp_opt, cmp_text, duration, empty, short_credits};
 use egui::{Color32, RichText, Ui};
 use egui_extras::Column;
 use egui_phosphor::regular as icon;
@@ -36,11 +36,11 @@ pub enum Tab {
 }
 
 impl Tab {
-    /// For `--tab` (screenshots): `commodity`, `abnormal`, `sell`, `routes`, `services`, `hotspots`,
-    /// `alerts`, `station` (or `docked`), `database`.
+    /// For `--tab` (screenshots): `commodity` (or `browse`: its search field's whole list open), `abnormal`, `sell`,
+    /// `routes`, `services`, `hotspots`, `alerts`, `station` (or `docked`), `database`.
     pub fn from_name(name: &str) -> Option<Tab> {
         Some(match name.to_ascii_lowercase().as_str() {
-            "commodity" => Tab::Commodity,
+            "commodity" | "browse" => Tab::Commodity,
             "abnormal" => Tab::Abnormal,
             "plan" => Tab::Plan,
             "sell" => Tab::Sell,
@@ -85,10 +85,9 @@ pub struct MarketPrefs {
     pub min_qty: i64,
     pub carriers: bool,
     pub planetary: bool,
-    /// Find commodity: the category chosen ("" = every category, or the pseudo category [`RARE_GOODS`]).
-    pub category: String,
-    /// Find commodity: rare goods taken as one are open instead of `commodity`: one category's
-    /// (`Some("Legal Drugs")`) or all of them (`Some("")`).
+    /// Find commodity: the Rare Goods page (every rare good taken as one) is open instead of `commodity`. It's
+    /// `Some("")`; a file saved before Find commodity lost its Category field may hold a category's name, and opens
+    /// on all of them too. (That file's `category` is ignored.)
     pub rare_goods: Option<String>,
     /// Trade routes: area and longest hop.
     pub radius: f64,
@@ -147,7 +146,6 @@ impl Default for MarketPrefs {
             min_qty: 1,
             carriers: true,
             planetary: true,
-            category: String::new(),
             rare_goods: None,
             radius: 40.0,
             hop: 25.0,
@@ -199,6 +197,10 @@ impl MarketPrefs {
         self.tiles.retain(|t| *t != 0 && seen.insert(*t));
         self.tiles.truncate(MAX_TILES);
         self.recent_markets.truncate(RECENT_MARKETS);
+        // One Rare Goods page now, with every rare good.
+        if self.rare_goods.is_some() {
+            self.rare_goods = Some(String::new());
+        }
         self
     }
 
@@ -372,15 +374,14 @@ pub struct MarketUi {
     pub prefs: MarketPrefs,
     /// Find commodity: what's typed in the search field.
     input: String,
-    /// Find commodity: what's typed in the category field.
-    category_input: String,
     /// The list the page shows; starts at the saved one and may move to a list that has results.
     side: Side,
     /// Every known commodity, for the suggestions (loaded on first use).
     commodities: Vec<CommodityInfo>,
     page: Slot<Result<Option<CommodityPage>, String>>,
-    /// The rare goods and query the shown page was loaded with: any change (filters, commodity, position) reloads it.
-    page_key: Option<(Option<String>, CommodityQuery)>,
+    /// Whether the shown page is the Rare Goods page, and the query it was loaded with: any change (filters,
+    /// commodity, position) reloads it.
+    page_key: Option<(bool, CommodityQuery)>,
     /// A new commodity is loading: once it arrives, an empty list may give way to one with results.
     fresh: bool,
     /// Text that matched no commodity.
@@ -413,6 +414,8 @@ pub struct MarketUi {
     /// Search on the next frame: Trade routes (screenshot runs: `--tab routes`), or Mining hotspots (opened from a
     /// "where to get it" panel).
     pub autorun: bool,
+    /// Find commodity: the search field's whole list opens on the next frame (screenshot runs: `--tab browse`).
+    pub browse: bool,
     service: usize,
     stations: Slot<Res<StationHit>>,
     /// What the Services list was searched for: (service, system, pad, carriers, planetary, how many). It searches again
@@ -463,7 +466,6 @@ impl MarketUi {
         MarketUi {
             tab: prefs.tab,
             input: if prefs.rare_goods.is_some() { RARE_GOODS.to_string() } else { prefs.commodity.clone() },
-            category_input: prefs.category.clone(),
             side: prefs.side,
             prefs,
             commodities: Vec::new(),
@@ -488,6 +490,7 @@ impl MarketUi {
             routes: Slot::default(),
             routes_from: None,
             autorun: false,
+            browse: false,
             service: 0,
             stations: Slot::default(),
             services_key: None,
@@ -536,9 +539,6 @@ impl MarketUi {
             self.fresh = true;
         }
         self.prefs.rare_goods = None;
-        if let Some(c) = self.commodities.iter().find(|c| c.name == name) {
-            self.prefs.category.clone_from(&c.category);
-        }
         self.prefs.remember(&name);
         self.input = name;
         self.not_found = None;
@@ -547,32 +547,22 @@ impl MarketUi {
         true
     }
 
-    /// No commodity page: the search field's item is picked afresh.
-    fn close_page(&mut self) {
-        self.prefs.commodity.clear();
-        self.prefs.rare_goods = None;
-        self.pick = None;
-        self.not_found = None;
-    }
-
-    /// Opens rare goods taken as one: one category's, or ("") all of them.
-    fn open_rare_goods(&mut self, category: String) {
-        if self.prefs.rare_goods.as_deref() != Some(category.as_str()) {
+    /// Opens the Rare Goods page: every rare good taken as one.
+    fn open_rare_goods(&mut self) {
+        if self.prefs.rare_goods.is_none() {
             self.pick = None;
             self.fresh = true;
         }
-        self.prefs.category = if category.is_empty() { RARE_GOODS.to_string() } else { category.clone() };
-        self.prefs.rare_goods = Some(category);
+        self.prefs.rare_goods = Some(String::new());
         self.input = RARE_GOODS.to_string();
         self.not_found = None;
         self.page_key = None;
     }
 
-    /// Opens what the search field holds: rare goods taken as one, or a commodity. `rares` is the rare goods the
-    /// pseudo item stands for there: one category's, or "" for all.
-    fn open_item(&mut self, db: &GalaxyDb, text: &str, rares: String) {
+    /// Opens what the search field holds: the Rare Goods page, or a commodity.
+    fn open_item(&mut self, db: &GalaxyDb, text: &str) {
         if text.trim().eq_ignore_ascii_case(RARE_GOODS) {
-            self.open_rare_goods(rares);
+            self.open_rare_goods();
         } else {
             self.open_commodity(db, text);
         }
@@ -776,10 +766,8 @@ fn commodity_suggestions(all: &[CommodityInfo], recent: &[String], typed: &str) 
     rank_commodities(all, typed, 40).into_iter().map(commodity_suggestion).collect()
 }
 
-/// The pseudo category, and the pseudo item: rare goods taken as one commodity.
+/// The Rare Goods page's name: every rare good taken as one commodity.
 const RARE_GOODS: &str = "Rare Goods";
-/// The category field's entry for no category.
-const ALL_CATEGORIES: &str = "All categories";
 /// Rare goods sold only during past events, which can't be bought any more: left out of the lists.
 const RETIRED_RARES: [&str; 2] = ["classifiedexperimentalequipment", "galactictravelguide"];
 
@@ -788,74 +776,51 @@ fn listed(c: &CommodityInfo) -> bool {
     c.category != "NonMarketable" && !RETIRED_RARES.iter().any(|r| c.symbol.eq_ignore_ascii_case(r))
 }
 
-/// A commodity of a category's own item list: every category ("") lists every commodity, a category its
-/// normal goods (its rare goods are one item), the pseudo category none (it has only that item).
-fn in_category(c: &CommodityInfo, category: &str) -> bool {
-    category.is_empty() || (c.category == category && !c.is_rare)
-}
-
-/// The rare goods a category's pseudo item takes as one: every category's ("" or the pseudo category), or its own.
-fn rare_count(all: &[CommodityInfo], category: &str) -> usize {
-    all.iter().filter(|c| listed(c) && c.is_rare && (category.is_empty() || category == RARE_GOODS || c.category == category)).count()
-}
-
-/// The pseudo item: one category's rare goods, or (`every`) those of every category.
-fn rare_goods_item(count: usize, every: bool) -> Suggestion {
+/// The list's entry for the Rare Goods page: every rare good as one.
+fn rare_goods_item(count: usize) -> Suggestion {
     let goods = if count == 1 { "rare good" } else { "rare goods" };
-    Suggestion { text: RARE_GOODS.into(), detail: if every { format!("all {count} {goods}") } else { format!("{count} {goods}") }, starred: true }
+    Suggestion { text: RARE_GOODS.into(), detail: format!("all {count} {goods}"), starred: true }
 }
 
-/// Every category by name, then the pseudo category of rare goods.
-fn commodity_categories(all: &[CommodityInfo]) -> Vec<String> {
-    let mut categories: Vec<String> = all.iter().filter(|c| listed(c)).map(|c| c.category.clone()).collect();
-    categories.sort();
-    categories.dedup();
-    categories.push(RARE_GOODS.into());
-    categories
-}
-
-/// The category field's list, narrowed to what's typed; "All categories" first while nothing is.
-fn category_suggestions(all: &[CommodityInfo], typed: &str) -> Vec<Suggestion> {
+/// The search field's list. Typed: the best matches among every commodity (a rare good among them behind its ★), and
+/// the Rare Goods page when the words fit. Nothing typed, or the ▾: the commodities opened lately, then every
+/// commodity under its category's heading, then the Rare Goods page as one entry (rare goods aren't listed one by
+/// one there: typing finds them). Headings can't be picked.
+fn commodity_rows(all: &[CommodityInfo], recent: &[String], typed: &str) -> Vec<ListRow> {
+    let rares = all.iter().filter(|c| listed(c) && c.is_rare).count();
     let q = typed.trim().to_lowercase();
-    let mut out = Vec::new();
-    if q.is_empty() {
-        out.push(Suggestion { text: ALL_CATEGORIES.into(), detail: String::new(), starred: false });
-    }
-    out.extend(commodity_categories(all).into_iter().filter(|c| c.to_lowercase().contains(&q)).map(|c| Suggestion { starred: c == RARE_GOODS, detail: String::new(), text: c }));
-    out
-}
-
-/// A category's items: its commodities by name, then its rare goods as one item (when it has any).
-fn category_items(all: &[CommodityInfo], category: &str) -> Vec<Suggestion> {
-    let mut items: Vec<&CommodityInfo> = all.iter().filter(|c| listed(c) && in_category(c, category)).collect();
-    items.sort_by(|a, b| a.name.cmp(&b.name));
-    let mut out: Vec<Suggestion> = items.into_iter().map(commodity_suggestion).collect();
-    let rares = rare_count(all, category);
-    if rares > 0 {
-        out.push(rare_goods_item(rares, category.is_empty() || category == RARE_GOODS));
-    }
-    out
-}
-
-/// The search field's list. Nothing typed (or ▾): the category's items (every category: the recent ones first).
-/// Typed: the best matches among every commodity, whatever the category, and every rare good as one when the words
-/// fit. The category narrows only the list for nothing typed: a page opened earlier sets it, and typing must still
-/// find anything.
-fn item_suggestions(all: &[CommodityInfo], recent: &[String], category: &str, typed: &str) -> Vec<Suggestion> {
-    let q = typed.trim().to_lowercase();
-    if q.is_empty() {
-        // A blank entry first: taking it leaves the field empty.
-        let mut out = vec![Suggestion { text: String::new(), detail: String::new(), starred: false }];
-        if category.is_empty() {
-            out.extend(commodity_suggestions(all, recent, ""));
+    if !q.is_empty() {
+        let mut out: Vec<ListRow> = rank_commodities(all.iter().filter(|c| listed(c)), typed, 40).into_iter().map(|c| ListRow::Item(commodity_suggestion(c))).collect();
+        if rares > 0 && RARE_GOODS.to_lowercase().contains(&q) {
+            out.push(ListRow::Item(rare_goods_item(rares)));
         }
-        out.extend(category_items(all, category));
         return out;
     }
-    let mut out: Vec<Suggestion> = rank_commodities(all.iter().filter(|c| listed(c)), typed, 40).into_iter().map(commodity_suggestion).collect();
-    let rares = rare_count(all, "");
-    if rares > 0 && RARE_GOODS.to_lowercase().contains(&q) {
-        out.push(rare_goods_item(rares, true));
+    let mut out = Vec::new();
+    // The ones opened lately, each with its category on the right.
+    if !recent.is_empty() {
+        out.push(ListRow::Heading("Recent".into()));
+        for r in recent {
+            out.push(ListRow::Item(match all.iter().find(|c| &c.name == r) {
+                Some(c) => commodity_suggestion(c),
+                None => Suggestion { text: r.clone(), detail: String::new(), starred: false },
+            }));
+        }
+    }
+    let mut goods: Vec<&CommodityInfo> = all.iter().filter(|c| listed(c) && !c.is_rare).collect();
+    goods.sort_by(|a, b| a.category.cmp(&b.category).then_with(|| a.name.cmp(&b.name)));
+    let mut heading = None;
+    for c in goods {
+        if heading != Some(c.category.as_str()) {
+            heading = Some(c.category.as_str());
+            out.push(ListRow::Heading(c.category.clone()));
+        }
+        // The heading says the category.
+        out.push(ListRow::Item(Suggestion { text: c.name.clone(), detail: String::new(), starred: false }));
+    }
+    if rares > 0 {
+        out.push(ListRow::Heading("Rare goods".into()));
+        out.push(ListRow::Item(rare_goods_item(rares)));
     }
     out
 }
@@ -1338,58 +1303,32 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
         st.commodities = db.commodities();
     }
     let origin = gs.location.star_pos;
-    // What to open, and which rare goods "Rare Goods" means there (a category's, or "" for all).
-    let mut look_up: Option<(String, String)> = None;
-    // Another category, or the blank item: no page until an item is picked.
-    let mut close = false;
+    let mut look_up: Option<String> = None;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
         let (all, recent) = (&st.commodities, &st.prefs.recent);
-        // The category narrows what the search field lists; "Rare Goods" holds rare goods taken as one.
-        let c = crate::widgets::combobox(ui, "commodity-category", &mut st.category_input, ALL_CATEGORIES, 180.0, |t| category_suggestions(all, t));
-        let before = st.prefs.category.clone();
+        // One field. Typed: the best matches among every commodity. Empty, or its ▾: every commodity under its
+        // category's heading, and the Rare Goods page as one entry.
+        if std::mem::take(&mut st.browse) {
+            crate::widgets::open_combobox(ui, "commodity-search");
+        }
+        let c = crate::widgets::combobox_grouped(ui, "commodity-search", &mut st.input, "Commodity: Tritium, LTD, Thargoid…", 320.0, |t| commodity_rows(all, recent, t));
         if let Some(p) = c.picked {
-            st.prefs.category = if p == ALL_CATEGORIES { String::new() } else { p };
+            look_up = Some(p);
         } else if c.submitted {
-            let typed = st.category_input.trim();
-            st.prefs.category = if typed.is_empty() { String::new() } else { category_suggestions(all, typed).into_iter().map(|s| s.text).next().unwrap_or_default() };
-        }
-        // Another category: its items are picked afresh, and the page below waits for one.
-        if st.prefs.category != before {
-            st.input.clear();
-            close = true;
-        }
-        // Not being typed in: it shows the category in use (an open page sets it too).
-        if !c.focused && st.category_input != st.prefs.category {
-            st.category_input.clone_from(&st.prefs.category);
-        }
-        let category = st.prefs.category.as_str();
-        let c = crate::widgets::combobox(ui, "commodity-search", &mut st.input, "Commodity: Tritium, LTD, Thargoid…", 320.0, |t| item_suggestions(all, recent, category, t));
-        // Rare Goods from the category's list (▾) are that category's; matched to typed words, all of them; searched
-        // again, the ones open.
-        let open_rares = st.prefs.rare_goods.clone().unwrap_or_default();
-        if c.picked.as_deref() == Some("") {
-            close = true;
-        } else if let Some(p) = c.picked {
-            let rares = if !c.whole_list || category == RARE_GOODS { String::new() } else { category.to_string() };
-            look_up = Some((p, rares));
-        } else if c.submitted {
-            look_up = Some((st.input.clone(), open_rares.clone()));
+            look_up = Some(st.input.clone());
         }
         if crate::widgets::primary_button(ui, "Search").clicked() {
-            look_up = Some((st.input.clone(), open_rares));
+            look_up = Some(st.input.clone());
         }
         if st.page.busy() && st.page.last.is_some() {
             ui.spinner();
         }
     });
-    if close {
-        st.close_page();
-    }
-    if let Some((t, rares)) = look_up
+    if let Some(t) = look_up
         && !t.trim().is_empty()
     {
-        st.open_item(db, &t, rares);
+        st.open_item(db, &t);
     }
     ui.add_space(2.0);
     search_filters(ui, &mut st.prefs, gs);
@@ -1418,11 +1357,11 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
         limit: PAGE_LIMIT,
         sort: p.sort,
     };
-    let key = (p.rare_goods.clone(), q);
+    let key = (p.rare_goods.is_some(), q);
     if st.page_key.as_ref() != Some(&key) && !st.page.busy() {
         st.page_key = Some(key.clone());
         let db = db.clone();
-        st.page.run(ui.ctx(), move || load_page(&db, key.0.as_deref(), &key.1).map_err(|e| e.to_string()));
+        st.page.run(ui.ctx(), move || load_page(&db, key.0, &key.1).map_err(|e| e.to_string()));
     }
     let page = match &st.page.last {
         None => {
@@ -1508,6 +1447,8 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
     }
 
     let good = (page.summary.symbol.as_str(), page.summary.name.as_str());
+    // The Rare Goods page (no symbol of its own): its rows name their rare goods.
+    let rare_page = page.summary.symbol.is_empty();
     let action = match st.side {
         Side::Buy | Side::Sell => {
             let (hits, mode) = if st.side == Side::Buy { (&page.buy, TradeMode::BuyFromStation) } else { (&page.sell, TradeMode::SellToStation) };
@@ -1517,7 +1458,7 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
                 }
                 None
             } else {
-                hits_table(ui, "commodity-hits", hits, mode, page.summary.average, st.pick.as_ref(), Some((good, &st.prefs, page.summary.is_rare)))
+                hits_table(ui, "commodity-hits", hits, mode, page.summary.average, st.pick.as_ref(), Some((good, &st.prefs, rare_page)))
             }
         }
         Side::Latest => {
@@ -1527,7 +1468,7 @@ fn commodity_tab(ui: &mut Ui, gs: &GameState, db: &GalaxyDb, st: &mut MarketUi) 
                 }
                 None
             } else {
-                latest_table(ui, &page.latest, page.summary.average, st.pick.as_ref(), good, &st.prefs, page.summary.is_rare)
+                latest_table(ui, &page.latest, page.summary.average, st.pick.as_ref(), good, &st.prefs, rare_page)
             }
         }
     };
@@ -1550,11 +1491,11 @@ fn row_name(page: &CommodityPage, all: &[CommodityInfo], symbol: &str) -> String
     all.iter().find(|c| c.symbol == symbol).map_or_else(|| symbol.to_string(), |c| c.name.clone())
 }
 
-/// Loads a commodity's page, or rare goods taken as one (`rares`: one category's, or "" for all), on a
-/// worker thread. `Ok(None)`: no such commodity.
-fn load_page(db: &GalaxyDb, rares: Option<&str>, q: &CommodityQuery) -> nexus_galaxy::Result<Option<CommodityPage>> {
-    // Some(None): every rare good.
-    let rares = rares.map(|c| (!c.is_empty()).then_some(c));
+/// Loads a commodity's page, or (`rare`) the Rare Goods page, every rare good taken as one, on a worker thread.
+/// `Ok(None)`: no such commodity.
+fn load_page(db: &GalaxyDb, rare: bool, q: &CommodityQuery) -> nexus_galaxy::Result<Option<CommodityPage>> {
+    // Some(None): every rare good (the database can also take one category's).
+    let rares: Option<Option<&str>> = rare.then_some(None);
     let summary = match rares {
         Some(category) => db.rare_goods_summary(category, q.max_age_hours)?.map(|s| CommoditySummary { name: RARE_GOODS.to_string(), ..s }),
         None => db.commodity_summary(&q.commodity, q.max_age_hours)?,
@@ -1756,14 +1697,15 @@ fn empty_side(ui: &mut Ui, page: &CommodityPage, side: Side, p: &MarketPrefs, ha
     relax
 }
 
-/// A commodity's (symbol, name) with the pins to compare against, and whether it's a rare good.
+/// A commodity's (symbol, name) with the pins to compare against, and whether it's the Rare Goods page, whose rows
+/// each name their rare good.
 type PinCtx<'a> = ((&'a str, &'a str), &'a MarketPrefs, bool);
 
-/// A list row's commodity: rare goods behind a yellow ★. On a rare goods page (`own_row`: the row names a commodity
-/// other than the page's) the name opens that commodity's own page.
-fn commodity_cell(ui: &mut Ui, name: &str, own_row: bool, page_rare: bool) -> Option<RowAction> {
-    let text = if own_row || page_rare { RichText::new(format!("★ {name}")).color(pal::GOLD) } else { RichText::new(name).color(pal::TEXT) };
-    if own_row {
+/// A row's rare good on the Rare Goods page, behind a yellow ★. `own`: the row names its good, so a click opens that
+/// good's own page.
+fn commodity_cell(ui: &mut Ui, name: &str, own: bool) -> Option<RowAction> {
+    let text = RichText::new(format!("★ {name}")).color(pal::GOLD);
+    if own {
         nav_label(ui, text, "Its own page: where to buy it, where to sell it, latest prices").then(|| RowAction::Open(name.to_string()))
     } else {
         ui.add(egui::Label::new(text).truncate());
@@ -1772,15 +1714,17 @@ fn commodity_cell(ui: &mut Ui, name: &str, own_row: bool, page_rare: bool) -> Op
 }
 
 /// Buy or sell offers for one commodity: price (and against the galactic average), quantity, where,
-/// how far, how old; with `pins`, a pin toggle in front. Returns what a click asked for.
+/// how far, how old; with `pins`, a pin toggle in front, and on the Rare Goods page each row's rare good in a column
+/// of its own. Returns what a click asked for.
 fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, average: Option<i64>, selected: Option<&PickKey>, pins: Option<PinCtx>) -> Option<RowAction> {
     let buying = mode == TradeMode::BuyFromStation;
     let wide = ui.available_width() >= 700.0;
-    // On the commodity page each row names its commodity, as Abnormal prices does.
-    let many = pins.is_some();
+    // Only the Rare Goods page names a commodity on every row: a commodity's own page is about that one.
+    let many = pins.is_some_and(|p| p.2);
     let mut action = None;
     let mut sort = TableSort::load(ui, id);
-    let layout = format!("{id}/{}", if wide { "wide" } else { "narrow" });
+    // Its own id with and without the name column, as for a narrow layout.
+    let layout = format!("{id}/{}{}", if wide { "wide" } else { "narrow" }, if many { "/named" } else { "" });
     crate::widgets::table(ui, &layout, |mut table| {
         table = table.sense(egui::Sense::click());
         if pins.is_some() {
@@ -1835,7 +1779,6 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
                     let h = &hits[order[row.index()]];
                     // The page's commodity, or (rare goods taken as one) the row's own.
                     let page_good = pins.map_or(("", ""), |p| p.0);
-                    let page_rare = pins.is_some_and(|p| p.2);
                     let (symbol, name) = h.commodity.as_ref().map_or(page_good, |c| (c.symbol.as_str(), c.name.as_str()));
                     row.set_selected(selected.is_some_and(|k| k.0 == h.market_id && k.1 == symbol));
                     if let Some((_, prefs, _)) = pins {
@@ -1858,7 +1801,7 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
                     }
                     if many {
                         row.col(|ui| {
-                            if let Some(open) = commodity_cell(ui, name, h.commodity.is_some(), page_rare) {
+                            if let Some(open) = commodity_cell(ui, name, h.commodity.is_some()) {
                                 action = Some(open);
                             }
                         });
@@ -1894,20 +1837,21 @@ fn hits_table(ui: &mut Ui, id: &str, hits: &[CommodityHit], mode: TradeMode, ave
     action
 }
 
-/// Every market trading the commodity, newest price first, with both directions. Returns what a click asked for.
-fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, selected: Option<&PickKey>, page_good: (&str, &str), prefs: &MarketPrefs, page_rare: bool) -> Option<RowAction> {
-    let wide = ui.available_width() >= 760.0;
+/// Every market trading the commodity, newest price first, with both directions. On the Rare Goods page (`name_rows`)
+/// each row names its rare good in a column of its own. Returns what a click asked for.
+fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, selected: Option<&PickKey>, page_good: (&str, &str), prefs: &MarketPrefs, name_rows: bool) -> Option<RowAction> {
+    // The Rare Goods page's name column needs more room before stock and demand fit too.
+    let wide = ui.available_width() >= if name_rows { 900.0 } else { 760.0 };
     let mut action = None;
     const TABLE: &str = "commodity-latest";
     let mut sort = TableSort::load(ui, TABLE);
-    crate::widgets::table(ui, if wide { "commodity-latest/wide" } else { "commodity-latest/narrow" }, |table| {
-        let mut table = table
-            .sense(egui::Sense::click())
-            .column(Column::exact(24.0).resizable(false))
-            // Each row names its commodity, as Abnormal prices does.
-            .column(Column::initial(180.0).at_least(80.0).clip(true))
-            .column(crate::widgets::flex_column(150.0))
-            .column(Column::initial(104.0).at_least(60.0).clip(true));
+    let layout = format!("{TABLE}/{}{}", if wide { "wide" } else { "narrow" }, if name_rows { "/named" } else { "" });
+    crate::widgets::table(ui, &layout, |table| {
+        let mut table = table.sense(egui::Sense::click()).column(Column::exact(24.0));
+        if name_rows {
+            table = table.column(Column::initial(180.0).at_least(80.0).clip(true));
+        }
+        table = table.column(crate::widgets::flex_column(150.0)).column(Column::initial(104.0).at_least(60.0).clip(true));
         if wide {
             table = table.column(Column::initial(66.0).at_least(40.0).clip(true));
         }
@@ -1918,7 +1862,11 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
         table = table.column(Column::initial(72.0).at_least(50.0).clip(true)).column(Column::initial(60.0).at_least(40.0).clip(true));
         // Sortable columns: 0 station, 1 buy price, 2 stock, 3 sell price, 4 demand, 5 distance, 6 age,
         // 7 commodity. A market that doesn't trade that way sorts after the ones that do.
-        let mut heads: Heads = vec![("", None), ("Commodity", Some((7, false))), ("Station", Some((0, false))), ("Buy for", Some((1, false)))];
+        let mut heads: Heads = vec![("", None)];
+        if name_rows {
+            heads.push(("Commodity", Some((7, false))));
+        }
+        heads.extend([("Station", Some((0, false))), ("Buy for", Some((1, false)))]);
         if wide {
             heads.push(("Stock", Some((2, true))));
         }
@@ -1971,11 +1919,13 @@ fn latest_table(ui: &mut Ui, quotes: &[CommodityQuote], average: Option<i64>, se
                             }));
                         }
                     });
-                    row.col(|ui| {
-                        if let Some(open) = commodity_cell(ui, name, q.commodity.is_some(), page_rare) {
-                            action = Some(open);
-                        }
-                    });
+                    if name_rows {
+                        row.col(|ui| {
+                            if let Some(open) = commodity_cell(ui, name, q.commodity.is_some()) {
+                                action = Some(open);
+                            }
+                        });
+                    }
                     row.col(|ui| station_cell(ui, &q.station, &q.system, q.is_carrier, q.is_planetary, q.dist_ls, q.carrier_access.as_deref()));
                     let price = |ui: &mut Ui, v: i64, qty: i64, col: Color32, what: &str| {
                         if v > 0 && qty > 0 {
@@ -4705,10 +4655,11 @@ mod tests {
         rank_commodities(all, typed, 10).into_iter().map(|c| c.name.clone()).collect()
     }
 
-    /// Categories end with the pseudo category "Rare Goods"; a category lists its normal goods, then its rare
-    /// goods as one item; typing searches every category; nothing untradeable or retired is listed.
+    /// The search field's list. Nothing typed: the recent ones first, then every commodity under its category's
+    /// heading, then the Rare Goods page as one entry (rare goods aren't listed one by one there); nothing untradeable or
+    /// retired. Typed: the best matches among every commodity, rare goods too, and the Rare Goods page when the words fit.
     #[test]
-    fn categories_items_and_rare_goods() {
+    fn one_list_by_category_with_rare_goods_as_one() {
         let all = vec![
             info("Silver", "silver", "Metals", false),
             info("Gold", "gold", "Metals", false),
@@ -4719,34 +4670,39 @@ mod tests {
             info("Unknown", "unknown", "NonMarketable", false),
             info("Galactic Travel Guide", "galactictravelguide", "Salvage", true),
         ];
-        let texts = |v: Vec<Suggestion>| v.into_iter().map(|s| s.text).collect::<Vec<_>>();
-        assert_eq!(commodity_categories(&all), vec!["Legal Drugs", "Metals", "Minerals", "Rare Goods"], "no Salvage: its only item is retired");
-        assert_eq!(texts(category_items(&all, "Metals")), vec!["Gold", "Silver", "Rare Goods"]);
-        assert_eq!(texts(category_items(&all, "Minerals")), vec!["Bauxite"], "no rare goods there");
-        assert_eq!(texts(category_items(&all, "Rare Goods")), vec!["Rare Goods"]);
-        assert_eq!(category_items(&all, "Rare Goods")[0].detail, "all 2 rare goods");
-        assert_eq!(category_items(&all, "Metals")[2].detail, "1 rare good", "the category's own");
-        assert_eq!(item_suggestions(&all, &[], "Metals", "")[0].text, "", "a blank entry first");
-        assert_eq!(texts(item_suggestions(&all, &[], "Metals", "")), vec!["", "Gold", "Silver", "Rare Goods"], "nothing typed: the category's list");
-        let every = texts(category_items(&all, ""));
-        assert_eq!(every.len(), 7, "every listed commodity, rare goods one by one, then Rare Goods: {every:?}");
-        assert!(!every.contains(&"Unknown".to_string()) && !every.contains(&"Galactic Travel Guide".to_string()));
-        assert!(category_items(&all, "").iter().any(|s| s.text == "Sothis Crystalline Gold" && s.starred));
+        // A heading as "# name", an entry as its text.
+        let lines = |rows: &[ListRow]| {
+            rows.iter()
+                .map(|r| match r {
+                    ListRow::Heading(h) => format!("# {h}"),
+                    ListRow::Item(s) => s.text.clone(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let entry = |rows: &[ListRow], text: &str| match rows.iter().find(|r| matches!(r, ListRow::Item(s) if s.text == text)) {
+            Some(ListRow::Item(s)) => (s.detail.clone(), s.starred),
+            _ => panic!("no entry {text}"),
+        };
 
-        // Typing searches every commodity, whatever the category (a page opened earlier sets it), and offers every
-        // rare good as one when the words fit.
-        for category in ["", "Metals", "Minerals", "Rare Goods"] {
-            assert_eq!(texts(item_suggestions(&all, &[], category, "gol")), vec!["Gold", "Sothis Crystalline Gold"], "in {category:?}");
-            assert_eq!(texts(item_suggestions(&all, &[], category, "toba")), vec!["Tobacco"], "in {category:?}");
-        }
-        let rare = item_suggestions(&all, &[], "Minerals", "rare");
-        assert_eq!(rare.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["Rare Goods"]);
-        assert_eq!(rare[0].detail, "all 2 rare goods");
-        assert!(item_suggestions(&all, &[], "Metals", "unknown").is_empty(), "nothing untradeable");
-        assert!(item_suggestions(&all, &[], "", "travel").is_empty(), "nothing retired");
-        // The category field narrows to what's typed.
-        assert_eq!(texts(category_suggestions(&all, "")), vec!["All categories", "Legal Drugs", "Metals", "Minerals", "Rare Goods"]);
-        assert_eq!(texts(category_suggestions(&all, "me")), vec!["Metals"]);
+        let browse = commodity_rows(&all, &[], "");
+        assert_eq!(lines(&browse), vec!["# Legal Drugs", "Tobacco", "# Metals", "Gold", "Silver", "# Minerals", "Bauxite", "# Rare goods", "Rare Goods"], "no Salvage: its only good is retired");
+        assert_eq!(entry(&browse, "Gold"), (String::new(), false), "the heading says the category");
+        assert_eq!(entry(&browse, "Rare Goods"), ("all 2 rare goods".to_string(), true));
+
+        let recent = commodity_rows(&all, &["Gold".into(), "Rusani Old Smokey".into()], "");
+        assert_eq!(lines(&recent)[..4], ["# Recent", "Gold", "Rusani Old Smokey", "# Legal Drugs"].map(String::from), "the recent ones first");
+        assert_eq!(entry(&recent, "Rusani Old Smokey"), ("Legal Drugs · rare".to_string(), true), "a rare good opened lately, with its category");
+        assert_eq!(lines(&recent).iter().filter(|l| *l == "Gold").count(), 2, "and again under its category");
+
+        // Typed: every commodity, rare goods one by one; no headings.
+        assert_eq!(lines(&commodity_rows(&all, &[], "gol")), vec!["Gold", "Sothis Crystalline Gold"]);
+        assert_eq!(lines(&commodity_rows(&all, &[], "toba")), vec!["Tobacco"]);
+        assert_eq!(lines(&commodity_rows(&all, &["Gold".into()], "smokey")), vec!["Rusani Old Smokey"], "recent ones aren't added to matches");
+        let rare = commodity_rows(&all, &[], "rare");
+        assert_eq!(lines(&rare), vec!["Rare Goods"]);
+        assert_eq!(entry(&rare, "Rare Goods").0, "all 2 rare goods");
+        assert!(commodity_rows(&all, &[], "unknown").is_empty(), "nothing untradeable");
+        assert!(commodity_rows(&all, &[], "travel").is_empty(), "nothing retired");
     }
 
     /// A carrier's docking access as its badge says it, in the journal's spelling or Spansh's.
@@ -4828,6 +4784,20 @@ mod tests {
         let healed = old.sanitized();
         assert_eq!((healed.max_dist, healed.min_qty, healed.min_pad), (1.0, 1, None));
         assert_eq!(healed.commodity, "Tritium");
+    }
+
+    /// Prefs saved while Find commodity had a Category field still load: the category is let go, and one category's
+    /// rare goods open as the Rare Goods page, with all of them.
+    #[test]
+    fn prefs_with_a_category_still_load() {
+        let old: MarketPrefs = serde_json::from_str(r#"{"commodity": "Gold", "category": "Legal Drugs", "rare_goods": "Legal Drugs", "max_dist": 250}"#).unwrap();
+        let p = old.sanitized();
+        assert_eq!((p.rare_goods.as_deref(), p.commodity.as_str(), p.max_dist), (Some(""), "Gold", 250.0), "the rest kept");
+        assert_eq!(MarketUi::new(p).input, RARE_GOODS, "it opens on the Rare Goods page");
+        let old: MarketPrefs = serde_json::from_str(r#"{"commodity": "Gold", "category": "Metals", "rare_goods": null}"#).unwrap();
+        let p = old.sanitized();
+        assert_eq!(p.rare_goods, None);
+        assert_eq!(MarketUi::new(p).input, "Gold");
     }
 
     #[test]
