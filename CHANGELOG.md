@@ -142,6 +142,8 @@ release time that section becomes the new version and the release workflow publi
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
 - **Missions** › Recent mission history: a long mission title no longer widens the card past the window. The date,
   outcome and reward come first, and the title takes the room left, ending in "…" (whole on hover).
+- **Missions** › Recent mission history: a failed or abandoned mission no longer shows a reward of "0 Cr". It says
+  "no reward", or the fine it cost when the game fined you.
 - **Market**: the live feed's "updates stored" counts only what the database kept. It counted every item a message
   turned into, so every body scanned anywhere, though from the feed Elite Nexus keeps only bodies with biology,
   Earth-like, water and ammonia worlds and terraformables, and every market report, even one older than the market

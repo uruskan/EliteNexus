@@ -73,6 +73,7 @@ pub struct MissionRecord {
     pub title: String,
     pub faction: String,
     pub outcome: MissionOutcome,
+    /// Credits a completed mission paid; for a failed or abandoned one, minus the fine it cost (0: no fine).
     pub reward: i64,
     pub ts: Timestamp,
 }
