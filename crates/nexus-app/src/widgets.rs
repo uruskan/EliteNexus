@@ -392,7 +392,8 @@ pub fn th(ui: &mut Ui, text: &str) {
 /// remembered across restarts under `id`: give every table its own, and a table that lays out other columns in a
 /// narrow window one per layout, or one layout's widths would reset the other's. Rows are striped, cells centred.
 ///
-/// Give it one [`flex_column`]: that column takes the room the others leave, so the table still fits the window. A last
+/// Give it a [`flex_column`], or two that share the room equally: it takes the room the others leave, so the table
+/// still fits the window, as long as the other columns' widths add up to less than a 1,000-pixel window leaves. A last
 /// column that is `Column::remainder()` does the same. Columns that should keep their width (a pin, a button) say
 /// `.resizable(false)`.
 pub fn table<R>(ui: &mut Ui, id: &str, build: impl FnOnce(egui_extras::TableBuilder<'_>) -> R) -> R {
@@ -409,8 +410,8 @@ pub fn table<R>(ui: &mut Ui, id: &str, build: impl FnOnce(egui_extras::TableBuil
     .inner
 }
 
-/// The flexible column of a [`table`]: it takes the width the other columns leave (at least `min`), cuts what doesn't
-/// fit, and isn't dragged itself: dragging the others resizes it.
+/// The flexible column of a [`table`]: it takes the width the other columns leave (at least `min`; two of them share
+/// it equally), cuts what doesn't fit, and isn't dragged itself: dragging the others resizes it.
 pub fn flex_column(min: f32) -> egui_extras::Column {
     egui_extras::Column::remainder().at_least(min).clip(true).resizable(false)
 }

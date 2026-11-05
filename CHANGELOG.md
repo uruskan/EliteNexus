@@ -327,6 +327,8 @@ release time that section becomes the new version and the release workflow publi
 - **Market › Database & feed** fits a narrow window: the box for a downloaded Spansh dump kept a fixed width, so in a
   window about 1,000 pixels wide its Import file button pushed the whole right-hand column past the window's edge.
   The box now takes the width its button leaves, and Enter in it starts the import too.
+- **Market › Trade routes** fits a window about 1,000 pixels wide: its columns added up to more than the window, so
+  the Hop column ran past the edge. Buy at and Sell at now share the room the numbers leave.
 - **Engineering** › Materials: the three cards fit the window. Long manufactured and encoded names ("Guardian
   Sentinel Wreckage Components") widened their cards, so at about 1,600 pixels wide the Encoded card ran past the
   window's edge with its counts cut off. A long name now ends in "…" and shows whole when you hover it.
