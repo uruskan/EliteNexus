@@ -18,7 +18,7 @@ isn't slowed, and `tools\dev\shot.ps1` checks the UI with off-screen screenshots
 Parallel builds: set your own `CARGO_TARGET_DIR` (e.g. `target-agents\<name>`) to avoid lock contention.
 `EliteNexus.exe --page Exploration --screenshot out.png` renders a page after loading and saves a PNG (used for UI checks;
 the window is placed off-screen and never takes focus). `--size 1000x700` tests responsive layouts, `--tab <name>` opens
-a Market section (`abnormal`, `database`, …; `routes` finds trade routes on the first frame), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
+a Market section (`abnormal`, `database`, …; `routes` finds trade routes on the first frame, `station` opens four markets side by side), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
 screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build, every row ticked as for a second
 ship like it, and searches on the first frame; `buy-one`: it searches for one module, a 6A frame shift drive), a Statistics tab (`career`, `activity`, `all`), Navigation's

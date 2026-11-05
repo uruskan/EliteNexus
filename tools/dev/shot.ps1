@@ -7,7 +7,7 @@
 #        (Mining > Where to mine: near you, or along a route towards Colonia). find, untouched,
 #        known, where and where-route start their search on the first frame, so give them
 #        -Delay 15-25 for Spansh. routes (Market > Trade routes) searches the local database on
-#        the first frame too.
+#        the first frame too, and station (Market > Station) opens four markets side by side.
 #        With -Page Hud: glare or cockpit (those tabs), or a preset name (mocha, royalpurple, ...)
 #        to start the HUD colours tab from; add ,options (empireblue,options) to open the
 #        protection's options. Set ELITE_NEXUS_GAME_DIR to show the page for a test copy of the
