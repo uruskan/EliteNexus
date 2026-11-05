@@ -2603,8 +2603,9 @@ mod tests {
         // Raising this is a decision: a tool offered to Ask has to earn its tokens. Tools few commanders ask about are
         // offered to agents only (on_foot, credit_history, system_factions). engineering, which commanders asked Ask for
         // (GitHub issue #4), took it from 13,500; where_to_mine and where_to_buy, the Mining and Fleet pages' searches Ask
-        // couldn't run before, to 17,000.
-        assert!(ask <= 17_000, "{ask} characters of tool specs go with every Ask question");
+        // couldn't run before, to 17,000; conflicts_near, the Combat page's nearest wars (play-test finding 19, its spec
+        // cut to under 400 characters), to 17,500.
+        assert!(ask <= 17_500, "{ask} characters of tool specs go with every Ask question");
     }
 
     /// `fit` finds the most detail that fits in a few tries.
