@@ -14,7 +14,8 @@
 #        game folder instead of the real one (AGENTS.md says how to fake the installed hook).
 #        With -Page Navigation: carrier opens the fleet carrier planner (and its jump timer).
 #        With -Page Fleet: buy opens Where to buy with the current ship's build and searches
-#        on the first frame (give it -Delay 15-25 for Spansh).
+#        on the first frame (give it -Delay 15-25 for Spansh); buy-one searches for one module
+#        (a 6A frame shift drive) the same way.
 # -JournalDir: read a test journal folder instead of the real one (test runs never upload).
 # -Overlay: an overlay moment with sample content, compact and expanded (jump, hyperspace, arrival, approach,
 #        sampling, close, mining, trade, docked, carrier, two, alert, quiet).

@@ -64,6 +64,10 @@ release time that section becomes the new version and the release workflow publi
   build costs there, with a route button. Spansh can't tell a fixed weapon from a gimballed one, so each station's own
   list is checked for the exact modules. When no station sells everything, it suggests two stops, or the nearest
   seller of each missing piece. Ships › **Where to buy** opens it with that ship's build.
+- **Fleet › Where to buy: one ship or module.** Type a ship or a module ("Anaconda", "6A FSD", "gimballed
+  multi-cannon"), pick it from the suggestions, and Elite Nexus finds the nearest stations that sell it, with its
+  price there and how old the station's list is. A module is searched where the ship you fly can land; a hull, where
+  it can. A whole build is one click away, under **A whole build**.
 - **Market** › Find commodity: a **Category** field beside the search, and a ▾ on both that opens the whole list. The
   category narrows only the list the search field's ▾ opens: typing still finds every commodity. A category's rare
   goods are one item, **Rare Goods**, and the category **Rare Goods** holds them all: one page lists
@@ -141,7 +145,8 @@ release time that section becomes the new version and the release workflow publi
   the same way.
 - **Fleet › Where to buy says it in plain words.** It asked for "a journal Loadout event"; it now names what to paste:
   a build exported from EDSY or Coriolis, a link from either that opens a build, or one of your ships' builds copied
-  on the Ships tab.
+  on the Ships tab. The search's settings (near which system, fleet carriers, how old a station's list may be) are
+  all in view instead of behind **Options**, and changing one searches again.
 - **Fleet › Where to buy offers every ship to start from.** It offered only ships whose modules the game had recorded,
   one of seventeen in a play-test. The others are listed too, greyed, saying why: the game writes a ship's modules to
   its journal only while you fly it.

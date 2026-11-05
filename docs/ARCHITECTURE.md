@@ -21,7 +21,7 @@ the window is placed off-screen and never takes focus). `--size 1000x700` tests 
 a Market section (`abnormal`, `database`, …; `routes` finds trade routes on the first frame), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
 screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build and searches on the
-first frame), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
+first frame; `buy-one`: it searches for one module, a 6A frame shift drive), HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
 `royalpurple`, …), `--demo` adds a sample Ask conversation and an alert banner, `--overlay <moment>` shows an overlay
 moment compact and expanded with sample content (`overlay::DEMOS`), `--shot-delay 8` waits longer (the
 galaxy image paints in the background, Spansh searches take 5–20 s). `ELITE_NEXUS_GAME_DIR` points HUD & cockpit at
@@ -75,8 +75,9 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   level and used only if the user owns it; off Windows a Unix socket in /run/user/<euid> or ~/.elite-nexus, found
   without the environment an MCP client may drop, both ends checking the other's uid: `mcp/unix.rs`); `McpService` answers with the read-only tools offered to agents, on one worker
   thread, within a deadline and a calls-a-minute limit, with a Spansh client of its own. `finder.rs` holds market lookups shared by pages and tools (sell plan,
-  colonisation suppliers). `shopping.rs` is Fleet › Where to buy: it reads a build (SLEF, journal `Loadout`, EDSY or
-  Coriolis import link), lists what to buy against the commander's storage, and asks Spansh's outfitting search for
+  colonisation suppliers). `shopping.rs` is Fleet › Where to buy: it finds one ship or module by name (`find_item`,
+  `suggest`, shared with Ask's tool) or reads a build (SLEF, journal `Loadout`, EDSY or Coriolis import link), lists
+  what to buy against what the commander has (their ship of that type, their storage), and asks Spansh's outfitting search for
   stations that sell all of it, checking each result's exact module symbols (Spansh filters on name, class and rating
   only, and lists MercGear-shared symbols under the MercGear name: `docs/research/spansh.md` §4.8).
 * The overlay (`overlay.rs`, `overlay/`): one black island at the top of the game's screen, in its own deferred

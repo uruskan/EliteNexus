@@ -1,5 +1,6 @@
-//! Where to buy a build: the modules (and the hull) a build needs, what the commander already has
-//! in storage, and the nearest stations that sell all of it, from Spansh's outfitting search.
+//! Where to buy a build, or one ship or module: the modules (and the hull) a build needs, what the
+//! commander already has (fitted on their ship of that type, in storage), and the nearest stations
+//! that sell all of it, from Spansh's outfitting search.
 //!
 //! Spansh filters on a module's name, class and rating, so a search asks for every name the module
 //! goes by (MercGear rows share their base module's symbol) and then checks each station it
@@ -7,6 +8,7 @@
 //! sells everything, the nearby station with most of it is the first stop and the station nearest
 //! to it with all the rest the second; failing that, the nearest seller of each missing item.
 
+use nexus_data::commodities::name_key;
 use nexus_data::outfitting::{self, SlotKind};
 use nexus_data::{ships, sku};
 use nexus_model::fleet::{Fleet, Ship};
@@ -282,6 +284,164 @@ fn where_is(s: &Ship, fleet: &Fleet) -> String {
 /// hulls (Caspian Explorer, Anaconda Mk II) whose plain grade 1 is a bought ablative alloy.
 fn comes_with_hull(symbol: &str) -> bool {
     symbol.ends_with("_armour_grade1_default") || (symbol.ends_with("_armour_grade1") && outfitting::module(&format!("{symbol}_default")).is_none())
+}
+
+// ---------------------------------------------------------------------------------------------
+// One ship or module, by name
+
+/// A module or hull asked for by name.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Item {
+    Module(&'static outfitting::Module),
+    Hull(&'static ships::Ship),
+}
+
+impl Item {
+    /// As outfitting and the shipyard name it: "6A Frame Shift Drive", "2A Gimballed Multi-cannon", "Mandalay".
+    pub fn name(self) -> String {
+        match self {
+            Item::Module(m) => m.display_name(),
+            Item::Hull(s) => s.name.clone(),
+        }
+    }
+
+    /// Lower-case journal symbol.
+    pub fn symbol(self) -> &'static str {
+        match self {
+            Item::Module(m) => &m.symbol,
+            Item::Hull(s) => &s.symbol,
+        }
+    }
+
+    /// What it is: "Ship · L pad", "Core internal", "Optional internal", "Large hardpoint", "Utility mount",
+    /// "Bulkheads".
+    pub fn kind(self) -> String {
+        use outfitting::ModuleCategory as C;
+        match self {
+            Item::Hull(s) => match ships::known_pad_size(&s.symbol) {
+                Some(pad) => format!("Ship · {pad} pad"),
+                None => "Ship".into(),
+            },
+            Item::Module(m) => match (m.category, m.hardpoint_size_name()) {
+                (C::Standard, _) if m.ship.is_some() => "Bulkheads".into(),
+                (C::Standard, _) => "Core internal".into(),
+                (_, Some(size)) => format!("{size} hardpoint"),
+                (C::Hardpoint | C::Utility, None) => "Utility mount".into(),
+                _ => "Optional internal".into(),
+            },
+        }
+    }
+
+    /// What buying it alone needs.
+    pub fn need(self) -> Need {
+        let (group, sku) = match self {
+            Item::Hull(s) => (Group::Hull, s.entitlement.as_deref()),
+            Item::Module(m) => (
+                match m.category {
+                    outfitting::ModuleCategory::Standard => Group::Core,
+                    outfitting::ModuleCategory::Hardpoint => Group::Hardpoints,
+                    outfitting::ModuleCategory::Utility => Group::Utility,
+                    _ => Group::Optional,
+                },
+                m.entitlement.as_deref(),
+            ),
+        };
+        Need { group, symbol: self.symbol().to_string(), name: self.name(), count: 1, engineering: Vec::new(), buy: true, had: false, note: None, unlock: sku.and_then(unlock) }
+    }
+
+    /// The hull the search's landing pad is for: a hull needs its own; a module, the ship the commander flies there
+    /// (`flying`).
+    pub fn pad_hull(self, flying: &str) -> String {
+        match self {
+            Item::Hull(s) => s.symbol.clone(),
+            Item::Module(_) => flying.to_string(),
+        }
+    }
+}
+
+/// "fsd" is how commanders write a frame shift drive.
+fn spelled_out(asked: &str) -> String {
+    asked.split_whitespace().map(|w| if w.eq_ignore_ascii_case("fsd") { "Frame Shift Drive" } else { w }).collect::<Vec<_>>().join(" ")
+}
+
+/// The modules sold under their own name: a MercGear row shares the symbol of the module it's based on, which is what
+/// stations list.
+fn sold_modules() -> impl Iterator<Item = &'static outfitting::Module> {
+    outfitting::all().iter().filter(|m| m.category != outfitting::ModuleCategory::MercGear && outfitting::module(&m.symbol).is_some_and(|r| std::ptr::eq(r, *m)))
+}
+
+/// A module or hull asked for: its name as the game shows it ("6A Frame Shift Drive", "2A Gimballed Multi-cannon",
+/// "Mandalay"), its journal symbol, or words only one module's name has.
+pub fn find_item(asked: &str) -> Result<Item, String> {
+    let asked = spelled_out(asked);
+    let k = name_key(&asked);
+    if let Some(s) = ships::all().iter().find(|s| name_key(&s.name) == k || name_key(&s.fdev_name) == k || s.symbol.eq_ignore_ascii_case(asked.trim())) {
+        return Ok(Item::Hull(s));
+    }
+    if let Some(m) = outfitting::module(&asked) {
+        return Ok(Item::Module(m));
+    }
+    let named = |exact: bool| {
+        let words: Vec<String> = asked.split_whitespace().map(name_key).filter(|w| !w.is_empty()).collect();
+        let mut hits: Vec<&'static outfitting::Module> = Vec::new();
+        for m in outfitting::all() {
+            let name = name_key(&m.display_name());
+            let hit = if exact { name == k } else { !words.is_empty() && words.iter().all(|w| name.contains(w.as_str())) };
+            // MercGear rows share their module's symbol: the module is what's sold.
+            if hit && !hits.iter().any(|h| h.symbol == m.symbol) {
+                hits.push(outfitting::module(&m.symbol).unwrap_or(m));
+            }
+        }
+        hits
+    };
+    let exact = named(true);
+    let hits = if exact.is_empty() { named(false) } else { exact };
+    match hits.as_slice() {
+        [m] => Ok(Item::Module(m)),
+        [] => Err(format!("No module or ship is called \"{asked}\": name it as the game's outfitting shows it, e.g. 6A Frame Shift Drive, 2A Gimballed Multi-cannon, Mandalay.")),
+        many => {
+            let names: Vec<String> = many.iter().take(12).map(|m| m.display_name()).collect();
+            let more = if many.len() > 12 { format!(" and {} more", many.len() - 12) } else { String::new() };
+            Err(format!("\"{asked}\" could be {}{more}: say which.", names.join(", ")))
+        }
+    }
+}
+
+/// The hulls and modules whose names hold every word typed ("6a fsd", "gimballed multi", "mandalay"), best first: the
+/// name that is what's typed, then those that start with it, then the rest; hulls before modules, and of each kind of
+/// module the biggest and best first. At most `limit`.
+pub fn suggest(typed: &str, limit: usize) -> Vec<Item> {
+    let typed = spelled_out(typed);
+    let k = name_key(&typed);
+    let words: Vec<String> = typed.split_whitespace().map(name_key).filter(|w| !w.is_empty()).collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let rank = |name: &str| -> Option<u8> {
+        let key = name_key(name);
+        if key == k {
+            Some(0)
+        } else if key.starts_with(&k) {
+            Some(1)
+        } else if words.iter().all(|w| key.contains(w.as_str())) {
+            Some(2)
+        } else {
+            None
+        }
+    };
+    let mut hits: Vec<(u8, Item)> = ships::all().iter().filter_map(|s| rank(&s.name).or_else(|| rank(&s.fdev_name)).map(|r| (r, Item::Hull(s)))).collect();
+    hits.extend(sold_modules().filter_map(|m| rank(&m.display_name()).map(|r| (r, Item::Module(m)))));
+    hits.sort_by(|(ra, a), (rb, b)| {
+        ra.cmp(rb).then_with(|| match (a, b) {
+            (Item::Hull(x), Item::Hull(y)) => x.name.cmp(&y.name),
+            (Item::Hull(_), Item::Module(_)) => std::cmp::Ordering::Less,
+            (Item::Module(_), Item::Hull(_)) => std::cmp::Ordering::Greater,
+            (Item::Module(x), Item::Module(y)) => {
+                x.name.cmp(&y.name).then(y.size.cmp(&x.size)).then(x.rating.cmp(&y.rating)).then(x.mount.map(|m| m.label()).cmp(&y.mount.map(|m| m.label()))).then(x.symbol.cmp(&y.symbol))
+            }
+        })
+    });
+    hits.into_iter().take(limit).map(|(_, i)| i).collect()
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -732,6 +892,43 @@ mod tests {
         assert!(needs(&b, &fleet).iter().all(|n| !n.buy && n.had));
         // Without a ship of that type or storage, only the bulkheads every hull comes with are had.
         assert!(needs(&b, &Fleet::default()).iter().all(|n| n.had == comes_with_hull(&n.symbol)));
+    }
+
+    /// Play-test finding 14: "I can't even type one ship name or one ship module to find it."
+    #[test]
+    fn one_ship_or_module_by_name() {
+        let names = |typed: &str| suggest(typed, 12).into_iter().map(Item::name).collect::<Vec<_>>();
+        // The hull first, then its bulkheads.
+        let anaconda = names("anaconda");
+        assert_eq!(anaconda[0], "Anaconda", "{anaconda:?}");
+        assert!(anaconda.iter().any(|n| n == "Military Grade Composite (Anaconda)"), "{anaconda:?}");
+        // Class and rating, and "fsd" spelled out: the plain drive first, then those whose names go on.
+        let fsd = names("6a fsd");
+        assert_eq!(fsd[0], "6A Frame Shift Drive", "{fsd:?}");
+        assert!(fsd.iter().all(|n| n.starts_with("6A")), "{fsd:?}");
+        // Words in any order, parts of words too; the biggest first.
+        let mc = names("multi gimb");
+        assert!(!mc.is_empty() && mc.iter().all(|n| n.contains("Gimballed Multi-cannon")), "{mc:?}");
+        assert!(mc[0].starts_with('4'), "{mc:?}");
+        assert!(suggest("", 8).is_empty() && suggest("toaster", 8).is_empty());
+        // A MercGear twin shares its module's symbol: each symbol is offered once.
+        let mut symbols: Vec<&str> = suggest("power distributor", 500).into_iter().map(Item::symbol).collect();
+        let all = symbols.len();
+        symbols.sort_unstable();
+        symbols.dedup();
+        assert_eq!(all, symbols.len());
+        // What each is, for the list.
+        let kind = |asked: &str| find_item(asked).expect(asked).kind();
+        assert_eq!(kind("Mandalay"), "Ship · M pad");
+        assert_eq!(kind("6A FSD"), "Core internal");
+        assert_eq!(kind("hpt_multicannon_gimbal_huge"), "Huge hardpoint");
+        assert_eq!(kind("hpt_shieldbooster_size0_class5"), "Utility mount");
+        assert_eq!(kind("int_shieldgenerator_size6_class5"), "Optional internal");
+        assert_eq!(kind("anaconda_armour_grade3"), "Bulkheads");
+        // Bought alone: a hull searches with its own pad, a module with the ship flown there.
+        let mandalay = find_item("Mandalay").expect("hull");
+        assert_eq!((mandalay.need().group, mandalay.pad_hull("sidewinder")), (Group::Hull, "mandalay".to_string()));
+        assert_eq!(find_item("6A FSD").expect("fsd").pad_hull("sidewinder"), "sidewinder");
     }
 
     #[test]

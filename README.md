@@ -163,7 +163,7 @@ keeps the advanced settings one click away under Options. Here is every page in 
 | **Colonisation** | Construction depots with the remaining tonnage per commodity, what you already carry, and **where to buy** each commodity near the site with enough stock for a full hold; stale depots marked, other commanders' depots kept apart. |
 | **Fleet carrier** | Your fleet carrier and your squadron's: tritium, finances, capacity, crew and services, orders, jump schedule and history, a live jump countdown and cooldown, decommissioning. |
 | **Engineering** | A blueprint **wishlist** (or quick-add "upgrade to G5" from your ship) that becomes a **shopping list** and a **trader plan**, exactly what to trade at which material trader; engineers, unlocked first then by distance; Odyssey suits and weapons; synthesis; your materials and ship locker. |
-| **Fleet** | Every ship and where it is, in transit included, with its full loadout, engineering and modifier deltas; one-click **Open in EDSY / Coriolis** with the exact build. |
+| **Fleet** | Every ship and where it is, in transit included, with its full loadout, engineering and modifier deltas; one-click **Open in EDSY / Coriolis** with the exact build. **Where to buy** one ship or module, or a whole build: the nearest stations that sell it, leaving out what you already have. |
 | **Missions** | Active missions with expiry and cargo or kill progress, and a **massacre-stack tracker** that counts a kill once per issuing faction, so you see the true kills remaining. |
 | **BGS & Powerplay** | What you did for which faction and power since the tick, with your tick hour and period remembered. |
 | **Logbook** | Activity, every journal event with its JSON and full-text search, travel, docking, and a credit ledger. |
