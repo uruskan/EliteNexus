@@ -1,0 +1,21 @@
+ships.json, ship-slots.json, modules.json: gathered from EDCD coriolis-data. Do not edit by hand.
+
+Source:    https://github.com/EDCD/coriolis-data, branch develop,
+           commit 6249150e98755c67ca2b3afaf9a944e64e70e4a9 (2026-10-25, package.json version 4.1.9).
+Licence:   LICENSE.md, copied from it: the data and JSON files are the intellectual property of Frontier
+           Developments plc, under Frontier's terms and conditions; coriolis-data's code is MIT.
+
+Gathered:  git clone --depth 1 --branch develop https://github.com/EDCD/coriolis-data <dir>
+           cargo run -p nexus-data --example convert_coriolis -- <dir>
+
+           ships.json       ships/*.json: each hull (figures, slot sizes and restrictions, bulkheads, the modules a
+                            new hull comes with), keyed by coriolis-data's own id.
+           ship-slots.json  ships/ship-slots.json: each hull's slots by the game's own names, keyed by the journal's
+                            ship symbol.
+           modules.json     modules/**/*.json: every module (figures, price, restrictions), each with its group.
+
+           The figures are coriolis-data's, unchanged: the converter only puts its files together, one entry per
+           line, so an update reads as a diff.
+
+Used by:   crates/nexus-data/src/fitting.rs (Fleet › Plan a loadout), which ties hulls and modules to the game's
+           symbols through FDevIDs ids (data/fdevids).

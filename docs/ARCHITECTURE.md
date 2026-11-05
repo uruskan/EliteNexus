@@ -21,7 +21,9 @@ the window is placed off-screen and never takes focus). `--size 1000x700` tests 
 a Market section (`abnormal`, `database`, …; `routes` finds trade routes on the first frame, `station` opens four markets side by side), the whole-galaxy map (`galaxy`), an Exploration tab (`find`, `history`,
 `unsold`), Exobiology › Find planets (`untouched`, `known`; these three searches start on the first frame of a
 screenshot run), Fleet › Where to buy (`buy`: a screenshot run starts from the current ship's build, every row ticked as for a second
-ship like it, and searches on the first frame; `buy-one`: it searches for one module, a 6A frame shift drive), a Statistics tab (`career`, `activity`, `all`), Navigation's
+ship like it, and searches on the first frame; `buy-one`: it searches for one module, a 6A frame shift drive), Fleet ›
+Plan a loadout (`plan`: the current ship; `plan-fsd`: with its frame shift drive's list open and engineering planned
+for it; `plan-new`: its start; `plan-hull`: a new Python), a Statistics tab (`career`, `activity`, `all`), Navigation's
 planners (`carrier`, `exact`, `neutron`; `route-carrier` plots a route for the ship to the carrier on the first frame),
 HUD & cockpit's tabs (`glare`, `cockpit`) or a HUD colours preset to start from (`mocha`,
 `royalpurple`, …), `--demo` adds a sample Ask conversation, an alert banner and sample alerts in the alert history
@@ -36,7 +38,7 @@ a real install.
 | crate | role | depends on |
 |---|---|---|
 | `nexus-journal` | journal + companion-file I/O: typed events (`Event::parse`), `load_history` (parallel bulk load), `Watcher` (100 ms live tail), NaN-sanitising parser | — |
-| `nexus-data` | static game knowledge compiled in: ranks, ships, exploration values, exobiology, commodities/modules/materials names (FDevIDs), engineering blueprints & engineers, material-trader maths | — |
+| `nexus-data` | static game knowledge compiled in: ranks, ships, exploration values, exobiology, commodities/modules/materials names (FDevIDs), engineering blueprints & engineers, material-trader maths, ship fitting (`fitting`: hulls, slots and module figures from coriolis-data; a build's jump range, speed, shields, armour, power, mass and cost) | — |
 | `nexus-model` | pure state machine: `Model` (all CMDRs) → `GameState` (location, fleet, inventory, missions + massacre stacks, exploration, exobio, mining, carrier, colonisation, history ledger with time in the game and timestamped deeds, session, feed) + `Alerts`; `career`: the game's own statistics in plain words (labels and units for every figure, earnings and spending, records, milestones); `period`: what the commander did over a period, from the journals (money by category with trade counted by its profit, time in the game, per-day series, journal records); `context`: what the commander is doing right now (docked, supercruise, charging a jump, near a body, landed, SRV, on foot, …, the GuiFocus screen, danger), from Status.json and the journal, for anything that follows the game | journal, data |
 | `nexus-galaxy` | local SQLite (WAL) galaxy/market DB: one writer thread, pooled read connections, in-memory station index; commodity search, trade routes, nearest services, hotspots, conflicts near a point (each system's `Conflicts[]` kept with its factions; faction states stand in where a report lacked the list), streaming Spansh dump import | journal |
 | `nexus-eddn` | EDDN **subscriber** (ZeroMQ relay → decoder thread → galaxy DB), dedupe, watchdog + reconnect, stats & headlines | galaxy |
@@ -83,6 +85,13 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
   what to buy against what the commander has (their ship of that type, their storage), and asks Spansh's outfitting search for
   stations that sell all of it, checking each result's exact module symbols (Spansh filters on name, class and rating
   only, and lists MercGear-shared symbols under the MercGear name: `docs/research/spansh.md` §4.8).
+  `pages/fleet/plan.rs` is Fleet › Plan a loadout over `nexus_data::fitting`: a `Plan` (hull, bulkheads, the module in
+  each of the game's slots, engineering goals) read from and written back to a build, and `figures`, the game's own
+  sums (its test checks them against a real ship's journal figures), and `Hull::fits`, what the game lets go in a slot.
+  Engineering already on a module counts through the journal's modifiers and goes back out with the build
+  (`to_loadout`, for EDSY, Coriolis and Copy build); planned goals only add up materials. The page compares with the
+  commander's ship as it is, or with the hull as a shipyard sells it (`Plan::stock`), and hands a plan to Where to buy
+  as a build, where `shopping::needs` leaves out what a new hull comes with.
 * The overlay (`overlay.rs`, `overlay/`): one black island at the top of the game's screen, in its own deferred
   viewport (a borderless always-on-top window beside the main one). `overlay.rs` is its view model, pure and tested:
   `Inputs::read` copies what it needs from the model (via `nexus_model::context`), `Rhythm::view` picks the moment,
@@ -153,4 +162,6 @@ UI pages ──► background jobs (jobs.rs) ──► galaxy read pool / Spansh
 * Elite Nexus is free software under GPL-3.0-or-later (`LICENSE`); third-party data and fonts are listed in `NOTICE.md`
   with their licences.
 * EDEngineer data (MIT), EDDiscovery sources (Apache-2.0), ed-journal-schemas (Apache-2.0): attribution in data/*/SOURCE.txt.
+* coriolis-data (`data/coriolis`): the data is Frontier's, under Frontier's terms, its code MIT (`LICENSE.md` copied next
+  to it). EDSY's data is CC BY-NC and is not bundled: Elite Nexus links to EDSY instead.
 * Exobiology dataset is a factual compilation incl. facts from GPL tools — no GPL code is copied.

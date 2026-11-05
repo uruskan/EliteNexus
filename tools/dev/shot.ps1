@@ -19,7 +19,11 @@
 #        With -Page Fleet: buy opens Where to buy with the current ship's build, every row
 #        ticked (a second ship like it), and searches on the first frame (give it -Delay 15-25
 #        for Spansh); buy-one searches for one module (a 6A frame shift drive) the same way;
-#        buy-build opens A whole build with nothing loaded (the paste box and your ships).
+#        buy-build opens A whole build with nothing loaded (the paste box and your ships);
+#        plan opens Plan a loadout with the current ship, plan-fsd with its frame shift
+#        drive's module list open and engineering planned for it (its materials show),
+#        plan-new at its start (a hull, one of your ships or a pasted build), plan-hull
+#        with a new Python as a shipyard sells it.
 #        With -Page Statistics: career, activity or all opens that tab.
 # -JournalDir: read a test journal folder instead of the real one (test runs never upload).
 # -Overlay: an overlay moment with sample content, compact and expanded (jump, hyperspace, arrival, approach,
