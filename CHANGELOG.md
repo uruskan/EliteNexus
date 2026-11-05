@@ -42,8 +42,8 @@ release time that section becomes the new version and the release workflow publi
   ship's module already has of that blueprint, unless you say otherwise.
 - **Ask** searches where to surface-mine with the Rhino, as Mining › Where to mine does: landable bodies with
   planetary mining locations near you (nearest first, or the most locations first) or the best system in each stretch
-  of the way to a system, by class and volcanism, with what your own runs gave on each ground. It says where the
-  counts come from and that nothing records what a location holds.
+  of the way to a system, by class, volcanism or a material (with each body's odds of it), with what your own runs
+  gave on each ground. It says where the counts and odds come from and that nothing records what a location holds.
 - **Ask** finds where to buy a build, as Fleet › Where to buy does: the nearest stations that sell all of one of your
   ships' builds (the one you fly unless you name another), a pasted build, some of its modules or a hull ("where can
   I buy a 6A FSD?"), with what it costs there and how old the station's list is; or, when no station has everything,
@@ -103,6 +103,21 @@ release time that section becomes the new version and the release workflow publi
   Rhino records them, kept between runs, beside each deposit on the radar, in the list under it and on the overlay's
   radar. Each deposit in the list takes a note of your own, such as how many rigs fit, so two deposits of the same
   commodity can be told apart. Deposits kept by 0.7.3-beta.1 are numbered too, oldest first.
+- **Mining** › Where to mine shows the odds of each material. Pick one (Monazite, Platinum, Iridium…) and the page
+  shows the grounds where it turned up, each with the share of the mining locations read there that listed it
+  (Monazite: 58 % of rocky magma locations, 41 % of metallic magma ones), from a survey of 1,131 locations commanders
+  read in the game up to 11 October 2026; click a ground to search it. With no class picked, the search asks Spansh
+  only for the classes where it turned up, each body shows its odds and about how many of its locations would list
+  it, **Best odds** sorts by that, and along a route each stop is the system likeliest to have it. **In this system**
+  shows what each body's ground listed most. The page says what the odds rest on: a listing says the material is
+  there to find, not how much, few locations were read on some grounds, and the game's own target panel shows what a
+  location holds.
+- **Mining** › Surface radar helps with rigs. Each deposit gets a ring: the ground the Rhino refined on there, where
+  your rigs most likely stood. A north-up minimap beside the radar frames the deposits near you with their rings, the
+  places the Rhino refined, your ship, where it landed and you. **Placing rigs** says how far apart rigs go and how
+  many fit a deposit: about 75 m apart and, commanders report, up to six at once, so a round deposit takes 2 from 75 m
+  across and 6 from 150 m. Frontier hasn't published these, so the page says they're what commanders report. In the
+  Rhino it shows before your first deposit too.
 - **Mining** › Surface mining sites: a Rhino dropped from a hovering ship, for which the game names no location, takes
   the planetary mining location you had targeted. It's read from Status.json, so only while Elite Nexus runs, and kept
   for later starts.
@@ -189,6 +204,10 @@ release time that section becomes the new version and the release workflow publi
 - **Exploration** › Find valuable bodies shows its settings in a bar under the search, each once: Within, Stops, Jump
   range, Bodies worth at least, Furthest from the star, and Values (if you map them, or from the scan alone). Type a
   value or step it with − and +.
+- **Mining** › Surface radar is scaled to what's near you (deposits, your ship, where it landed): one deposit far away
+  no longer squeezes the rest into the middle. On the Mining page anything further out waits on the rim, in its
+  direction, with its distance, and labels stay inside the radar instead of being cut off (seen by Chequers2). The
+  overlay's radar uses the same scale and keeps anything further out at its edge.
 
 ### Fixed
 - **Exploration** › Current system scrolls as a whole: a long list of signals (124 in a busy system) was cut off at

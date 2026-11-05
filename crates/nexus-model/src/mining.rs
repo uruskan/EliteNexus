@@ -10,6 +10,23 @@ use std::collections::BTreeMap;
 /// apart, and the Rhino collects from each.
 pub const SPOT_RADIUS_M: f64 = 200.0;
 
+/// A refine at least this far from the places already kept on a deposit is kept too: together they show the ground the
+/// Rhino worked there. Rigs stand at least about 75 m apart (docs/research/surface-mining.md), so each gets its own.
+pub const POINT_GAP_M: f64 = 20.0;
+
+/// Places kept for one deposit, at most.
+pub const MAX_POINTS: usize = 24;
+
+/// Keeps `p` among the places the Rhino refined at on a deposit, unless one is within [`POINT_GAP_M`] of it or
+/// [`MAX_POINTS`] are kept already. True when kept.
+pub fn add_point(points: &mut Vec<(f64, f64)>, p: (f64, f64), radius_m: f64) -> bool {
+    if points.len() >= MAX_POINTS || points.iter().any(|q| surface_distance(*q, p, radius_m) < POINT_GAP_M) {
+        return false;
+    }
+    points.push(p);
+    true
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ProspectResult {
     pub ts: Timestamp,
@@ -81,6 +98,8 @@ pub struct Spot {
     /// Tonnes refined here while Elite Nexus was running, by commodity.
     pub refined: BTreeMap<String, u32>,
     pub found: Timestamp,
+    /// Where the Rhino refined at it, the first place first, at least [`POINT_GAP_M`] apart.
+    pub points: Vec<(f64, f64)>,
 }
 
 /// A planetary mining location the Rhino refined at. Everything but the deposits comes from the journal, so past
@@ -268,14 +287,15 @@ impl Mining {
         if let Some(f) = fix {
             site.radius_m = Some(f.radius_m);
             let near = site.spots.iter_mut().find(|s| surface_distance((s.lat, s.lon), (f.lat, f.lon), f.radius_m) <= SPOT_RADIUS_M);
+            // A new commodity or a new place on a deposit is worth saving.
             let added = match near {
                 Some(s) => {
                     let new = !s.refined.contains_key(&name);
                     *s.refined.entry(name.clone()).or_default() += 1;
-                    new
+                    add_point(&mut s.points, (f.lat, f.lon), f.radius_m) || new
                 }
                 None => {
-                    site.spots.push(Spot { lat: f.lat, lon: f.lon, refined: BTreeMap::from([(name.clone(), 1)]), found: ts });
+                    site.spots.push(Spot { lat: f.lat, lon: f.lon, refined: BTreeMap::from([(name.clone(), 1)]), found: ts, points: vec![(f.lat, f.lon)] });
                     true
                 }
             };
@@ -406,6 +426,21 @@ mod tests {
         assert_eq!(mining_location("Uutoni Extraction Platform"), None);
         assert_eq!(mining_location(""), None);
         assert_eq!(mining_location("$SAA_Unknown_Signal:#type=$PlanetaryMiningLocation_Name;:#index=;"), None);
+    }
+
+    /// Each place the Rhino refines at on a deposit is kept once it's 20 m from the others, up to 24 of them.
+    #[test]
+    fn a_deposit_keeps_the_places_the_rhino_refined_at() {
+        // A body of 1,000 km: 0.001° of latitude is 17.5 m.
+        let r = 1_000_000.0;
+        let mut points = vec![(10.0, 20.0)];
+        assert!(!add_point(&mut points, (10.0005, 20.0), r), "9 m off: the same place");
+        assert!(add_point(&mut points, (10.0043, 20.0), r), "75 m off, as the next rig stands: a place of its own");
+        assert_eq!(points.len(), 2);
+        for i in 0..40 {
+            add_point(&mut points, (10.0 + 0.002 * f64::from(i), 21.0), r);
+        }
+        assert_eq!(points.len(), MAX_POINTS);
     }
 
     #[test]

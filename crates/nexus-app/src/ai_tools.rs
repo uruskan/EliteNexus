@@ -2299,7 +2299,7 @@ pub static TOOLS: &[Tool] = &[
     Tool {
         name: "where_to_mine",
         title: "Where to surface-mine",
-        description: "Rhino surface mining: landable bodies with planetary mining locations near a system, or the best system in each stretch of the way to to_system, from the scans commanders shared that Spansh holds; and what the commander's own runs gave on each ground (class and volcanism). Nothing says what a location holds.",
+        description: "Rhino surface mining: landable bodies with planetary mining locations near a system, or the best system in each stretch of the way to to_system, from the scans commanders shared that Spansh holds; the odds of each material on each body's ground (how often it was listed at the locations commanders read in the game); and what the commander's own runs gave on each ground (class and volcanism). Nothing records what a given location holds.",
         params: || {
             schema(
                 json!({
@@ -2307,10 +2307,11 @@ pub static TOOLS: &[Tool] = &[
                     "to_system": { "type": "string", "description": "Search along the way from near_system (default: the commander's) to here instead." },
                     "class": { "type": "string", "enum": ["metal-rich", "high metal content", "rocky", "rocky ice", "icy"] },
                     "volcanism": { "type": "string", "description": "e.g. rocky magma, metallic magma, water geysers, or none." },
+                    "material": { "type": "string", "description": "A material the Rhino mines (Monazite, Platinum, Iridium, Low Temperature Diamonds…): without a class, only the classes where it turned up are searched, and each body gets its odds." },
                     "min_locations": { "type": "integer", "description": "Default 1." },
                     "max_distance_ly": { "type": "number", "description": "1 to 1,000. Default 100; along a route, from the line, 25." },
                     "max_distance_ls": { "type": "number", "description": "From the arrival star. Default: any." },
-                    "sort": { "type": "string", "enum": ["nearest", "most_locations"] },
+                    "sort": { "type": "string", "enum": ["nearest", "most_locations"], "description": "most_locations: with a material, the most locations likely to list it." },
                     "stops": { "type": "integer", "description": "Along a route: how many stretches. Default 10." }
                 }),
                 &[],

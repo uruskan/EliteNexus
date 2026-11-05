@@ -100,10 +100,10 @@ a layout changes.
   (Exploration), `carrier`, `exact`, `neutron`, `route-carrier` (Navigation: that planner; `route-carrier` plots a
   route for your ship to your carrier on the first frame), `untouched`, `known` (Exobiology > Find planets), `buy` (Fleet > Where to buy, from the current
   ship's build with every row ticked, as for a second ship like it; `buy-build`: nothing loaded), `buy-one` (Fleet > Where to buy, one module: a 6A frame shift drive), `materials`, `engineers`,
-  `suits`, `synthesis`, `merc` (Engineering), `where`, `where-route` (Mining > Where to mine: near you, or along a route
-  towards Colonia), `career`, `activity`, `all` (Statistics), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from that
+  `suits`, `synthesis`, `merc` (Engineering), `where`, `where:Monazite`, `where-route` (Mining > Where to mine: near
+  you, near you for that material, or along a route towards Colonia), `career`, `activity`, `all` (Statistics), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from that
   theme; add `,options` to open the protection's options; nothing is written). `find`, `untouched`, `known`, `buy`,
-  `buy-one`, `where`, `where-route` and `route-carrier` start their search on the first frame: add
+  `buy-one`, the `where` tabs and `route-carrier` start their search on the first frame: add
   `-Delay 15` to `-Delay 25` for Spansh to answer. `routes` (Market › Trade routes) searches the local database on the
   first frame too.
 * HUD & cockpit with a game folder of your own making: set `ELITE_NEXUS_GAME_DIR` to a folder holding a dummy

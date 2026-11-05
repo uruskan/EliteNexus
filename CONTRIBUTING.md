@@ -28,7 +28,7 @@ cargo build --release -p nexus-app     # target/release/EliteNexus (EliteNexus.e
 | Option | What it does |
 |---|---|
 | `--page <name>` | Start on a sidebar page (`Dashboard`, `Exploration`, `Exobiology`, `Navigation`, `Market`, `Settings`, …). |
-| `--tab <name>` | Open a tab on that page: Market sections (`abnormal`, `database`, …), the whole-galaxy map (`galaxy`), Exploration's `find`, `history` and `unsold`, Exobiology › Find planets (`untouched`, `known`), Fleet › Where to buy (`buy`), Mining › Where to mine (`where`, `where-route`), Navigation's planners (`carrier`, `exact`, `neutron`; `route-carrier` plots a route for your ship to your carrier on the first frame), HUD & cockpit's `glare` and `cockpit`, or a HUD colours preset to start from (`mocha`, `royalpurple`, …). |
+| `--tab <name>` | Open a tab on that page: Market sections (`abnormal`, `database`, …), the whole-galaxy map (`galaxy`), Exploration's `find`, `history` and `unsold`, Exobiology › Find planets (`untouched`, `known`), Fleet › Where to buy (`buy`), Mining › Where to mine (`where`, `where:<material>` such as `where:Monazite`, `where-route`), Navigation's planners (`carrier`, `exact`, `neutron`; `route-carrier` plots a route for your ship to your carrier on the first frame), HUD & cockpit's `glare` and `cockpit`, or a HUD colours preset to start from (`mocha`, `royalpurple`, …). |
 | `--journal-dir <dir>` | Read another journal folder (a test run; it never uploads). |
 | `--mute` | No voice. |
 | `--demo` | Add a sample Ask conversation and an alert banner (for screenshots). |
