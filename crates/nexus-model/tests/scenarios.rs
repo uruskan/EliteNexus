@@ -504,6 +504,32 @@ fn redeemed_vouchers_count_for_the_bgs_and_the_ledger() {
     assert_eq!(earned(LedgerCategory::Exploration), Some(25_000));
 }
 
+/// A sale of cartographic data counts for the station's faction in either form the journal writes it: the older
+/// `SellExplorationData` (journals from older versions of the game) as well as `MultiSellExplorationData`.
+#[test]
+fn both_forms_of_a_data_sale_count_for_the_bgs() {
+    use nexus_journal::Timestamp;
+    use nexus_model::bgs::BgsKind;
+    use nexus_model::history::LedgerCategory;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"Docked", "StationName":"Alpha Hub", "StationType":"Coriolis", "StarSystem":"Alpha", "SystemAddress":100, "MarketID":128000002, "StationFaction":{ "Name":"Alpha Jet Group", "FactionState":"Boom" }, "StationServices":[ "dock", "exploration" ], "DistFromStarLS":12.0 }"#,
+            r#"{ "timestamp":"2026-10-01T10:21:00Z", "event":"SellExplorationData", "Systems":[ "Beta", "Gamma" ], "Discovered":[ "Beta 1" ], "BaseValue":40000, "Bonus":5000, "TotalEarnings":45000 }"#,
+            r#"{ "timestamp":"2026-10-01T10:22:00Z", "event":"MultiSellExplorationData", "Discovered":[ { "SystemName":"Delta", "NumBodies":3 } ], "BaseValue":100000, "Bonus":20000, "TotalEarnings":120000 }"#,
+        ],
+    );
+    let gs = m.active().expect("commander");
+    let summary = gs.bgs.summary(Timestamp::ZERO);
+    let found: Vec<_> = summary.iter().flat_map(|s| s.factions.iter().map(|f| (s.system.as_str(), f.faction.as_str(), f.kinds.clone()))).collect();
+    assert_eq!(found, [("Alpha", "Alpha Jet Group", vec![(BgsKind::Exploration, 165_000, 2)])]);
+    let earned = gs.history.totals_since(Timestamp::ZERO).into_iter().find(|(c, _, _)| *c == LedgerCategory::Exploration).map(|(_, i, _)| i);
+    assert_eq!(earned, Some(165_000), "the ledger counted both already");
+    assert!(gs.feed.iter().any(|f| f.event == "SellExplorationData" && f.text == "Sold cartographic data: 45,000 Cr"), "and the activity feed lists it");
+}
+
 /// `PowerplayMerits` names no system: each award goes to the system the commander was in when the game wrote it,
 /// and the period's total stays the sum of the awards.
 #[test]

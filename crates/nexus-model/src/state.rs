@@ -656,9 +656,15 @@ impl GameState {
                 self.money(ts, LedgerCategory::Exploration, s.total_earnings, format!("{} systems", names.len()));
                 self.feed(ts, "MultiSellExplorationData", format!("Sold cartographic data: {} Cr", group_digits(s.total_earnings)));
             }
+            // A sale in the older form (journals from older versions of the game): counted as MultiSellExplorationData is.
             Event::SellExplorationData(s) => {
                 self.exploration.on_sell(&s.systems, s.total_earnings, ts);
+                {
+                    let here = Here { system: &self.location.system, system_address: self.location.system_address, station_faction: self.location.station.as_ref().and_then(|s| s.faction.as_deref()) };
+                    self.bgs.on_data_sale(BgsKind::Exploration, s.total_earnings, ts, &here);
+                }
                 self.money(ts, LedgerCategory::Exploration, s.total_earnings, format!("{} systems", s.systems.len()));
+                self.feed(ts, "SellExplorationData", format!("Sold cartographic data: {} Cr", group_digits(s.total_earnings)));
             }
 
             // ---------------------------------------------------------------- trade & cargo
