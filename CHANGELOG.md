@@ -131,6 +131,15 @@ release time that section becomes the new version and the release workflow publi
   CereProc, …). **Voice** picks one of the engine's voices instead of always the Windows default.
 
 ### Changed
+- **Statistics** is rebuilt in three tabs. **Career** turns the game's own statistics into plain words: time in the
+  game and what you earned an hour, your wealth, the distance you jumped; where your credits came from and where they
+  went, as bars of their shares; a card per activity (trade, combat, exploration, exobiology, passengers, on foot,
+  engineering, fleet, carrier and more) with its rank and only the figures that aren't zero; your records, and the
+  round numbers coming up on your counters. **Activity** counts what your journals hold over the period you pick:
+  time in the game, money in and out by category with trade counted by its profit (and cargo you buy but don't sell,
+  such as a construction's, at cost), a chart by day of jumps, light years, credits or time, a card for each thing you
+  did, and arrows against the period before. An empty period says why. **All statistics** replaces the old list of the game's raw names, mostly zeros:
+  every figure in plain words, grouped, searchable, with the zeros put away.
 - **Engineering** › Blueprint planner is easier to read. Pick the grade to reach and the rolls per grade with plain
   controls, and it says at once what you're short of, with what you already have folded into one row. Each grade's
   recipe and the engineers who can do it are one click away, and the shopping list sits under the wishlist.

@@ -17,6 +17,7 @@
 #        ticked (a second ship like it), and searches on the first frame (give it -Delay 15-25
 #        for Spansh); buy-one searches for one module (a 6A frame shift drive) the same way;
 #        buy-build opens A whole build with nothing loaded (the paste box and your ships).
+#        With -Page Statistics: career, activity or all opens that tab.
 # -JournalDir: read a test journal folder instead of the real one (test runs never upload).
 # -Overlay: an overlay moment with sample content, compact and expanded (jump, hyperspace, arrival, approach,
 #        sampling, close, mining, trade, docked, carrier, two, alert, quiet).

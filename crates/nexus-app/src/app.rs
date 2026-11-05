@@ -161,6 +161,7 @@ impl NexusApp {
             market_ui.autorun = shot.is_some() && t == pages::market::Tab::Routes;
         }
         let map = pages::galaxy_map::MapUi::new(ov.tab.as_deref() == Some("galaxy"));
+        pages::stats::open_tab(&cc.egui_ctx, ov.tab.as_deref());
         let speaker = Speaker::start();
         speaker.set_rate(settings.tts_rate);
         speaker.set_volume(settings.tts_volume);
