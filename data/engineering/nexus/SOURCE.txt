@@ -36,4 +36,7 @@ Corrections applied on top of the sources (docs/research/engineering.md §6.3, w
     (EDEngineer's Fragment Cannon row and EDD's copy are incomplete/typo'd).
   * On-foot engineer meeting/referral requirements updated to the post-2022 values (EDD is older);
     see the ON_FOOT table in the converter.
+  * Bill Turner is discovered through Selene Jean's referral (EDD says "Common knowledge");
+    engineering.md §4.4, re-checked 2026-11-05.
+  * On-foot engineers have no unlock_cost: EDEngineer's "Unlock" rows for them hold pre-18.08 amounts.
   * EDEngineer's "Abnormal Compact Emission Data" mapped to compactemissionsdata.

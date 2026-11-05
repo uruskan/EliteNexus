@@ -655,6 +655,16 @@ const ON_FOOT: &[OnFoot] = &[
     ),
 ];
 
+/// How a ship engineer is discovered, where EDD's Engineers.cs is out of date (engineering.md §4.4, checked 2026-11-05).
+fn ship_discovery(name: &str, edd: &str) -> String {
+    match name {
+        // EDD says "Common knowledge"; Selene Jean refers commanders to him (ED Field Manual, reviewed 2026-09-10; the
+        // community's unlock guides; engineering.md §4.1's chain).
+        "Bill Turner" => "From Selene Jean (grade 3-4).".into(),
+        _ => edd.to_string(),
+    }
+}
+
 /// On-foot modification names as shown in game (EDD names are terse or mislabelled).
 fn mod_name(symbol: &str, edd_name: &str) -> String {
     match symbol {
@@ -980,6 +990,15 @@ fn read(p: &Path) -> String {
 
 fn ing_json(list: &[(String, u32)]) -> Value {
     Value::Array(list.iter().map(|(s, n)| json!([s, n])).collect())
+}
+
+/// "A", "A and B", "A, B and C".
+fn and_list(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
 }
 
 fn sorted(mut v: Vec<(String, u32)>) -> Vec<(String, u32)> {
@@ -1545,7 +1564,7 @@ fn main() {
                     }
                 }
             }
-        } else if let Some(rest) = info.discovery.strip_prefix("From ") {
+        } else if let Some(rest) = ship_discovery(&name, &info.discovery).strip_prefix("From ") {
             let who = rest.split(" (").next().unwrap_or(rest).trim_end_matches('.');
             match canon_engineer(who, &fdev) {
                 Some(w) => by.push(w),
@@ -1595,9 +1614,9 @@ fn main() {
             let referral = if to.is_empty() {
                 String::new()
             } else {
-                format!("Reach grade 3 plus a third of grade 4 to learn about {}.", to.join(" and "))
+                format!("Reach grade 3 and a third of the way to grade 4 to learn about {}.", and_list(&to))
             };
-            (info.discovery.clone(), info.meeting.clone(), info.unlock.clone(), referral, Vec::new())
+            (ship_discovery(&name, &info.discovery), info.meeting.clone(), info.unlock.clone(), referral, Vec::new())
         };
         let modules: Vec<Value> = {
             let mut v: Vec<(&&str, &u8)> = specialities.get(&name).map(|m| m.iter().collect()).unwrap_or_default();
@@ -1631,7 +1650,9 @@ fn main() {
             "discovery": discovery,
             "meeting": meeting,
             "unlock": unlock,
-            "unlock_cost": ing_json(unlock_costs.get(&name).map(Vec::as_slice).unwrap_or_default()),
+            // On-foot engineers take no hand-in; EDEngineer's "Unlock" rows for them are pre-2024 referral and meeting
+            // amounts (Update 18.08 lowered several), so they're left out.
+            "unlock_cost": ing_json(if info.odyssey { &[][..] } else { unlock_costs.get(&name).map(Vec::as_slice).unwrap_or_default() }),
             "reputation": info.reputation,
             "referral": referral,
             "referral_cost": ing_json(&referral_cost),
