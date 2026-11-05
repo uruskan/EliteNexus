@@ -185,10 +185,13 @@ release time that section becomes the new version and the release workflow publi
 - **Ask**: going back to Gemini or Claude after another OpenAI-compatible service or a local model no longer sends
   your questions, and your key, to that service's address, which made Ask say "The model service rejected the API
   key". Switching provider under "Other providers and model" also clears the old provider's address and model.
-- **BGS & Powerplay counts every sale of cartographic data.** A sale in the older form some journals hold
-  (`SellExplorationData`, from older versions of the game) reached Statistics but not the page's Exploration data
-  column, nor the activity feed; it now counts for the station's faction like any other. The page is read from your
-  journal, so older sales show too.
+- **Journals from older versions of the game are read in full.** They name a system's or a station's faction on its
+  own, where newer journals give it with its state, and Elite Nexus couldn't read such lines at all: the jumps,
+  arrivals and dockings in them were missing from Statistics, the Logbook and the galaxy map.
+- **BGS & Powerplay counts every sale of cartographic data.** A sale in the older form those journals hold
+  (`SellExplorationData`) reached Statistics but not the page's Exploration data column, nor the activity feed; it
+  now counts for the faction of the station you sold it at, like any other. The page is read from your journal, so
+  older sales show too.
 - **BGS & Powerplay counts your bounties.** Bounty vouchers you handed in never reached the page, so its Bounties
   column stayed empty: the journal names each faction's share of a voucher differently from the bounty itself, and
   every share was read as 0. Each faction now gets its share, in the system where you hand the vouchers in. The page

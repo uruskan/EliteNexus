@@ -14,13 +14,33 @@ use std::collections::BTreeMap;
 // Shared building blocks
 // ---------------------------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default, Deserialize)]
-#[serde(default)]
+/// A faction as the journal names one (`SystemFaction`, `StationFaction`): `{ "Name": …, "FactionState": … }`, or in
+/// journals from older versions of the game just its name, as a string (their state stood beside it, and isn't read).
+/// Read either way: an event that holds the older form would otherwise not read at all.
+#[derive(Debug, Clone, Default)]
 pub struct NamedFaction {
-    #[serde(rename = "Name")]
     pub name: String,
-    #[serde(rename = "FactionState")]
     pub faction_state: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for NamedFaction {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Form {
+            Name(String),
+            Named {
+                #[serde(rename = "Name", default)]
+                name: String,
+                #[serde(rename = "FactionState", default)]
+                faction_state: Option<String>,
+            },
+        }
+        Ok(match Form::deserialize(d)? {
+            Form::Name(name) => NamedFaction { name, faction_state: None },
+            Form::Named { name, faction_state } => NamedFaction { name, faction_state },
+        })
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -3150,6 +3170,22 @@ mod tests {
         assert_eq!(j.star_pos.unwrap()[0], 220.96875);
         assert_eq!(j.factions[0].recovering_states[0].state, "Expansion");
         assert_eq!(j.jump_dist, Some(9.851));
+    }
+
+    /// Journals from older versions of the game name a faction as a plain string, with its state beside it; such a
+    /// line reads as well as one with the newer `{ "Name", "FactionState" }`.
+    #[test]
+    fn a_faction_named_by_a_plain_string_reads() {
+        let docked = r#"{ "timestamp":"2018-05-12T18:30:01Z", "event":"Docked", "StationName":"Alpha Hub", "StationType":"Coriolis", "StarSystem":"Alpha", "MarketID":128000002, "StationFaction":"Alpha Jet Group", "FactionState":"Boom", "StationGovernment":"$government_Corporate;", "StationGovernment_Localised":"Corporate", "StationEconomy":"$economy_Industrial;", "StationEconomy_Localised":"Industrial", "DistFromStarLS":12.0 }"#;
+        let Event::Docked(d) = Event::parse("Docked", docked).expect("reads") else { panic!() };
+        assert_eq!(d.station_faction.map(|f| (f.name, f.faction_state)), Some(("Alpha Jet Group".to_string(), None)));
+        let jump = r#"{ "timestamp":"2018-05-12T18:10:44Z", "event":"FSDJump", "StarSystem":"Alpha", "StarPos":[0.0,0.0,0.0], "SystemAllegiance":"Independent", "SystemEconomy":"$economy_Industrial;", "SystemGovernment":"$government_Corporate;", "SystemSecurity":"$SYSTEM_SECURITY_medium;", "Population":5000000, "JumpDist":12.5, "FuelUsed":1.2, "FuelLevel":20.0, "SystemFaction":"Alpha Jet Group", "FactionState":"Boom" }"#;
+        let Event::FSDJump(j) = Event::parse("FSDJump", jump).expect("reads") else { panic!() };
+        assert_eq!((j.star_system.as_str(), j.system_faction.map(|f| f.name)), ("Alpha", Some("Alpha Jet Group".to_string())));
+        // The newer form, as before.
+        let docked = r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"Docked", "StationName":"Alpha Hub", "StationType":"Coriolis", "StarSystem":"Alpha", "SystemAddress":100, "MarketID":128000002, "StationFaction":{ "Name":"Alpha Jet Group", "FactionState":"Boom" } }"#;
+        let Event::Docked(d) = Event::parse("Docked", docked).expect("reads") else { panic!() };
+        assert_eq!(d.station_faction.map(|f| (f.name, f.faction_state)), Some(("Alpha Jet Group".to_string(), Some("Boom".to_string()))));
     }
 
     #[test]

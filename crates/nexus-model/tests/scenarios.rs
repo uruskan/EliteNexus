@@ -504,8 +504,9 @@ fn redeemed_vouchers_count_for_the_bgs_and_the_ledger() {
     assert_eq!(earned(LedgerCategory::Exploration), Some(25_000));
 }
 
-/// A sale of cartographic data counts for the station's faction in either form the journal writes it: the older
-/// `SellExplorationData` (journals from older versions of the game) as well as `MultiSellExplorationData`.
+/// A sale of cartographic data counts for the station's faction in either form the journal writes it. Journals from
+/// older versions of the game name the station's faction as a plain string when you dock, and the sale is a
+/// `SellExplorationData`; newer ones give the faction with its state, and the sale is a `MultiSellExplorationData`.
 #[test]
 fn both_forms_of_a_data_sale_count_for_the_bgs() {
     use nexus_journal::Timestamp;
@@ -516,18 +517,29 @@ fn both_forms_of_a_data_sale_count_for_the_bgs() {
     feed(
         &mut m,
         &[
-            r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"Docked", "StationName":"Alpha Hub", "StationType":"Coriolis", "StarSystem":"Alpha", "SystemAddress":100, "MarketID":128000002, "StationFaction":{ "Name":"Alpha Jet Group", "FactionState":"Boom" }, "StationServices":[ "dock", "exploration" ], "DistFromStarLS":12.0 }"#,
-            r#"{ "timestamp":"2026-10-01T10:21:00Z", "event":"SellExplorationData", "Systems":[ "Beta", "Gamma" ], "Discovered":[ "Beta 1" ], "BaseValue":40000, "Bonus":5000, "TotalEarnings":45000 }"#,
+            // An older journal: docked, then the sale.
+            r#"{ "timestamp":"2018-05-12T18:30:01Z", "event":"Docked", "StationName":"Alpha Hub", "StationType":"Coriolis", "StarSystem":"Alpha", "MarketID":128000002, "StationFaction":"Alpha Jet Group", "FactionState":"Boom", "StationGovernment":"$government_Corporate;", "StationGovernment_Localised":"Corporate", "StationEconomy":"$economy_Industrial;", "StationEconomy_Localised":"Industrial", "DistFromStarLS":12.0 }"#,
+            r#"{ "timestamp":"2018-05-12T18:31:00Z", "event":"SellExplorationData", "Systems":[ "Beta", "Gamma" ], "Discovered":[ "Beta 1" ], "BaseValue":40000, "Bonus":5000, "TotalEarnings":45000 }"#,
+            r#"{ "timestamp":"2018-05-12T18:35:00Z", "event":"Undocked", "StationName":"Alpha Hub", "StationType":"Coriolis" }"#,
+            // A newer one: another station of the system, another faction.
+            r#"{ "timestamp":"2026-10-01T10:20:00Z", "event":"Docked", "StationName":"Alpha Port", "StationType":"Orbis", "StarSystem":"Alpha", "SystemAddress":100, "MarketID":128000003, "StationFaction":{ "Name":"Alpha Patron's Party", "FactionState":"None" }, "StationServices":[ "dock", "exploration" ], "DistFromStarLS":40.0 }"#,
             r#"{ "timestamp":"2026-10-01T10:22:00Z", "event":"MultiSellExplorationData", "Discovered":[ { "SystemName":"Delta", "NumBodies":3 } ], "BaseValue":100000, "Bonus":20000, "TotalEarnings":120000 }"#,
         ],
     );
     let gs = m.active().expect("commander");
     let summary = gs.bgs.summary(Timestamp::ZERO);
     let found: Vec<_> = summary.iter().flat_map(|s| s.factions.iter().map(|f| (s.system.as_str(), f.faction.as_str(), f.kinds.clone()))).collect();
-    assert_eq!(found, [("Alpha", "Alpha Jet Group", vec![(BgsKind::Exploration, 165_000, 2)])]);
+    assert_eq!(
+        found,
+        [
+            ("Alpha", "Alpha Jet Group", vec![(BgsKind::Exploration, 45_000, 1)]),
+            ("Alpha", "Alpha Patron's Party", vec![(BgsKind::Exploration, 120_000, 1)]),
+        ]
+    );
     let earned = gs.history.totals_since(Timestamp::ZERO).into_iter().find(|(c, _, _)| *c == LedgerCategory::Exploration).map(|(_, i, _)| i);
     assert_eq!(earned, Some(165_000), "the ledger counted both already");
     assert!(gs.feed.iter().any(|f| f.event == "SellExplorationData" && f.text == "Sold cartographic data: 45,000 Cr"), "and the activity feed lists it");
+    assert_eq!(gs.history.docks.iter().map(|d| d.station.as_str()).collect::<Vec<_>>(), ["Alpha Hub", "Alpha Port"], "both dockings are in the history");
 }
 
 /// `PowerplayMerits` names no system: each award goes to the system the commander was in when the game wrote it,
