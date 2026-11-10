@@ -5,6 +5,11 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+## [0.8.1] - 2026-11-11
+
+A small fix: the neutron planner now plans with the Caspian's FSD Mk II.
+
+### Fixed
 - **Navigation › Neutron: Neutron boost** (asked for by vjt960 in GitHub issue #19): Normal (×4), or Overcharge (×6)
   for the Caspian's FSD Mk II, which Spansh calls Overcharge Supercharge. It follows the drive of the ship you fly
   until you change it, so a Caspian with the Mk II gets the shorter route without a click. Before, Neutron always

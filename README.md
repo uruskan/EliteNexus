@@ -141,6 +141,8 @@ else's report, idea or help. Thank you, commanders.
   order has been live, and a louder voice.
 * **[Chequers2](https://github.com/Chequers2)**: a surface mining map that remembers the body and the site, and
   numbered deposits on the surface radar.
+* **[vjt960](https://github.com/vjt960)**: the neutron planner's ×6 boost for the Caspian's FSD Mk II
+  ([issue #19](https://github.com/uruskan/EliteNexus/issues/19)).
 
 **Bug reports and ideas on the Frontier Forums**
 
