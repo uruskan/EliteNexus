@@ -159,6 +159,10 @@ pub struct NavUi {
     auto_carrier_from: String,
     pub range: f64,
     pub efficiency: u8,
+    /// Neutron planner: plan with the FSD Mk II's ×6 neutron boost (Spansh's "Overcharge Supercharge"), not ×4.
+    pub overcharge: bool,
+    /// What the ship you fly last set `overcharge` to: while it holds that, it follows the ship.
+    auto_overcharge: bool,
     /// Exact plotter options (as on spansh.co.uk/exact-plotter).
     pub exact: ExactOptions,
     pub job: Slot<Result<PlannedRoute, String>>,
@@ -256,6 +260,8 @@ impl Default for NavUi {
             auto_carrier_from: String::new(),
             range: 0.0,
             efficiency: 60,
+            overcharge: false,
+            auto_overcharge: false,
             exact: ExactOptions::default(),
             job: Slot::default(),
             planned: None,
@@ -278,6 +284,28 @@ fn follow(field: &mut String, last: &mut String, now: &str) {
     if *last != now {
         *last = now.to_string();
     }
+}
+
+/// [`follow`] for a switch: while it holds what the ship last set it to, it follows the ship; set by hand, it stays
+/// until the two agree again.
+fn follow_switch(on: &mut bool, last: &mut bool, now: bool) {
+    if *last != now {
+        if *on == *last {
+            *on = now;
+        }
+        *last = now;
+    }
+}
+
+/// A neutron star's jet boosts this ship's jump ×6, not the usual ×4: it has the Mk II Supercharge Optimised frame
+/// shift drive. False for a ship whose modules the journal hasn't listed yet.
+pub(crate) fn overcharges(ship: Option<&nexus_model::fleet::Ship>) -> bool {
+    ship.and_then(|s| s.module_in("FrameShiftDrive")).and_then(|m| nexus_spansh::fsd_spec(&m.item)).is_some_and(|f| f.supercharge_multiplier > 4)
+}
+
+/// What Spansh's neutron planner takes as `supercharge_multiplier`.
+pub(crate) fn neutron_boost(overcharge: bool) -> u8 {
+    if overcharge { 6 } else { 4 }
 }
 
 fn algorithm_label(a: GalaxyAlgorithm) -> &'static str {
@@ -358,6 +386,7 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut NavUi, auto_copy: &mut bool, c
         st.route_ship_to(&sys);
     }
     crate::tours::follow_range(&mut st.range, &mut st.auto_range, gs);
+    follow_switch(&mut st.overcharge, &mut st.auto_overcharge, overcharges(gs.fleet.current()));
     let mut changed = false;
     // The whole page scrolls (the route table draws only the rows in view).
     egui::ScrollArea::vertical().id_salt("navigation").auto_shrink([false, false]).show(ui, |ui| {
@@ -527,6 +556,9 @@ fn planner_form(ui: &mut Ui, gs: &GameState, st: &mut NavUi, carrier: Option<Car
                         let mut e = u32::from(st.efficiency);
                         widgets::whole(ui, &mut e, 1..=100, Steps::By(5.0), " %");
                         st.efficiency = e.clamp(1, 100) as u8;
+                    });
+                    bar.field("Neutron boost", "How far a neutron star's jet boosts the next jump: ×4 for most drives, ×6 for the Mk II Supercharge Optimised frame shift drive (Spansh's Overcharge Supercharge). Follows the drive of the ship you fly until you change it.", |ui| {
+                        widgets::segmented(ui, &mut st.overcharge, &[(false, "Normal ×4"), (true, "Overcharge ×6")]);
                     });
                 });
             }
@@ -888,6 +920,13 @@ fn count(n: u64, word: &str) -> String {
     if n == 1 { format!("1 {word}") } else { format!("{n} {word}s") }
 }
 
+/// A neutron route in a line ("12 waypoints · 40 jumps · 9 neutron boosts"), with the boost it was planned with when
+/// that isn't the usual ×4.
+pub(crate) fn neutron_summary(waypoints: usize, jumps: u32, neutrons: usize, boost: u8) -> String {
+    let at = if boost == 4 { String::new() } else { format!(" at ×{boost}") };
+    format!("{} · {} · {}{at}", count(waypoints as u64, "waypoint"), count(u64::from(jumps), "jump"), count(neutrons as u64, "neutron boost"))
+}
+
 /// Secondary text in a card.
 fn note(ui: &mut Ui, text: &str) {
     ui.add(egui::Label::new(RichText::new(text).size(size::FOOTNOTE).color(pal::DIM)).wrap());
@@ -913,11 +952,12 @@ fn make_request(gs: &GameState, st: &NavUi, carrier: Option<CarrierKind>, spansh
     match st.planner {
         Planner::InGame => None,
         Planner::Neutron => {
-            let req = NeutronRouteRequest::new(from, to, st.range.clamp(*limits::RANGE_LY.start(), *limits::RANGE_LY.end())).efficiency(st.efficiency);
+            let boost = neutron_boost(st.overcharge);
+            let req = NeutronRouteRequest::new(from, to, st.range.clamp(*limits::RANGE_LY.start(), *limits::RANGE_LY.end())).efficiency(st.efficiency).supercharge_multiplier(boost);
             Some(Box::pin(async move {
                 let p = sp.neutron_route(&req).await.map_err(|e| e.to_string())?;
                 let wps: Vec<Waypoint> = p.route.waypoints().iter().map(from_spansh).collect();
-                let summary = format!("{} · {} · {}", count(wps.len() as u64, "waypoint"), count(p.route.total_jumps() as u64, "jump"), count(p.route.neutron_count() as u64, "neutron boost"));
+                let summary = neutron_summary(wps.len(), p.route.total_jumps(), p.route.neutron_count(), boost);
                 Ok(PlannedRoute::new("Neutron", summary, p.web_url, wps))
             }))
         }
@@ -1172,5 +1212,42 @@ mod tests {
     #[test]
     fn counts_read_as_words() {
         assert_eq!((count(1, "jump"), count(0, "refuel"), count(12, "neutron boost")), ("1 jump".into(), "0 refuels".into(), "12 neutron boosts".into()));
+    }
+
+    fn ship_with_fsd(item: &str) -> nexus_model::fleet::Ship {
+        let mut ship = nexus_model::fleet::Ship::new(1, "explorer_nx");
+        ship.modules.push(nexus_model::fleet::ShipModule { slot: "FrameShiftDrive".into(), item: item.into(), ..Default::default() });
+        ship
+    }
+
+    #[test]
+    fn the_neutron_boost_is_the_drives() {
+        // The journal writes module symbols in mixed case.
+        let mk2 = ship_with_fsd("Int_Hyperdrive_Overcharge_Size8_Class5_OverchargeBooster_MkII");
+        let sco = ship_with_fsd("int_hyperdrive_overcharge_size8_class5");
+        assert!(overcharges(Some(&mk2)), "the FSD Mk II");
+        assert!(!overcharges(Some(&sco)), "an SCO drive that isn't the Mk II");
+        assert!(!overcharges(Some(&nexus_model::fleet::Ship::new(2, "anaconda"))), "modules not listed yet");
+        assert!(!overcharges(None));
+        assert_eq!((neutron_boost(false), neutron_boost(true)), (4, 6));
+        assert_eq!(neutron_summary(12, 40, 9, 4), "12 waypoints · 40 jumps · 9 neutron boosts");
+        assert_eq!(neutron_summary(2, 1, 1, 6), "2 waypoints · 1 jump · 1 neutron boost at ×6");
+    }
+
+    #[test]
+    fn the_neutron_boost_follows_the_ship_until_set_by_hand() {
+        let (mut on, mut last) = (false, false);
+        follow_switch(&mut on, &mut last, true);
+        assert!(on, "flying the FSD Mk II: switched on");
+        on = false;
+        follow_switch(&mut on, &mut last, true);
+        assert!(!on, "switched off by hand: kept");
+        follow_switch(&mut on, &mut last, false);
+        assert!(!on, "another ship without it");
+        follow_switch(&mut on, &mut last, true);
+        assert!(on, "back in the Mk II ship: follows again");
+        follow_switch(&mut on, &mut last, false);
+        follow_switch(&mut on, &mut last, false);
+        assert!(!on, "and off with a ship that hasn't got it");
     }
 }

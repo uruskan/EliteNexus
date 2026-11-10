@@ -6,7 +6,7 @@
 //! caller allows ([`NexusTools::budget`]).
 
 use crate::finder;
-use crate::pages::navigation::{PlannedRoute, from_spansh};
+use crate::pages::navigation::{PlannedRoute, from_spansh, neutron_boost, neutron_summary, overcharges};
 use nexus_ai::{ToolHost, ToolSpec};
 use nexus_data::bio_predict::{self as bp, BodyFacts, ParentRef, Prediction, StarFacts, SystemStar};
 use nexus_data::names::compact_credits;
@@ -121,6 +121,8 @@ struct Me {
     cargo_capacity: i64,
     credits: i64,
     jump_range: f64,
+    /// The ship has the FSD Mk II: a neutron star boosts its jump ×6, not ×4.
+    overcharge: bool,
     loadout: Option<String>,
 }
 
@@ -200,6 +202,7 @@ impl NexusTools {
             cargo_capacity: ship.map(|s| i64::from(s.cargo_capacity)).filter(|c| *c > 0).unwrap_or(0),
             credits: gs.cmdr.credits,
             jump_range: ship.map(|s| s.max_jump_range).unwrap_or(0.0),
+            overcharge: overcharges(ship),
             loadout: ship.and_then(|s| s.loadout_json.clone()),
         })
     }
@@ -621,10 +624,11 @@ impl NexusTools {
                 return Err("The ship's jump range is not known yet (fly it once).".into());
             }
             let range = me.jump_range.clamp(*crate::tours::limits::RANGE_LY.start(), *crate::tours::limits::RANGE_LY.end());
-            let req = NeutronRouteRequest::new(from.clone(), to.clone(), range).efficiency(60);
+            let boost = neutron_boost(me.overcharge);
+            let req = NeutronRouteRequest::new(from.clone(), to.clone(), range).efficiency(60).supercharge_multiplier(boost);
             let p = self.rt.block_on(self.spansh.neutron_route(&req)).map_err(|e| format!("Spansh: {e}"))?;
             let w: Vec<_> = p.route.waypoints().iter().map(from_spansh).collect();
-            let summary = format!("{} waypoints · {} jumps · {} neutron boosts", w.len(), p.route.total_jumps(), p.route.neutron_count());
+            let summary = neutron_summary(w.len(), p.route.total_jumps(), p.route.neutron_count(), boost);
             PlannedRoute::new("Neutron", summary, p.web_url, w)
         } else {
             let profile = ShipProfile::from_loadout_json(me.loadout.as_deref().unwrap_or_default()).map_err(|e| format!("Ship profile: {e:?}"))?;
