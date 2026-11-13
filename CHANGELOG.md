@@ -11,6 +11,9 @@ release time that section becomes the new version and the release workflow publi
   are in the game's language). A sale now takes each sample off by the species' codex id, which is the same in every
   language. Samples left behind by earlier sales come off the next time Elite Nexus starts, since the list is rebuilt
   from your journals.
+- **Exobiology › Sampling** in a game that names species in another language: a sample's value (and with it the
+  estimated payout) and its colony range are now found by the species' codex id. Before, they were looked up by the
+  English name, so another language left the value at 0 and the sampling radar without its colony-range circle.
 
 ## [0.8.1] - 2026-11-11
 

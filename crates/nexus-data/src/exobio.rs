@@ -941,6 +941,25 @@ mod tests {
         assert!(species("Not A Species").is_none());
     }
 
+    /// Callers look an organism up by its journal codex symbol first and by its English name as the fallback, so the
+    /// two must always find the same entry.
+    #[test]
+    fn codex_symbol_and_english_name_find_the_same_entry() {
+        for s in all_species() {
+            assert_eq!(species(s.name).map(|x| x.codex), Some(s.codex), "{} by name", s.name);
+            if !s.codex.is_empty() {
+                assert_eq!(species(s.codex).map(|x| x.name), Some(s.name), "{} by {}", s.name, s.codex);
+                assert_eq!(colony_range_m(s.codex), colony_range_m(s.name), "{} colony range", s.name);
+            }
+        }
+        for g in genera() {
+            assert_eq!(genus(g.name).map(|x| x.name), Some(g.name), "{} by name", g.name);
+            if let Some(c) = g.codex {
+                assert_eq!(genus(c).map(|x| x.name), Some(g.name), "{} by {c}", g.name);
+            }
+        }
+    }
+
     #[test]
     fn regions() {
         assert_eq!(region_id("Inner Orion Spur"), Some(18));

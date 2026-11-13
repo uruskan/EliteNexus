@@ -187,6 +187,26 @@ fn exobiology_sale_takes_sold_samples_off_the_list() {
 }
 
 #[test]
+fn exobiology_scan_in_another_language_keeps_value_and_colony_range() {
+    // The display names are in the game's language (made up here); the codex symbols are the same in every language.
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let organic = |kind: &str, ts: &str| {
+        format!(
+            r#"{{ "timestamp":"{ts}", "event":"ScanOrganic", "ScanType":"{kind}", "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Strate (FR)", "Species":"$Codex_Ent_Stratum_07_Name;", "Species_Localised":"Strate tectonique (FR)", "Variant":"$Codex_Ent_Stratum_07_K_Name;", "Variant_Localised":"Strate tectonique (FR) - Citron vert", "WasLogged":true, "SystemAddress":100, "Body":2 }}"#
+        )
+    };
+    let alerts = feed(&mut m, &[&organic("Log", "2026-10-01T10:10:00Z")]);
+    assert!(alerts.iter().any(|a| a.detail.contains("500 m")), "Stratum colony range, found by symbol");
+    let cur = m.active().unwrap().exobio.current.clone().expect("sampling");
+    assert_eq!((cur.colony_range_m, cur.value), (Some(500), Some(19_010_800)));
+    feed(&mut m, &[&organic("Sample", "2026-10-01T10:12:00Z"), &organic("Analyse", "2026-10-01T10:14:00Z")]);
+    let rec = &m.active().unwrap().exobio.unsold[0];
+    assert_eq!(rec.species, "Strate tectonique (FR)", "the list shows the game's own name");
+    assert_eq!(rec.value, 19_010_800);
+}
+
+#[test]
 fn carrier_transfer_is_not_spending() {
     let mut m = Model::default();
     feed(&mut m, LOGIN);

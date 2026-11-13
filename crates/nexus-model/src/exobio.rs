@@ -116,8 +116,12 @@ impl ExoBio {
                 points: Vec::new(),
                 stage: 0,
                 started: ts,
-                colony_range_m: xb::colony_range_m(&genus).or_else(|| xb::colony_range_m(&species)),
-                value: xb::species(&species).map(|s| s.value),
+                // By codex symbol first: the display names are in the game's language and the data's are English.
+                colony_range_m: xb::colony_range_m(&o.genus)
+                    .or_else(|| xb::colony_range_m(&genus))
+                    .or_else(|| xb::colony_range_m(&o.species))
+                    .or_else(|| xb::colony_range_m(&species)),
+                value: xb::species(&o.species).or_else(|| xb::species(&species)).map(|s| s.value),
             });
         }
         let cur = self.current.as_mut().expect("set above");
