@@ -115,6 +115,78 @@ fn exobiology_sampling_and_bonus() {
 }
 
 #[test]
+fn exobiology_sale_takes_sold_samples_off_the_list() {
+    // One organism's three scans: (codex number, display name, body).
+    let analyse = |n: &str, name: &str, body: u32, minute: u32| -> Vec<String> {
+        ["Log", "Sample", "Analyse"]
+            .iter()
+            .enumerate()
+            .map(|(i, kind)| {
+                format!(
+                    r#"{{ "timestamp":"2026-10-01T10:{:02}:00Z", "event":"ScanOrganic", "ScanType":"{kind}", "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum", "Species":"$Codex_Ent_Stratum_{n}_Name;", "Species_Localised":"{name}", "Variant":"$Codex_Ent_Stratum_{n}_K_Name;", "Variant_Localised":"{name} - Lime", "WasLogged":true, "SystemAddress":100, "Body":{body} }}"#,
+                    minute + i as u32
+                )
+            })
+            .collect()
+    };
+    let sold = |n: &str, name: &str, value: i64| {
+        format!(
+            r#"{{ "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum", "Species":"$Codex_Ent_Stratum_{n}_Name;", "Species_Localised":"{name}", "Variant":"$Codex_Ent_Stratum_{n}_K_Name;", "Variant_Localised":"{name} - Lime", "Value":{value}, "Bonus":0 }}"#
+        )
+    };
+    let sale = |ts: &str, items: &[String]| format!(r#"{{ "timestamp":"{ts}", "event":"SellOrganicData", "MarketID":3228018944, "BioData":[ {} ] }}"#, items.join(", "));
+    let scan_all = |m: &mut Model| {
+        for lines in [analyse("07", "Stratum Tectonicas", 2, 0), analyse("07", "Stratum Tectonicas", 3, 10), analyse("02", "Stratum Paleas", 4, 20)] {
+            feed(m, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+        }
+        assert_eq!(m.active().unwrap().exobio.unsold.len(), 3);
+    };
+
+    // The sale names the species as the scans did: what was sold comes off, the other Tectonicas stays.
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    scan_all(&mut m);
+    feed(&mut m, &[&sale("2026-10-01T12:00:00Z", &[sold("07", "Stratum Tectonicas", 19_010_800), sold("02", "Stratum Paleas", 1_362_000)])]);
+    let bio = &m.active().unwrap().exobio;
+    assert_eq!(bio.unsold.iter().map(|r| (r.species.as_str(), r.body_id)).collect::<Vec<_>>(), [("Stratum Tectonicas", 3)]);
+    assert_eq!(bio.sold_total, 19_010_800 + 1_362_000);
+
+    // The sale names them differently (another game language): the codex symbol still matches.
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    scan_all(&mut m);
+    let all = [sold("07", "Stratum tectonicas (FR)", 19_010_800), sold("07", "Stratum tectonicas (FR)", 19_010_800), sold("02", "Stratum paleas (FR)", 1_362_000)];
+    feed(&mut m, &[&sale("2026-10-01T12:00:00Z", &all)]);
+    let bio = &m.active().unwrap().exobio;
+    assert!(bio.unsold.is_empty(), "every sold sample comes off the list, whatever its display name");
+    assert_eq!(bio.unsold_value(), 0);
+    assert_eq!(bio.sold_total, 2 * 19_010_800 + 1_362_000);
+    assert_eq!(bio.sales.len(), 1);
+
+    // A sale without the symbol (not seen from the game) still matches on the name.
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    scan_all(&mut m);
+    let no_symbol = r#"{ "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Species_Localised":"Stratum Paleas", "Value":1362000, "Bonus":0 }"#.to_string();
+    feed(&mut m, &[&sale("2026-10-01T12:00:00Z", &[no_symbol])]);
+    let bio = &m.active().unwrap().exobio;
+    assert_eq!(bio.unsold.len(), 2);
+    assert!(bio.unsold.iter().all(|r| r.species == "Stratum Tectonicas"));
+
+    // Death loses unsold data: the list empties, and a later sale of new samples works as before.
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    scan_all(&mut m);
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T11:00:00Z", "event":"Died", "KillerName":"Gravity" }"#]);
+    assert!(m.active().unwrap().exobio.unsold.is_empty());
+    feed(&mut m, &analyse("02", "Stratum Paleas", 4, 30).iter().map(String::as_str).collect::<Vec<_>>());
+    feed(&mut m, &[&sale("2026-10-01T12:00:00Z", &[sold("02", "Stratum paleas (FR)", 1_362_000)])]);
+    let bio = &m.active().unwrap().exobio;
+    assert!(bio.unsold.is_empty());
+    assert_eq!(bio.sold_total, 1_362_000);
+}
+
+#[test]
 fn carrier_transfer_is_not_spending() {
     let mut m = Model::default();
     feed(&mut m, LOGIN);

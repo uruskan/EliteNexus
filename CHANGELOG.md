@@ -5,6 +5,13 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+### Fixed
+- **Exobiology › Unsold Vista Genomics data** (reported by WadRail in GitHub issue #20): samples you had sold could
+  stay on the list, and in the estimated payout, when the sale named a species differently from the scan (the names
+  are in the game's language). A sale now takes each sample off by the species' codex id, which is the same in every
+  language. Samples left behind by earlier sales come off the next time Elite Nexus starts, since the list is rebuilt
+  from your journals.
+
 ## [0.8.1] - 2026-11-11
 
 A small fix: the neutron planner now plans with the Caspian's FSD Mk II.

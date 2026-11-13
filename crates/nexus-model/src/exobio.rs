@@ -48,6 +48,8 @@ pub struct BioRecord {
     pub ts: Timestamp,
     pub genus: String,
     pub species: String,
+    /// The species' codex symbol (`$Codex_Ent_Stratum_07_Name;`): the same in every game language, unlike `species`.
+    pub species_symbol: String,
     pub variant: Option<String>,
     pub system_address: u64,
     pub system: String,
@@ -132,6 +134,7 @@ impl ExoBio {
             ts,
             genus: cur.genus,
             species: cur.species,
+            species_symbol: cur.species_symbol,
             variant: cur.variant,
             system_address: o.system_address,
             system: system.to_string(),
@@ -144,11 +147,20 @@ impl ExoBio {
         ScanOutcome::Completed(rec)
     }
 
+    /// Each sold sample takes one matching record off the unsold list. The match is on the species' codex symbol, which
+    /// the game writes the same in every language; the display name can differ between the scan and the sale, and a
+    /// match on it alone left sold samples listed as unsold. The name is only the fallback, for a sale without a symbol.
     pub fn on_sell(&mut self, s: &ev::SellOrganicData, ts: Timestamp) -> i64 {
         let total: i64 = s.bio_data.iter().map(|b| b.value + b.bonus).sum();
         for sold in &s.bio_data {
-            let name = sold.species_localised.as_deref().unwrap_or(&sold.species);
-            if let Some(i) = self.unsold.iter().position(|u| u.species.eq_ignore_ascii_case(name)) {
+            let by_symbol = || {
+                (!sold.species.is_empty()).then(|| self.unsold.iter().position(|u| u.species_symbol.eq_ignore_ascii_case(&sold.species))).flatten()
+            };
+            let by_name = || {
+                let name = sold.species_localised.as_deref().unwrap_or(&sold.species);
+                self.unsold.iter().position(|u| u.species.eq_ignore_ascii_case(name))
+            };
+            if let Some(i) = by_symbol().or_else(by_name) {
                 self.unsold.remove(i);
             }
         }
