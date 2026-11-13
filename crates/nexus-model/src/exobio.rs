@@ -73,6 +73,14 @@ pub struct ExoBio {
     pub sold_total: i64,
     pub analysed_total: u64,
     pub sales: Vec<(Timestamp, i64)>,
+    /// Sales the game logged without their samples (`SellOrganicData` with an empty `BioData`), since the list was last
+    /// cleared and the last death. No journal says which samples they sold, or for how much.
+    pub unlisted_sales: Vec<Timestamp>,
+    /// How far the commander cleared the unsold list (Exobiology › Clear list, kept in Elite Nexus's settings): no
+    /// sample analysed then or before is listed, and no sale the game logged without its samples then or before is
+    /// remembered. It's set before the journals are read, so those samples never enter the list and a later sale takes
+    /// the right one off it.
+    pub cleared: Option<Timestamp>,
 }
 
 pub enum ScanOutcome {
@@ -147,14 +155,28 @@ impl ExoBio {
             value: cur.value.unwrap_or(0),
             bonus_expected: body_unfootfalled,
         };
-        self.unsold.push(rec.clone());
+        if !self.before_clear(ts) {
+            self.unsold.push(rec.clone());
+        }
         ScanOutcome::Completed(rec)
+    }
+
+    /// At or before the time the commander cleared the unsold list up to.
+    fn before_clear(&self, ts: Timestamp) -> bool {
+        self.cleared.is_some_and(|c| ts <= c)
     }
 
     /// Each sold sample takes one matching record off the unsold list. The match is on the species' codex symbol, which
     /// the game writes the same in every language; the display name can differ between the scan and the sale, and a
     /// match on it alone left sold samples listed as unsold. The name is only the fallback, for a sale without a symbol.
+    ///
+    /// The game sometimes logs a sale with no samples in it (an empty `BioData`; seen when a commander sold many pages
+    /// of samples at once). That sale is remembered in [`Self::unlisted_sales`] and takes nothing off the list: nothing
+    /// says which samples it sold.
     pub fn on_sell(&mut self, s: &ev::SellOrganicData, ts: Timestamp) -> i64 {
+        if s.bio_data.is_empty() && !self.before_clear(ts) {
+            self.unlisted_sales.push(ts);
+        }
         let total: i64 = s.bio_data.iter().map(|b| b.value + b.bonus).sum();
         for sold in &s.bio_data {
             let by_symbol = || {
@@ -180,13 +202,39 @@ impl ExoBio {
         }
     }
 
-    /// Unsold exobiology data is lost on death.
+    /// Unsold exobiology data is lost on death, and with it any doubt about what an unlisted sale took.
     pub fn on_death(&mut self) {
         self.unsold.clear();
+        self.unlisted_sales.clear();
         self.current = None;
     }
 
     pub fn unsold_value(&self) -> i64 {
         self.unsold.iter().map(BioRecord::expected_payout).sum()
+    }
+
+    /// The sales the game logged without their samples that may have sold some of the samples listed: those after the
+    /// oldest of them was analysed (a sale can't take a sample analysed after it). Oldest first.
+    pub fn doubtful_sales(&self) -> impl Iterator<Item = Timestamp> + '_ {
+        let oldest = self.unsold.iter().map(|r| r.ts).min();
+        self.unlisted_sales.iter().copied().filter(move |t| oldest.is_some_and(|o| *t > o))
+    }
+
+    /// Where Clear list clears the list up to: the newest of the samples listed and of the sales logged without their
+    /// samples. None when there's nothing to clear.
+    pub fn clear_point(&self) -> Option<Timestamp> {
+        self.unsold.iter().map(|r| r.ts).chain(self.unlisted_sales.iter().copied()).max()
+    }
+
+    /// Clears the unsold list up to `upto` (from [`Self::clear_point`]): the samples analysed then or before leave it,
+    /// and so do the sales logged without their samples. A sample analysed later stays. Never clears less than an
+    /// earlier Clear did.
+    pub fn clear(&mut self, upto: Timestamp) {
+        if self.before_clear(upto) {
+            return;
+        }
+        self.cleared = Some(upto);
+        self.unsold.retain(|r| r.ts > upto);
+        self.unlisted_sales.retain(|t| *t > upto);
     }
 }

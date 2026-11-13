@@ -162,7 +162,7 @@ impl NexusApp {
         let mut market = crate::market::MarketService::open(&data_dir, &cc.egui_ctx);
         market.set_watches(&settings.price_watches);
         let own_journals = ov.journal_dir.is_none() && settings.journal_dir.is_none();
-        let core = start_core(&cc.egui_ctx, ov.journal_dir.as_ref().or(settings.journal_dir.as_ref()), market.history_sink(), &settings.mining);
+        let core = start_core(&cc.egui_ctx, ov.journal_dir.as_ref().or(settings.journal_dir.as_ref()), market.history_sink(), &settings);
         market.attach(&core);
         market.set_listen(settings.accounts.eddn_listen, rt.handle());
         // Test runs (CLI journal folder, screenshots) never upload, and never touch the game's screenshots: replayed
@@ -690,6 +690,9 @@ impl NexusApp {
         self.page_header(ui, &title, &subtitle);
         let model = self.core.model.read();
         let Some(gs) = model.active() else { return };
+        // Whose unsold exobiology list a Clear on the Exobiology page clears, as the model keys its commanders.
+        let cmdr_key = model.active.clone();
+        let mut clear_exobio = None;
         let scroll = !matches!(self.page, Page::Ask | Page::Exploration | Page::Logbook | Page::GalaxyMap | Page::Fleet | Page::Navigation | Page::Bindings | Page::Market);
         let page = self.page;
         let high_value = self.settings.high_value_threshold;
@@ -710,6 +713,7 @@ impl NexusApp {
             Page::Exobiology => match pages::exobio::show(ui, gs, &mut self.exo, &self.spansh, self.rt.handle(), self.market.db.as_ref()) {
                 Some(pages::exobio::ExoAction::PlotTo(s)) => map_action = Some(pages::galaxy_map::MapAction::PlotTo(s)),
                 Some(pages::exobio::ExoAction::Follow(r)) => follow = Some(r),
+                Some(pages::exobio::ExoAction::ClearUnsold(upto)) => clear_exobio = Some(upto),
                 None => {}
             },
             Page::GalaxyMap => map_action = pages::galaxy_map::show(ui, gs, &mut self.map, &route),
@@ -843,6 +847,12 @@ impl NexusApp {
             body(ui);
         }
         drop(model);
+        // Clear list: the list empties at once, and settings.json keeps how far, for the next time the journals are read.
+        if let (Some(upto), Some(cmdr)) = (clear_exobio, cmdr_key) {
+            self.core.model.write().clear_exobio_unsold(&cmdr, upto);
+            self.settings.exobio.clear(&cmdr, upto);
+            settings_changed = true;
+        }
         if refresh_voices {
             self.speaker.refresh_voices();
         }
@@ -947,7 +957,7 @@ impl NexusApp {
             self.speaker.say("Elite Nexus voice check. All systems nominal, commander.");
         }
         if restart {
-            self.core = start_core(ctx, self.overrides.journal_dir.as_ref().or(self.settings.journal_dir.as_ref()), self.market.history_sink(), &self.settings.mining);
+            self.core = start_core(ctx, self.overrides.journal_dir.as_ref().or(self.settings.journal_dir.as_ref()), self.market.history_sink(), &self.settings);
             self.sync.attach(&self.core);
             self.shots.attach(&self.core);
             self.market.attach(&self.core);
@@ -1030,9 +1040,11 @@ fn agent_tools(core: &Core, db: Option<nexus_galaxy::GalaxyDb>, rt: &tokio::runt
     }
 }
 
-fn start_core(ctx: &egui::Context, journal_dir: Option<&PathBuf>, history: Option<crate::core::HistorySink>, mining: &pages::mining::MiningPrefs) -> Core {
+/// Reads the journals into a new model, which starts with what the settings keep from earlier runs: the Rhino drops
+/// and how far each commander cleared their unsold exobiology list.
+fn start_core(ctx: &egui::Context, journal_dir: Option<&PathBuf>, history: Option<crate::core::HistorySink>, settings: &Settings) -> Core {
     let repaint_ctx = ctx.clone();
-    Core::start(journal_dir.cloned(), move || repaint_ctx.request_repaint(), history, pages::mining::drops(mining))
+    Core::start(journal_dir.cloned(), move || repaint_ctx.request_repaint(), history, pages::mining::drops(&settings.mining), settings.exobio.cleared.clone())
 }
 
 #[derive(Clone, Copy)]

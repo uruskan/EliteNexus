@@ -107,6 +107,9 @@ pub type HistorySink = Box<dyn FnMut(&str, &str) + Send>;
 /// Rhino launches with the mining location recorded for them, by the launch's journal time.
 pub type Drops = std::collections::BTreeMap<nexus_journal::Timestamp, nexus_model::mining::SiteKey>;
 
+/// How far each commander cleared their unsold exobiology list ([`nexus_model::Model::exobio_cleared`]).
+pub type ExobioCleared = std::collections::BTreeMap<String, nexus_journal::Timestamp>;
+
 pub struct Core {
     pub model: Arc<RwLock<Model>>,
     /// Every journal event (24 bytes each; JSON read from disk on demand).
@@ -118,9 +121,10 @@ pub struct Core {
 }
 
 impl Core {
-    /// `drops`: Rhino launches recorded on earlier runs ([`nexus_model::mining::Mining::drops`]), given to the model
-    /// before it reads the journals.
-    pub fn start(journal_dir: Option<PathBuf>, repaint: impl Fn() + Send + 'static, history_sink: Option<HistorySink>, drops: Drops) -> Core {
+    /// `drops`: Rhino launches recorded on earlier runs ([`nexus_model::mining::Mining::drops`]), and `exobio_cleared`:
+    /// how far each commander cleared their unsold exobiology list, both given to the model before it reads the
+    /// journals.
+    pub fn start(journal_dir: Option<PathBuf>, repaint: impl Fn() + Send + 'static, history_sink: Option<HistorySink>, drops: Drops, exobio_cleared: ExobioCleared) -> Core {
         let model = Arc::new(RwLock::new(Model::default()));
         let index = Arc::new(RwLock::new(JournalIndex::default()));
         let status = Arc::new(RwLock::new(CoreStatus::default()));
@@ -131,7 +135,7 @@ impl Core {
             let (model, index, status, subscribers, stop) = (model.clone(), index.clone(), status.clone(), subscribers.clone(), stop.clone());
             std::thread::Builder::new()
                 .name("nexus-core".into())
-                .spawn(move || run(journal_dir, model, index, status, subscribers, alert_tx, stop, repaint, history_sink, drops))
+                .spawn(move || run(journal_dir, model, index, status, subscribers, alert_tx, stop, repaint, history_sink, drops, exobio_cleared))
                 .expect("spawn core thread");
         }
         Core { model, index, status, alerts: alert_rx, subscribers, stop }
@@ -169,6 +173,7 @@ fn run(
     repaint: impl Fn(),
     mut history_sink: Option<HistorySink>,
     drops: Drops,
+    exobio_cleared: ExobioCleared,
 ) {
     let Some(dir) = journal_dir.or_else(nexus_journal::default_journal_dir) else {
         tracing::warn!("no journal folder found");
@@ -203,7 +208,7 @@ fn run(
         st.phase = Phase::Loading { done: 0, total };
     }
     repaint();
-    let mut local = Model::with_mining_drops(drops);
+    let mut local = Model::with_mining_drops(drops).with_exobio_cleared(exobio_cleared);
     let mut idx = JournalIndex::default();
     let mut quiet = Alerts::disabled();
     let mut resume: Option<(PathBuf, u64)> = None;

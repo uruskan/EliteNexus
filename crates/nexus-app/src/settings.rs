@@ -57,6 +57,8 @@ pub struct Settings {
     pub bgs: crate::pages::bgs::BgsPrefs,
     /// Missions: how far each commander cleared the recent mission history.
     pub missions: crate::pages::missions::MissionsPrefs,
+    /// Exobiology: how far each commander cleared the unsold Vista Genomics list.
+    pub exobio: crate::pages::exobio::ExobioPrefs,
     /// Mining: the deposits the Rhino refined at (positions exist only live), notes on mining locations.
     pub mining: crate::pages::mining::MiningPrefs,
     /// The overlay: the island at the top of the game's screen.
@@ -242,6 +244,7 @@ impl Default for Settings {
             colonisation: Default::default(),
             bgs: Default::default(),
             missions: Default::default(),
+            exobio: Default::default(),
             mining: Default::default(),
             overlay: Default::default(),
             screenshots: Default::default(),
@@ -750,6 +753,29 @@ mod tests {
         assert_eq!(back.missions, s.missions);
         std::fs::write(d.0.join("settings.json"), r#"{ "tts_rate": 1.2 }"#).expect("write");
         assert!(Settings::load(&d.0).0.missions.cleared.is_empty());
+    }
+
+    /// A cleared unsold exobiology list stays cleared after a restart: the list is rebuilt from the journals at every
+    /// start, so settings.json keeps how far it was cleared, for the model to start with. Files saved before have
+    /// nothing cleared.
+    #[test]
+    fn cleared_unsold_exobiology_is_kept() {
+        let d = Dir::new("exobio");
+        let mut s = Settings::default();
+        let t = |iso: &str| nexus_journal::Timestamp::parse(iso).expect("time");
+        s.exobio.clear("F1234567", t("2026-11-12T13:39:15Z"));
+        // A Clear never goes back to an earlier time; another commander's is their own.
+        s.exobio.clear("F1234567", t("2026-11-01T00:00:00Z"));
+        s.exobio.clear("Legacy", t("2026-10-01T00:00:00Z"));
+        s.save(&d.0);
+        let text = std::fs::read_to_string(d.0.join("settings.json")).expect("saved");
+        assert!(text.contains(r#""F1234567": "2026-11-12T13:39:15Z""#), "{text}");
+        let (back, problem) = Settings::load(&d.0);
+        assert!(problem.is_none());
+        assert_eq!(back.exobio, s.exobio);
+        assert_eq!(back.exobio.cleared.get("Legacy"), Some(&t("2026-10-01T00:00:00Z")));
+        std::fs::write(d.0.join("settings.json"), r#"{ "tts_rate": 1.2 }"#).expect("write");
+        assert!(Settings::load(&d.0).0.exobio.cleared.is_empty());
     }
 
     /// The speech engine and voice survive a restart; older files speak through Windows speech in its default voice,

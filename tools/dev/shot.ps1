@@ -5,7 +5,8 @@
 # -Tab:  market sections (abnormal, database, ...), galaxy (whole-galaxy map), find / history /
 #        unsold (Exploration), untouched / known (Exobiology > Find planets), where / where:Monazite /
 #        where-route (Mining > Where to mine: near you, near you for that material, or along a route
-#        towards Colonia). find, untouched, known and the where tabs start their search on the first
+#        towards Colonia), clear-unsold (Exobiology > This system, the unsold list's Clear list
+#        asking to confirm). find, untouched, known and the where tabs start their search on the first
 #        frame, so give them -Delay 15-25 for Spansh. routes (Market > Trade routes) searches the
 #        local database on the first frame too, station (Market > Station) opens four markets
 #        side by side, and browse opens Find commodity with its search field's whole list open.

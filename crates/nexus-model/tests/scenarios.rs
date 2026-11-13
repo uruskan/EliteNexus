@@ -186,6 +186,133 @@ fn exobiology_sale_takes_sold_samples_off_the_list() {
     assert_eq!(bio.sold_total, 1_362_000);
 }
 
+/// A Stratum analysed (its third scan) on 1 October: the codex number (07 Tectonicas, 02 Paleas), body and time.
+fn stratum_analysed(n: &str, body: u32, time: &str) -> String {
+    let name = if n == "07" { "Stratum Tectonicas" } else { "Stratum Paleas" };
+    format!(
+        r#"{{ "timestamp":"2026-10-01T{time}Z", "event":"ScanOrganic", "ScanType":"Analyse", "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum", "Species":"$Codex_Ent_Stratum_{n}_Name;", "Species_Localised":"{name}", "Variant":"$Codex_Ent_Stratum_{n}_K_Name;", "Variant_Localised":"{name} - Lime", "WasLogged":true, "SystemAddress":100, "Body":{body} }}"#
+    )
+}
+
+/// A sale at Vista Genomics on 1 October of these Stratum samples (codex numbers); none: the game listed no samples.
+fn stratum_sale(time: &str, sold: &[&str]) -> String {
+    let items: Vec<String> = sold
+        .iter()
+        .map(|n| format!(r#"{{ "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"Stratum", "Species":"$Codex_Ent_Stratum_{n}_Name;", "Value":1000000, "Bonus":0 }}"#))
+        .collect();
+    format!(r#"{{ "timestamp":"2026-10-01T{time}Z", "event":"SellOrganicData", "MarketID":3228018944, "BioData":[ {} ] }}"#, items.join(", "))
+}
+
+fn ts(time: &str) -> nexus_journal::Timestamp {
+    nexus_journal::Timestamp::parse(&format!("2026-10-01T{time}Z")).expect("time")
+}
+
+/// The species and analysis times of the unsold list, oldest first.
+fn unsold_list(m: &Model) -> Vec<(String, nexus_journal::Timestamp)> {
+    m.active().unwrap().exobio.unsold.iter().map(|r| (r.species.clone(), r.ts)).collect()
+}
+
+/// GitHub issue 20: the game logged sales at Vista Genomics with an empty sample list. Such a sale is remembered, takes
+/// nothing off the list (nothing says what it sold), says so in the feed, and is doubted only for samples analysed
+/// before it. Death loses the samples, and the doubt with them.
+#[test]
+fn exobiology_sale_logged_without_its_samples() {
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(&mut m, &[&stratum_analysed("07", 2, "10:10:00"), &stratum_analysed("02", 4, "10:20:00"), &stratum_sale("12:00:00", &[])]);
+    let gs = m.active().unwrap();
+    let bio = &gs.exobio;
+    assert_eq!(bio.unsold.len(), 2, "nothing comes off");
+    assert_eq!(bio.unlisted_sales, [ts("12:00:00")]);
+    assert_eq!(bio.doubtful_sales().collect::<Vec<_>>(), [ts("12:00:00")]);
+    assert_eq!(bio.clear_point(), Some(ts("12:00:00")), "the newest of the samples and the unlisted sales");
+    assert_eq!((bio.sold_total, bio.cleared), (0, None));
+    assert_eq!(gs.feed.back().map(|f| f.text.as_str()), Some("Sold exobiology data: the game logged the sale without its samples or their value"));
+    // A listed sale says what it paid, as before.
+    feed(&mut m, &[&stratum_sale("12:01:00", &["02"])]);
+    let gs = m.active().unwrap();
+    assert_eq!(gs.feed.back().map(|f| f.text.as_str()), Some("Sold exobiology data: 1,000,000 Cr"));
+    assert_eq!(unsold_list(&m), [("Stratum Tectonicas".to_string(), ts("10:10:00"))]);
+
+    // Death loses the samples; a sample analysed afterwards can't have been sold in the earlier sale.
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T13:00:00Z", "event":"Died", "KillerName":"Gravity" }"#]);
+    let bio = &m.active().unwrap().exobio;
+    assert!(bio.unsold.is_empty() && bio.unlisted_sales.is_empty());
+    feed(&mut m, &[&stratum_analysed("07", 2, "14:00:00")]);
+    assert_eq!(m.active().unwrap().exobio.doubtful_sales().count(), 0);
+
+    // Nor is a sale made before every sample listed was analysed in doubt.
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(&mut m, &[&stratum_sale("09:00:00", &[]), &stratum_analysed("07", 2, "10:10:00")]);
+    let bio = &m.active().unwrap().exobio;
+    assert_eq!(bio.unlisted_sales.len(), 1);
+    assert_eq!(bio.doubtful_sales().count(), 0);
+}
+
+/// Clear list (Exobiology) holds when the journals are read again: the model starts with the cleared time, so the
+/// samples analysed up to it never enter the list, the unlisted sales up to it aren't remembered, and a later sale takes
+/// the right sample off. Cleared live, the list is the same as read again.
+#[test]
+fn cleared_unsold_exobiology_list_holds_on_replay() {
+    let before = [stratum_analysed("07", 2, "10:10:00"), stratum_analysed("02", 4, "10:20:00"), stratum_sale("12:00:00", &[])];
+    let after = [stratum_analysed("07", 5, "13:00:00"), stratum_analysed("07", 6, "13:10:00"), stratum_sale("14:00:00", &["07"])];
+    fn lines(l: &[String]) -> Vec<&str> {
+        l.iter().map(String::as_str).collect()
+    }
+
+    // Cleared live, after the sale the game logged without its samples: the list empties at once.
+    let mut live = Model::default();
+    feed(&mut live, LOGIN);
+    feed(&mut live, &lines(&before));
+    let upto = live.active().unwrap().exobio.clear_point().expect("something to clear");
+    live.clear_exobio_unsold("F1", upto);
+    let bio = &live.active().unwrap().exobio;
+    assert!(bio.unsold.is_empty() && bio.unlisted_sales.is_empty());
+    assert_eq!((bio.cleared, live.exobio_cleared.get("F1")), (Some(ts("12:00:00")), Some(&ts("12:00:00"))));
+    // A Clear never goes back.
+    live.clear_exobio_unsold("F1", ts("11:00:00"));
+    assert_eq!(live.active().unwrap().exobio.cleared, Some(ts("12:00:00")));
+    // Two new Tectonicas, one sold: the older of the two comes off, not the cleared one from before.
+    feed(&mut live, &lines(&after));
+    assert_eq!(unsold_list(&live), [("Stratum Tectonicas".to_string(), ts("13:10:00"))]);
+
+    // Elite Nexus starts again: settings.json gives the model the cleared time before the journals are read.
+    let mut replayed = Model::default().with_exobio_cleared([("F1".to_string(), upto)].into());
+    feed(&mut replayed, LOGIN);
+    feed(&mut replayed, &lines(&before));
+    let bio = &replayed.active().unwrap().exobio;
+    assert!(bio.unsold.is_empty() && bio.unlisted_sales.is_empty(), "nothing up to the clear, and no doubt");
+    assert_eq!(bio.doubtful_sales().count(), 0);
+    feed(&mut replayed, &lines(&after));
+    assert_eq!(unsold_list(&replayed), unsold_list(&live));
+    assert_eq!(replayed.active().unwrap().exobio.sold_total, 1_000_000, "sold so far counts the listed sale");
+
+    // Another commander's clear isn't this one's.
+    let mut other = Model::default().with_exobio_cleared([("F2".to_string(), upto)].into());
+    feed(&mut other, LOGIN);
+    feed(&mut other, &lines(&before));
+    assert_eq!(other.active().unwrap().exobio.unsold.len(), 2);
+}
+
+/// Why the clear acts while the journals are read, not on what's shown: an old Tectonicas A cleared, a new one B, and
+/// a sale of one. Read without the clear, the sale takes A off and leaves B, so a list that only hid A would show B as
+/// unsold although it was sold.
+#[test]
+fn cleared_exobiology_sample_isnt_taken_for_a_new_one() {
+    let lines = [stratum_analysed("07", 2, "10:10:00"), stratum_analysed("07", 3, "11:00:00"), stratum_sale("12:00:00", &["07"])];
+    let lines: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let mut hidden_only = Model::default();
+    feed(&mut hidden_only, LOGIN);
+    feed(&mut hidden_only, &lines);
+    assert_eq!(unsold_list(&hidden_only), [("Stratum Tectonicas".to_string(), ts("11:00:00"))]);
+
+    let mut m = Model::default().with_exobio_cleared([("F1".to_string(), ts("10:10:00"))].into());
+    feed(&mut m, LOGIN);
+    feed(&mut m, &lines);
+    assert!(unsold_list(&m).is_empty(), "the sale took B, the only Tectonicas listed");
+}
+
 #[test]
 fn exobiology_scan_in_another_language_keeps_value_and_colony_range() {
     // The display names are in the game's language (made up here); the codex symbols are the same in every language.

@@ -1,11 +1,14 @@
 use crate::theme::{display, pal, size};
-use crate::widgets::{self, GAP, badge, card_tinted, cards, credits, empty, footnote, kv, short_credits, th};
+use crate::widgets::{self, GAP, badge, button, card_tinted, cards, credits, empty, footnote, kv, short_credits, th};
 use egui::{Color32, Grid, Pos2, RichText, Sense, Stroke, Ui, Vec2};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
-use nexus_model::exobio::SampleInProgress;
+use nexus_journal::Timestamp;
+use nexus_model::exobio::{ExoBio, SampleInProgress};
 use nexus_model::location::surface_distance;
 use nexus_model::GameState;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::jobs::Slot;
 use crate::pages::navigation::PlannedRoute;
@@ -85,6 +88,27 @@ pub struct ExobioUi {
     known: KnownSpecies,
     /// Start a search on the first frame (screenshot runs: `--tab untouched` / `--tab known`).
     autorun: bool,
+    /// Clear list was clicked on the unsold list: it asks before clearing.
+    confirm_clear: bool,
+}
+
+/// What the Exobiology page keeps in settings.json.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExobioPrefs {
+    /// How far each commander cleared their unsold Vista Genomics list (by FID, or by name where the journals give
+    /// none): the newest sample listed then, or the newest sale the game logged without its samples. The list is
+    /// rebuilt from the journals at every start, and the model starts with this, so those samples stay off it; the
+    /// journals aren't touched.
+    pub cleared: BTreeMap<String, Timestamp>,
+}
+
+impl ExobioPrefs {
+    /// Keeps that `cmdr` cleared the list up to `upto`; never an earlier time than a Clear before.
+    pub fn clear(&mut self, cmdr: &str, upto: Timestamp) {
+        let kept = self.cleared.entry(cmdr.to_string()).or_insert(upto);
+        *kept = (*kept).max(upto);
+    }
 }
 
 impl Default for ExobioUi {
@@ -101,6 +125,7 @@ impl Default for ExobioUi {
             searched: None,
             known: KnownSpecies { radius: 50, systems: 25, min_value: 5_000_000, show_options: false, job: Slot::default() },
             autorun: false,
+            confirm_clear: false,
         }
     }
 }
@@ -111,13 +136,14 @@ const ROWS: usize = 25;
 const TOUR_PLANETS: usize = 15;
 
 impl ExobioUi {
-    /// Opens on `tab` ("untouched" or "known": Find planets with that strategy); `autorun` starts
-    /// its search on the first frame (screenshot runs).
+    /// Opens on `tab` ("untouched" or "known": Find planets with that strategy; "clear-unsold": This system, with the
+    /// unsold list's Clear list asking to confirm); `autorun` starts its search on the first frame (screenshot runs).
     pub fn new(tab: Option<&str>, autorun: bool) -> Self {
         let mut ui = ExobioUi::default();
         match tab {
             Some("untouched") => (ui.tab, ui.strategy, ui.autorun) = (Tab::Find, Strategy::Bonus, autorun),
             Some("known") => (ui.tab, ui.strategy, ui.autorun) = (Tab::Find, Strategy::Known, autorun),
+            Some("clear-unsold") => ui.confirm_clear = true,
             _ => {}
         }
         ui
@@ -130,6 +156,9 @@ pub enum ExoAction {
     PlotTo(String),
     /// Make this the active route on Navigation.
     Follow(PlannedRoute),
+    /// Clear the active commander's unsold list up to this time ([`ExoBio::clear_point`]), in the model and in the
+    /// settings.
+    ClearUnsold(Timestamp),
 }
 
 pub fn show(ui: &mut Ui, gs: &GameState, st: &mut ExobioUi, spansh: &nexus_spansh::Spansh, rt: &tokio::runtime::Handle, db: Option<&nexus_galaxy::GalaxyDb>) -> Option<ExoAction> {
@@ -139,10 +168,10 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut ExobioUi, spansh: &nexus_spans
     ui.add_space(GAP);
     match st.tab {
         Tab::ThisSystem => {
-            show_page(ui, gs);
+            let clear = show_page(ui, gs, &mut st.confirm_clear);
             ui.add_space(GAP);
             bio_bodies(ui, gs);
-            None
+            clear.map(ExoAction::ClearUnsold)
         }
         Tab::Find => {
             widgets::segmented(ui, &mut st.strategy, &[(Strategy::Bonus, "Bonus hunt: no one's been"), (Strategy::Known, "Sure value: species on record")]);
@@ -492,11 +521,12 @@ fn known_species(ui: &mut Ui, gs: &GameState, st: &mut ExobioUi, spansh: &nexus_
     action
 }
 
-/// Sampling and unsold data.
-fn show_page(ui: &mut Ui, gs: &GameState) {
+/// Sampling and unsold data. Returns the time to clear the unsold list up to, once Clear list is confirmed.
+fn show_page(ui: &mut Ui, gs: &GameState, confirm_clear: &mut bool) -> Option<Timestamp> {
     let pos = gs.status.as_ref().and_then(|s| s.lat_lon());
     let radius = gs.status.as_ref().and_then(|s| s.planet_radius);
     let heading = gs.status.as_ref().and_then(|s| s.heading);
+    let mut clear = None;
 
     cards(ui, 2, 340.0, |c| {
         c.add(|ui| {
@@ -508,25 +538,80 @@ fn show_page(ui: &mut Ui, gs: &GameState) {
                 }
             });
         });
-        c.add(|ui| unsold(ui, gs));
+        c.add(|ui| clear = unsold(ui, &gs.exobio, confirm_clear));
     });
+    clear
 }
 
-fn unsold(ui: &mut Ui, gs: &GameState) {
+/// What Clear list does, and doesn't (its tooltip, and the text under its question).
+const CLEAR_TIP: &str = "This changes only this list in Elite Nexus, nothing in the game or its journals, and it stays cleared when Elite Nexus starts again. Clear it when Vista Genomics has nothing left to sell. \"Sold so far\" can't include sales the game didn't list.";
+
+/// What the unsold list says when the game logged sales without their samples (`sales`, oldest first, at least one),
+/// after the oldest sample listed was analysed.
+fn unlisted_note(sales: &[Timestamp]) -> String {
+    let date = |t: &Timestamp| t.to_local_string("%-d %b %Y");
+    let (first, last) = (sales.first().map(date).unwrap_or_default(), sales.last().map(date).unwrap_or_default());
+    let when = if first == last { format!("on {first}") } else { format!("between {first} and {last}") };
+    let logged = match sales.len() {
+        1 => format!("a sale {when} without listing its samples"),
+        n => format!("{n} sales {when} without listing their samples"),
+    };
+    format!("The game logged {logged}, so Elite Nexus can't tell which of these were sold, or for how much. If Vista Genomics has nothing left to sell, use Clear list.")
+}
+
+/// The question Clear list asks before it clears `n` samples.
+fn clear_question(n: usize) -> String {
+    match n {
+        1 => "Clear this sample from the list?".to_string(),
+        n => format!("Clear these {n} samples from the list?"),
+    }
+}
+
+/// The unsold Vista Genomics list, with Clear list for samples sold in a sale the game logged without them. Returns the
+/// time to clear the list up to, once the commander confirms.
+fn unsold(ui: &mut Ui, bio: &ExoBio, confirm: &mut bool) -> Option<Timestamp> {
+        let mut clear = None;
         card_tinted(ui, icon::FLASK, "Unsold Vista Genomics data", pal::GOLD, |ui| {
-            let total = gs.exobio.unsold_value();
+            let total = bio.unsold_value();
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 22.0;
                 crate::widgets::stat(ui, "estimated payout", short_credits(total), pal::GOLD);
-                crate::widgets::stat(ui, "samples", gs.exobio.unsold.len().to_string(), pal::TEXT);
-                crate::widgets::stat(ui, "sold so far", short_credits(gs.exobio.sold_total), pal::DIM);
+                crate::widgets::stat(ui, "samples", bio.unsold.len().to_string(), pal::TEXT);
+                crate::widgets::stat(ui, "sold so far", short_credits(bio.sold_total), pal::DIM);
             });
             ui.add_space(4.0);
-            if gs.exobio.unsold.is_empty() {
-                ui.label(RichText::new("Everything sold.").color(pal::DIM));
+            if bio.unsold.is_empty() {
+                *confirm = false;
+                let text = if bio.cleared.is_some() { "Nothing unsold since you cleared this list." } else { "Everything sold." };
+                ui.label(RichText::new(text).color(pal::DIM));
             } else {
+                let doubtful: Vec<Timestamp> = bio.doubtful_sales().collect();
+                if !doubtful.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new(icon::WARNING).color(pal::WARN));
+                        ui.add(egui::Label::new(RichText::new(unlisted_note(&doubtful)).color(pal::TEXT)).wrap());
+                    });
+                    ui.add_space(6.0);
+                }
+                if *confirm {
+                    ui.label(RichText::new(clear_question(bio.unsold.len())).color(pal::TEXT));
+                    footnote(ui, CLEAR_TIP);
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        if button(ui, "Clear").clicked() {
+                            clear = bio.clear_point();
+                            *confirm = false;
+                        }
+                        if button(ui, "Cancel").clicked() {
+                            *confirm = false;
+                        }
+                    });
+                } else if button(ui, "Clear list").on_hover_text(CLEAR_TIP).clicked() {
+                    *confirm = true;
+                }
+                ui.add_space(8.0);
                 Grid::new("unsoldbio").max_col_width(ui.available_width()).num_columns(3).striped(true).spacing([10.0, 3.0]).show(ui, |ui| {
-                    for r in gs.exobio.unsold.iter().rev() {
+                    for r in bio.unsold.iter().rev() {
                         ui.label(RichText::new(&r.species).color(pal::TEXT));
                         ui.label(RichText::new(&r.body_name).color(pal::DIM));
                         let mut t = RichText::new(short_credits(r.expected_payout())).color(pal::GOLD);
@@ -541,6 +626,7 @@ fn unsold(ui: &mut Ui, gs: &GameState) {
             ui.add_space(4.0);
             ui.add(egui::Label::new(RichText::new("Organic data is lost if you die. Sell it at Vista Genomics.").size(size::FOOTNOTE).color(pal::DIM)).wrap());
         });
+        clear
 }
 
 pub fn sampling(ui: &mut Ui, cur: &SampleInProgress, pos: Option<(f64, f64)>, radius: Option<f64>, heading: Option<f64>) {
@@ -739,4 +825,132 @@ fn bio_bodies(ui: &mut Ui, gs: &GameState) {
         });
         let _ = surface_distance;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nexus_model::exobio::BioRecord;
+
+    fn record(species: &str, ts: i64) -> BioRecord {
+        BioRecord {
+            ts: Timestamp(ts),
+            genus: "Stratum".into(),
+            species: species.into(),
+            species_symbol: String::new(),
+            variant: None,
+            system_address: 100,
+            system: "Alpha".into(),
+            body_id: 2,
+            body_name: "Alpha 2".into(),
+            value: 19_010_800,
+            bonus_expected: false,
+        }
+    }
+
+    #[test]
+    fn says_what_the_game_left_out() {
+        let day = |t: Timestamp| t.to_local_string("%-d %b %Y");
+        // Noon UTC on 12 and 14 November 2026.
+        let (a, b) = (Timestamp(1_794_484_800), Timestamp(1_794_657_600));
+        assert_eq!(
+            unlisted_note(&[a]),
+            format!("The game logged a sale on {} without listing its samples, so Elite Nexus can't tell which of these were sold, or for how much. If Vista Genomics has nothing left to sell, use Clear list.", day(a))
+        );
+        assert!(unlisted_note(&[a, Timestamp(a.0 + 6), Timestamp(a.0 + 12)]).starts_with(&format!("The game logged 3 sales on {} without listing their samples,", day(a))));
+        assert!(unlisted_note(&[a, b]).starts_with(&format!("The game logged 2 sales between {} and {} without", day(a), day(b))));
+        assert_eq!(clear_question(1), "Clear this sample from the list?");
+        assert_eq!(clear_question(74), "Clear these 74 samples from the list?");
+    }
+
+    /// The unsold card drawn headless, with its buttons and text found the way a screen reader finds them.
+    struct Card {
+        ctx: egui::Context,
+        bio: ExoBio,
+        confirm: bool,
+        /// What a confirmed Clear returned.
+        cleared: Option<Timestamp>,
+        /// The buttons of the last drawing: label and centre.
+        buttons: Vec<(String, egui::Pos2)>,
+        /// Every text of the last drawing.
+        texts: Vec<String>,
+    }
+
+    impl Card {
+        fn new(bio: ExoBio) -> Card {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            ctx.enable_accesskit();
+            let mut card = Card { ctx, bio, confirm: false, cleared: None, buttons: Vec::new(), texts: Vec::new() };
+            card.draw(Vec::new());
+            card
+        }
+
+        fn draw(&mut self, events: Vec<egui::Event>) {
+            let input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(Pos2::ZERO, Vec2::new(700.0, 900.0))), events, ..Default::default() };
+            let Card { ctx, bio, confirm, cleared, .. } = self;
+            let mut out = ctx.run_ui(input, |ui| {
+                if let Some(t) = unsold(ui, bio, confirm) {
+                    *cleared = Some(t);
+                }
+            });
+            out.textures_delta.clear();
+            let nodes = out.platform_output.accesskit_update.map(|u| u.nodes).unwrap_or_default();
+            self.buttons = nodes
+                .iter()
+                .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+                .filter_map(|(_, n)| Some((n.label()?.to_string(), n.bounds()?)))
+                .map(|(label, b)| (label, egui::pos2(((b.x0 + b.x1) / 2.0) as f32, ((b.y0 + b.y1) / 2.0) as f32)))
+                .collect();
+            self.texts = nodes.iter().filter_map(|(_, n)| n.label().or_else(|| n.value()).map(str::to_string)).collect();
+        }
+
+        fn buttons(&self) -> Vec<&str> {
+            let mut labels: Vec<&str> = self.buttons.iter().map(|(l, _)| l.as_str()).collect();
+            labels.sort_unstable();
+            labels
+        }
+
+        fn shows(&self, text: &str) -> bool {
+            self.texts.iter().any(|t| t.contains(text))
+        }
+
+        fn click(&mut self, label: &str) {
+            let pos = self.buttons.iter().find(|(l, _)| l == label).unwrap_or_else(|| panic!("no {label} button in {:?}", self.buttons)).1;
+            let button = |pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::default() };
+            self.draw(vec![egui::Event::PointerMoved(pos), button(true)]);
+            self.draw(vec![button(false)]);
+            self.draw(Vec::new());
+        }
+    }
+
+    /// Clear list asks first; Cancel leaves the list alone; Clear gives the newest of the samples and the unlisted
+    /// sales, and the list cleared there is empty and says so.
+    #[test]
+    fn the_unsold_card_clicked_through() {
+        let bio = ExoBio { unsold: vec![record("Stratum Tectonicas", 100), record("Bacterium Cerbrus", 200)], unlisted_sales: vec![Timestamp(300)], ..Default::default() };
+        let mut card = Card::new(bio);
+        assert!(card.shows("The game logged a sale on"), "{:?}", card.texts);
+        assert_eq!(card.buttons(), ["Clear list"]);
+        card.click("Clear list");
+        assert!(card.shows("Clear these 2 samples from the list?"), "{:?}", card.texts);
+        assert!(card.shows("nothing in the game or its journals"));
+        assert_eq!(card.buttons(), ["Cancel", "Clear"]);
+        card.click("Cancel");
+        assert_eq!((card.buttons(), card.cleared), (vec!["Clear list"], None));
+        card.click("Clear list");
+        card.click("Clear");
+        assert_eq!(card.cleared, Some(Timestamp(300)));
+        // The app clears the model's list there.
+        card.bio.clear(Timestamp(300));
+        card.draw(Vec::new());
+        assert!(card.buttons().is_empty());
+        assert!(card.shows("Nothing unsold since you cleared this list."), "{:?}", card.texts);
+
+        // No unlisted sale: Clear list is there all the same, without the note.
+        let card = Card::new(ExoBio { unsold: vec![record("Stratum Tectonicas", 100)], ..Default::default() });
+        assert_eq!(card.buttons(), ["Clear list"]);
+        assert!(!card.shows("The game logged"));
+        assert!(Card::new(ExoBio::default()).shows("Everything sold."));
+    }
 }

@@ -723,7 +723,12 @@ impl GameState {
                     self.bgs.on_data_sale(BgsKind::Exobiology, total, ts, &here);
                 }
                 self.money(ts, LedgerCategory::Exobiology, total, format!("{} samples", s.bio_data.len()));
-                self.feed(ts, "SellOrganicData", format!("Sold exobiology data: {} Cr", group_digits(total)));
+                let text = if s.bio_data.is_empty() {
+                    "Sold exobiology data: the game logged the sale without its samples or their value".to_string()
+                } else {
+                    format!("Sold exobiology data: {} Cr", group_digits(total))
+                };
+                self.feed(ts, "SellOrganicData", text);
             }
             Event::MultiSellExplorationData(s) => {
                 let names: Vec<String> = s.discovered.iter().map(|d| d.system_name.clone()).collect();
@@ -1531,12 +1536,31 @@ pub struct Model {
     /// Rhino drops recorded on earlier runs ([`Mining::drops`]), set before the journal is read: every commander's
     /// state starts with them.
     pub mining_drops: BTreeMap<Timestamp, SiteKey>,
+    /// How far each commander cleared their unsold exobiology list (by the key [`Model::commanders`] uses: the FID, or
+    /// the name in journals that give none), set before the journal is read: each commander's state starts with theirs
+    /// ([`ExoBio::cleared`]).
+    pub exobio_cleared: BTreeMap<String, Timestamp>,
 }
 
 impl Model {
     /// A model that gives every commander the Rhino drops recorded on earlier runs.
     pub fn with_mining_drops(drops: BTreeMap<Timestamp, SiteKey>) -> Model {
         Model { mining_drops: drops, ..Default::default() }
+    }
+
+    /// Gives each commander how far they cleared their unsold exobiology list, before the journal is read.
+    pub fn with_exobio_cleared(self, cleared: BTreeMap<String, Timestamp>) -> Model {
+        Model { exobio_cleared: cleared, ..self }
+    }
+
+    /// Clears `cmdr`'s unsold exobiology list up to `upto` (Exobiology › Clear list; [`ExoBio::clear`]) and keeps how
+    /// far for a commander's state made later.
+    pub fn clear_exobio_unsold(&mut self, cmdr: &str, upto: Timestamp) {
+        if let Some(gs) = self.commanders.get_mut(cmdr) {
+            gs.exobio.clear(upto);
+        }
+        let kept = self.exobio_cleared.entry(cmdr.to_string()).or_insert(upto);
+        *kept = (*kept).max(upto);
     }
 
     pub fn active(&self) -> Option<&GameState> {
@@ -1553,7 +1577,12 @@ impl Model {
             return;
         }
         let drops = &self.mining_drops;
-        let gs = self.commanders.entry(key.clone()).or_insert_with(|| GameState { mining: Mining { drops: drops.clone(), ..Default::default() }, ..Default::default() });
+        let cleared = self.exobio_cleared.get(&key).copied();
+        let gs = self.commanders.entry(key.clone()).or_insert_with(|| GameState {
+            mining: Mining { drops: drops.clone(), ..Default::default() },
+            exobio: ExoBio { cleared, ..Default::default() },
+            ..Default::default()
+        });
         if let Some(h) = self.pending_header.take() {
             gs.apply_header(&h);
         }

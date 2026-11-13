@@ -11,6 +11,13 @@ release time that section becomes the new version and the release workflow publi
   are in the game's language). A sale now takes each sample off by the species' codex id, which is the same in every
   language. Samples left behind by earlier sales come off the next time Elite Nexus starts, since the list is rebuilt
   from your journals.
+- **Exobiology › Unsold Vista Genomics data: Clear list** (reported by WadRail in GitHub issue #20): the game sometimes
+  logs a sale at Vista Genomics without listing the samples it sold (81 samples sold in four pages: three of the four
+  sales listed none). Those samples stayed on the list, and in the estimated payout, for good: no journal says which
+  they were. The card now says when the game logged such a sale, and **Clear list** (it asks first) empties the list
+  once Vista Genomics has nothing left to sell. It changes only this list in Elite Nexus, nothing in the game or its
+  journals, and the list stays cleared when Elite Nexus starts again; samples you analyse afterwards are listed as
+  usual. The activity feed now says such a sale came without its samples, instead of "Sold exobiology data: 0 Cr".
 - **Exobiology › Sampling** in a game that names species in another language: a sample's value (and with it the
   estimated payout) and its colony range are now found by the species' codex id. Before, they were looked up by the
   English name, so another language left the value at 0 and the sampling radar without its colony-range circle.
