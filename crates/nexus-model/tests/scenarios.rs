@@ -206,6 +206,60 @@ fn exobiology_scan_in_another_language_keeps_value_and_colony_range() {
     assert_eq!(rec.value, 19_010_800);
 }
 
+/// The genera a DSS scan reveals are named in the game's language, but the exobiology data is English: predictions
+/// take each genus by its codex symbol, so every language gets the predictions English gets, and English gets what it
+/// got when they were taken by name.
+#[test]
+fn dss_genera_predict_the_same_in_every_language() {
+    use nexus_data::bio_predict as bp;
+    let body_with = |stratum: &str, bacterium: &str, unknown: &str| {
+        let mut m = Model::default();
+        feed(&mut m, LOGIN);
+        let dss = format!(
+            r#"{{ "timestamp":"2026-10-01T10:20:00Z", "event":"SAASignalsFound", "BodyName":"Alpha 2", "SystemAddress":100, "BodyID":2, "Signals":[ {{ "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":3 }} ], "Genuses":[ {{ "Genus":"$Codex_Ent_Stratum_Genus_Name;", "Genus_Localised":"{stratum}" }}, {{ "Genus":"$Codex_Ent_Bacterial_Genus_Name;", "Genus_Localised":"{bacterium}" }}, {{ "Genus":"$Codex_Ent_NotInTheData_Genus_Name;", "Genus_Localised":"{unknown}" }} ] }}"#
+        );
+        feed(
+            &mut m,
+            &[
+                r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"AutoScan", "BodyName":"Alpha", "BodyID":0, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":0.0, "StarType":"K", "Subclass":3, "StellarMass":0.7, "Luminosity":"V", "WasDiscovered":true, "WasMapped":false }"#,
+                r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 2", "BodyID":2, "Parents":[ { "Star":0 } ], "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":10.0, "PlanetClass":"Rocky body", "Atmosphere":"thin carbon dioxide atmosphere", "AtmosphereType":"CarbonDioxide", "AtmosphereComposition":[ { "Name":"CarbonDioxide", "Percent":99.0 }, { "Name":"SulphurDioxide", "Percent":1.0 } ], "Volcanism":"", "MassEM":0.1, "Radius":2000000.0, "SurfaceGravity":2.5, "SurfaceTemperature":180.0, "SurfacePressure":3000.0, "Landable":true, "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
+                &dss,
+            ],
+        );
+        m
+    };
+    let body = |m: &Model| m.active().unwrap().exploration.systems[&100].bodies[&2].clone();
+    let english = body_with("Stratum", "Bacterium", "Novelty");
+    let german = body_with("Stratum (DE)", "Bakterium", "Neuheit");
+    let (en, de) = (body(&english), body(&german));
+
+    // The names stay as the game wrote them, for showing.
+    assert_eq!(de.genuses, ["Stratum (DE)", "Bakterium", "Neuheit"]);
+    assert_eq!(de.dss_genus(1).map(|g| g.name), Some("Bacterium"));
+    assert!(de.dss_genus(2).is_none(), "a genus the data doesn't know");
+
+    // English: exactly what the names gave before.
+    let sys = &english.active().unwrap().exploration.systems[&100];
+    let facts = nexus_model::exploration::body_facts(&en, sys, None).expect("facts");
+    assert_eq!(en.predictions, bp::predict(&facts, &en.genuses), "English predictions unchanged");
+    assert!(en.predictions.iter().any(|p| p.genus == "Stratum" && p.value > 0));
+    assert!(en.predictions.iter().any(|p| p.species == "Novelty (unknown species)"));
+
+    // Another language: the same species, values and chances as English; the unknown genus keeps the game's name.
+    let strip = |b: &nexus_model::exploration::Body| -> Vec<(String, i64, u32)> {
+        b.predictions.iter().filter(|p| !p.species.ends_with("(unknown species)")).map(|p| (p.species.clone(), p.value, (p.likelihood * 1000.0) as u32)).collect()
+    };
+    assert!(!strip(&de).is_empty());
+    assert_eq!(strip(&de), strip(&en));
+    assert!(de.predictions.iter().any(|p| p.species == "Neuheit (unknown species)"));
+    assert_eq!(de.predicted_value(false), en.predicted_value(false));
+
+    // What taking them by name did in another language: no species, nothing to earn.
+    let sys = &german.active().unwrap().exploration.systems[&100];
+    let by_name = bp::predict(&nexus_model::exploration::body_facts(&de, sys, None).expect("facts"), &de.genuses);
+    assert!(by_name.iter().all(|p| p.species.ends_with("(unknown species)") && p.value == 0));
+}
+
 #[test]
 fn carrier_transfer_is_not_spending() {
     let mut m = Model::default();

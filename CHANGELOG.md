@@ -6,7 +6,7 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Fixed
-- **Exobiology › Unsold Vista Genomics data** (reported by WadRail in GitHub issue #20): samples you had sold could
+- **Exobiology › Unsold Vista Genomics data** (found while looking into GitHub issue #20): samples you had sold could
   stay on the list, and in the estimated payout, when the sale named a species differently from the scan (the names
   are in the game's language). A sale now takes each sample off by the species' codex id, which is the same in every
   language. Samples left behind by earlier sales come off the next time Elite Nexus starts, since the list is rebuilt
@@ -14,6 +14,11 @@ release time that section becomes the new version and the release workflow publi
 - **Exobiology › Sampling** in a game that names species in another language: a sample's value (and with it the
   estimated payout) and its colony range are now found by the species' codex id. Before, they were looked up by the
   English name, so another language left the value at 0 and the sampling radar without its colony-range circle.
+- **Predicted species after a DSS scan** in a game that names genera in another language (Exobiology, Exploration,
+  Ask): the predictions take each genus the scan found by its codex id, so they name the likely species and their
+  values as they do in English. Before, every genus came out as "(unknown species)" worth nothing, and the body's
+  expected value with it. In English, the Exobiology page now also shows its guess for Brain Trees and the other
+  genera the game names in the plural.
 
 ## [0.8.1] - 2026-11-11
 

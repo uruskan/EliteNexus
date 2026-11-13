@@ -703,7 +703,7 @@ fn bio_bodies(ui: &mut Ui, gs: &GameState) {
                                     badge(ui, &format!("{} {:.0}%", p.species, p.likelihood * 100.0), pal::FAINT).on_hover_text(format!("{} Cr · colony {} m", nexus_data::names::group_digits(p.value), p.colony_range_m));
                                 }
                             }
-                            for g in &b.genuses {
+                            for (i, g) in b.genuses.iter().enumerate() {
                                 match b.organics.iter().find(|o| o.genus.eq_ignore_ascii_case(g)) {
                                     Some(o) if o.analysed => {
                                         badge(ui, &format!("{} {}", icon::CHECK, o.species), pal::GOOD);
@@ -712,9 +712,12 @@ fn bio_bodies(ui: &mut Ui, gs: &GameState) {
                                         badge(ui, &format!("{} {}/3", o.species, o.samples), pal::WARN);
                                     }
                                     None => {
-                                        // Not sampled yet: show the most likely species of this genus.
-                                        let guess = b.predictions.iter().find(|p| p.genus.eq_ignore_ascii_case(g));
-                                        let range = nexus_data::exobio::colony_range_m(g).map(|r| format!(" · {r} m")).unwrap_or_default();
+                                        // Not sampled yet: show the most likely species of this genus. Predictions name genera
+                                        // as the exobiology data does (English); `g` is in the game's language.
+                                        let known = b.dss_genus(i);
+                                        let key = known.map_or(g.as_str(), |x| x.name);
+                                        let guess = b.predictions.iter().find(|p| p.genus.eq_ignore_ascii_case(key));
+                                        let range = known.map(|x| x.colony_range_m).or_else(|| nexus_data::exobio::colony_range_m(g)).map(|r| format!(" · {r} m")).unwrap_or_default();
                                         match guess {
                                             Some(p) => badge(ui, &format!("{}? {}{range}", p.species, short_credits(p.value)), pal::CYAN),
                                             None => badge(ui, &format!("{g}{range}"), pal::CYAN),

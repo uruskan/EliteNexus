@@ -1408,7 +1408,7 @@ impl Planet<'_> {
     fn genera(&self) -> Vec<String> {
         [
             self.db.map(|d| d.genera.clone()),
-            self.own.map(|o| o.genuses.clone()),
+            self.own.map(|o| o.genera_for_prediction()),
             self.sp.map(|s| s.genera.clone()),
         ]
         .into_iter()

@@ -121,7 +121,11 @@ pub struct Body {
     pub geo_signals: u32,
     /// Planetary mining locations (Rhino surface mining), from the FSS or DSS.
     pub mining_locations: u32,
+    /// Genera a DSS scan revealed, as the game's language names them (`Genus_Localised`): for showing.
     pub genuses: Vec<String>,
+    /// The same genera's codex symbols (`$Codex_Ent_Stratum_Genus_Name;`), in the same order: the same in every
+    /// language, so the exobiology data (English) is looked up by these. See [`Body::dss_genus`].
+    pub genus_symbols: Vec<String>,
     pub organics: Vec<OrganicSpecies>,
     pub footfall: bool,
     pub value: BodyValue,
@@ -180,6 +184,7 @@ impl Body {
             geo_signals: 0,
             mining_locations: 0,
             genuses: Vec::new(),
+            genus_symbols: Vec::new(),
             organics: Vec::new(),
             footfall: false,
             value: BodyValue::default(),
@@ -752,6 +757,7 @@ impl Exploration {
                 let name = g.genus_localised.clone().unwrap_or_else(|| nexus_data::names::humanize_symbol(&g.genus));
                 if !body.genuses.contains(&name) {
                     body.genuses.push(name);
+                    body.genus_symbols.push(g.genus.clone());
                 }
             }
         }
@@ -963,7 +969,7 @@ impl Exploration {
                 continue;
             }
             if let Some(facts) = body_facts(b, sys, region.clone()) {
-                results.push((b.id, bp::predict(&facts, &b.genuses)));
+                results.push((b.id, bp::predict(&facts, &b.genera_for_prediction())));
             }
         }
         if let Some(sys) = self.systems.get_mut(&address) {
@@ -980,6 +986,28 @@ impl Body {
     /// Expected Vista Genomics value of the body: likelihood-weighted over all predictions.
     pub fn predicted_value(&self, bonus: bool) -> i64 {
         self.predictions.iter().map(|p| bp::expected_value(p, bonus)).sum()
+    }
+
+    /// The exobiology data's genus for the DSS genus at `i` in [`Body::genuses`]: by its codex symbol, which is the same
+    /// in every language, else by its name (English names only).
+    pub fn dss_genus(&self, i: usize) -> Option<&'static nexus_data::exobio::Genus> {
+        self.genus_symbols
+            .get(i)
+            .and_then(|s| nexus_data::exobio::genus(s))
+            .or_else(|| self.genuses.get(i).and_then(|n| nexus_data::exobio::genus(n)))
+    }
+
+    /// The DSS genera to predict species from: each one's codex symbol where the exobiology data knows it, else its
+    /// name as the game wrote it (which then shows as a genus with no predictable species, as before).
+    pub fn genera_for_prediction(&self) -> Vec<String> {
+        self.genuses
+            .iter()
+            .enumerate()
+            .map(|(i, name)| match self.genus_symbols.get(i) {
+                Some(s) if nexus_data::exobio::genus(s).is_some() => s.clone(),
+                _ => name.clone(),
+            })
+            .collect()
     }
 
     /// Most likely species per genus (what you'll probably find), best first.
