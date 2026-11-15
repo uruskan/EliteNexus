@@ -67,6 +67,11 @@ release time that section becomes the new version and the release workflow publi
   nothing. History shows such a system as **Partly sold**, and as sold if the new data is lost with the ship. The same
   goes after a loss: a system whose data went with the ship counts only what you scanned there since, not again what
   was lost.
+- **Missions › Active missions**: a mission whose objective you had completed kept showing its original deadline,
+  then "expired" in red, even when the game had dropped that deadline (it pays such a mission when you hand it in,
+  after that deadline too). When the game lists a completed mission with no deadline at login, it now shows no expiry;
+  Progress still says "Complete — hand in". Some missions, such as on-foot ones, keep their deadline after you complete
+  the objective; the game lists that at login, and the page shows it.
 
 ## [0.8.1] - 2026-11-11
 

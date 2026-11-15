@@ -122,6 +122,10 @@ impl Missions {
             });
             if s.expires > 0 {
                 e.expiry = Some(Timestamp(ts.0 + s.expires));
+            } else if e.redirected {
+                // Its objective is done and the game lists it with no deadline: it's paid when handed in, after its
+                // original deadline too. (On-foot missions keep a deadline after their redirect, and are listed with it.)
+                e.expiry = None;
             }
         }
     }
@@ -315,6 +319,28 @@ mod tests {
         assert_eq!(stacks[0].kills_total, 5);
         assert_eq!(stacks[0].kills_remaining, 2);
         assert_eq!(stacks[0].total_reward, 30_000_000);
+    }
+
+    /// The login snapshot says which deadlines still run. A redirected mission it lists with `Expires` 0 has none any
+    /// more; one it lists with time left keeps that (on-foot missions keep theirs after a redirect); a mission not
+    /// redirected keeps its own, so past it, it has expired.
+    #[test]
+    fn the_login_snapshot_says_which_deadlines_still_run() {
+        let deadline = Timestamp::parse("2026-11-01T12:00:00Z").expect("time");
+        let mut ms = Missions::default();
+        for (id, name) in [(1, "Mission_Massacre"), (2, "Mission_OnFoot_Heist_POI_002"), (3, "Mission_Courier")] {
+            let a = ev::MissionAccepted { name: name.into(), mission_id: id, expiry: Some("2026-11-01T12:00:00Z".into()), ..Default::default() };
+            ms.on_accepted(&a, Timestamp(deadline.0 - 3600), "Sys", None);
+        }
+        for id in [1, 2] {
+            ms.on_redirected(&ev::MissionRedirected { mission_id: id, ..Default::default() });
+        }
+        let login = Timestamp(deadline.0 + 1800);
+        let listed = |id, expires| ev::MissionSummary { mission_id: id, expires, ..Default::default() };
+        ms.on_snapshot(&ev::Missions { active: vec![listed(1, 0), listed(2, 5000), listed(3, 0)], ..Default::default() }, login);
+        assert_eq!(ms.active[&1].seconds_left(login), None, "done, and the game dropped its deadline");
+        assert_eq!(ms.active[&2].seconds_left(login), Some(5000), "the game still runs its deadline");
+        assert_eq!(ms.active[&3].seconds_left(login), Some(-1800), "not done: past its deadline");
     }
 
     /// A German client's mission: the commodity shows in German, lookups go by the journal's symbol.
