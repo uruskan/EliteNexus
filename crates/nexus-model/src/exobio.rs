@@ -169,6 +169,8 @@ impl ExoBio {
     /// Each sold sample takes one matching record off the unsold list. The match is on the species' codex symbol, which
     /// the game writes the same in every language; the display name can differ between the scan and the sale, and a
     /// match on it alone left sold samples listed as unsold. The name is only the fallback, for a sale without a symbol.
+    /// Of the records that match, the first whose expected first-logged bonus agrees with the sale's `Bonus` comes off,
+    /// or else the first: a sale of some of a species' samples would otherwise leave a bonus listed that was paid.
     ///
     /// The game sometimes logs a sale with no samples in it (an empty `BioData`; seen when a commander sold many pages
     /// of samples at once). That sale is remembered in [`Self::unlisted_sales`] and takes nothing off the list: nothing
@@ -179,12 +181,13 @@ impl ExoBio {
         }
         let total: i64 = s.bio_data.iter().map(|b| b.value + b.bonus).sum();
         for sold in &s.bio_data {
+            let bonus = sold.bonus > 0;
             let by_symbol = || {
-                (!sold.species.is_empty()).then(|| self.unsold.iter().position(|u| u.species_symbol.eq_ignore_ascii_case(&sold.species))).flatten()
+                (!sold.species.is_empty()).then(|| matching(&self.unsold, bonus, |u| u.species_symbol.eq_ignore_ascii_case(&sold.species))).flatten()
             };
             let by_name = || {
                 let name = sold.species_localised.as_deref().unwrap_or(&sold.species);
-                self.unsold.iter().position(|u| u.species.eq_ignore_ascii_case(name))
+                matching(&self.unsold, bonus, |u| u.species.eq_ignore_ascii_case(name))
             };
             if let Some(i) = by_symbol().or_else(by_name) {
                 self.unsold.remove(i);
@@ -236,5 +239,70 @@ impl ExoBio {
         self.cleared = Some(upto);
         self.unsold.retain(|r| r.ts > upto);
         self.unlisted_sales.retain(|t| *t > upto);
+    }
+}
+
+/// The first record `is` takes whose expected first-logged bonus is `bonus`, or else the first it takes.
+fn matching(unsold: &[BioRecord], bonus: bool, is: impl Fn(&BioRecord) -> bool) -> Option<usize> {
+    unsold.iter().position(|u| is(u) && u.bonus_expected == bonus).or_else(|| unsold.iter().position(is))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const TECTONICAS: i64 = 19_010_800;
+
+    /// A Stratum Tectonicas analysed on `body_id` at `ts`, with the first-logged bonus expected or not.
+    fn tectonicas(body_id: u32, ts: i64, bonus_expected: bool) -> BioRecord {
+        BioRecord {
+            ts: Timestamp(ts),
+            genus: "Stratum".into(),
+            species: "Stratum Tectonicas".into(),
+            species_symbol: "$Codex_Ent_Stratum_07_Name;".into(),
+            variant: None,
+            system_address: 100,
+            system: "Alpha".into(),
+            body_id,
+            body_name: format!("Alpha {body_id}"),
+            value: TECTONICAS,
+            bonus_expected,
+        }
+    }
+
+    /// A sale of one Tectonicas, paid with the first-logged bonus or not; `symbol` false: a sale naming it only.
+    fn sale(bonus: bool, symbol: bool) -> ev::SellOrganicData {
+        let sold = ev::BioDataSale {
+            species: if symbol { "$Codex_Ent_Stratum_07_Name;".into() } else { String::new() },
+            species_localised: Some("Stratum Tectonicas".into()),
+            value: TECTONICAS,
+            bonus: if bonus { TECTONICAS * xb::FIRST_LOGGED_BONUS_FACTOR } else { 0 },
+            ..Default::default()
+        };
+        ev::SellOrganicData { market_id: 1, bio_data: vec![sold] }
+    }
+
+    fn bodies(bio: &ExoBio) -> Vec<u32> {
+        bio.unsold.iter().map(|r| r.body_id).collect()
+    }
+
+    /// A sale of some of a species' samples takes off the one its bonus agrees with. The first on the list expected no
+    /// bonus; taking it for a sale that paid one left the other listed at five times what it will fetch.
+    #[test]
+    fn a_sale_takes_off_the_sample_its_bonus_agrees_with() {
+        let list = |second_bonus: bool| ExoBio { unsold: vec![tectonicas(2, 10, false), tectonicas(3, 20, second_bonus)], ..Default::default() };
+        for symbol in [true, false] {
+            let mut bio = list(true);
+            bio.on_sell(&sale(true, symbol), Timestamp(30));
+            assert_eq!(bodies(&bio), [2], "paid the bonus: the sample that expected it (symbol {symbol})");
+            assert_eq!(bio.unsold_value(), TECTONICAS);
+            let mut bio = list(true);
+            bio.on_sell(&sale(false, symbol), Timestamp(30));
+            assert_eq!(bodies(&bio), [3], "no bonus: the sample that expected none (symbol {symbol})");
+        }
+        // No sample agrees with the sale: the first comes off, as before.
+        let mut bio = list(false);
+        bio.on_sell(&sale(true, true), Timestamp(30));
+        assert_eq!(bodies(&bio), [3]);
     }
 }

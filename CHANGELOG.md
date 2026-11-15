@@ -35,6 +35,10 @@ release time that section becomes the new version and the release workflow publi
 - **Mining › live session: high / med / low** in a game in another language: every asteroid you prospected counted as
   low, because the count read the material content ("High") from the text the game shows, which is in its language.
   It now reads the game's id for the content, which is the same in every language.
+- **Exobiology › Unsold Vista Genomics data**: a sale of only some of your samples of one species could take the wrong
+  one off the list, one without the first-logged bonus instead of one with it (or the other way round), so the
+  estimated payout was off by that bonus. A sale now takes off a sample whose expected bonus agrees with what the sale
+  paid.
 
 ## [0.8.1] - 2026-11-11
 
