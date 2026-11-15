@@ -383,6 +383,9 @@ fn carrier_view(ui: &mut Ui, gs: &GameState, kind: CarrierKind, c: &Carrier) -> 
                 if squadron {
                     note(ui, "Only orders you set are in your journal; other members' aren't.");
                 }
+                if !c.trade_orders.is_empty() {
+                    note(ui, "Orders as you set them. The journal doesn't record what other commanders buy or sell, so what's already filled doesn't show here.");
+                }
             });
         });
         col.add(|ui| {
