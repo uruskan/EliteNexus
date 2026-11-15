@@ -116,7 +116,12 @@ pub struct Body {
     pub mapped: bool,
     pub probes_used: Option<u32>,
     pub efficiency_target: Option<u32>,
+    /// Signals the FSS or DSS found on the body, as the game's language names them (`Type_Localised`), with their
+    /// counts: for showing.
     pub signals: Vec<(String, u32)>,
+    /// The same signals' journal symbols (`$SAA_SignalType_Guardian;`), in the same order: the same in every language,
+    /// so the model tells signals apart by these.
+    pub signal_symbols: Vec<String>,
     pub bio_signals: u32,
     pub geo_signals: u32,
     /// Planetary mining locations (Rhino surface mining), from the FSS or DSS.
@@ -180,6 +185,7 @@ impl Body {
             probes_used: None,
             efficiency_target: None,
             signals: Vec::new(),
+            signal_symbols: Vec::new(),
             bio_signals: 0,
             geo_signals: 0,
             mining_locations: 0,
@@ -588,8 +594,10 @@ pub fn interesting(body: &Body, system: &SystemScan) -> Vec<Interest> {
     if body.geo_signals > 0 {
         out.push(Interest::GeoSignals);
     }
-    if body.signals.iter().any(|(k, _)| {
-        let k = k.to_ascii_lowercase();
+    // By the signal's symbol (`$SAA_SignalType_Guardian;`, `$SAA_SignalType_Thargoid;`), the same in every language; by
+    // its name only where the journal gave no symbol.
+    if body.signals.iter().enumerate().any(|(i, (label, _))| {
+        let k = body.signal_symbols.get(i).filter(|k| !k.is_empty()).unwrap_or(label).to_ascii_lowercase();
         k.contains("guardian") || k.contains("thargoid")
     }) {
         out.push(Interest::GuardianOrThargoid);
@@ -735,15 +743,20 @@ impl Exploration {
             let ring = sys.body_mut(b.body_id, &b.body_name);
             ring.kind = BodyKind::Ring;
             ring.signals = sigs;
+            ring.signal_symbols = b.signals.iter().map(|s| s.kind.clone()).collect();
             return;
         }
         let body = sys.body_mut(b.body_id, &b.body_name);
         for s in &b.signals {
             let label = s.kind_localised.clone().unwrap_or_else(|| nexus_data::names::humanize_symbol(&s.kind));
-            if let Some(e) = body.signals.iter_mut().find(|(k, _)| *k == label) {
-                e.1 = s.count;
-            } else {
-                body.signals.push((label, s.count));
+            // The same signal found again (FSS, then DSS): by its symbol, else by its name.
+            let known = body.signal_symbols.iter().zip(&body.signals).position(|(k, (l, _))| if s.kind.is_empty() { *l == label } else { *k == s.kind });
+            match known {
+                Some(i) => body.signals[i] = (label, s.count),
+                None => {
+                    body.signals.push((label, s.count));
+                    body.signal_symbols.push(s.kind.clone());
+                }
             }
             let k = s.kind.to_ascii_lowercase();
             if k.contains("biological") {

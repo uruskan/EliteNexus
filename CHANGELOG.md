@@ -52,6 +52,10 @@ release time that section becomes the new version and the release workflow publi
   another language wasn't recognised, so species that grow only in other regions stayed among the likely ones, and
   thinned out the predictions, their expected values and the alerts. The Codex tab still names the region in your
   game's language.
+- **Exploration and Dashboard: the Guardian/Thargoid signals tag** in a game that names signals in another language:
+  a body with Guardian or Thargoid signals is now tagged by the signal's journal id, the same in every language.
+  Before, the tag looked for the English word in the signal's name, so in a language that calls them something else
+  it never showed. The body still lists its signals as your game names them.
 
 ## [0.8.1] - 2026-11-11
 

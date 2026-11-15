@@ -433,6 +433,36 @@ fn codex_region_predicts_the_same_in_every_language() {
     assert_eq!(ex.codex[0].region, "Innerer Orionsporn (DE)", "the Codex tab shows the game's own name");
 }
 
+/// Guardian and Thargoid signals on a body tag it as interesting (Exploration, Dashboard) by the signal's symbol, so the
+/// tag shows in every language; the body lists the signals as the game names them.
+#[test]
+fn guardian_and_thargoid_signals_are_tagged_in_every_language() {
+    use nexus_model::exploration::{interesting, Interest};
+    let tags_for = |kind: &str, label: &str| {
+        let mut m = Model::default();
+        feed(&mut m, LOGIN);
+        let dss = format!(
+            r#"{{ "timestamp":"2026-10-01T10:05:00Z", "event":"SAASignalsFound", "BodyName":"Alpha 2", "SystemAddress":100, "BodyID":2, "Signals":[ {{ "Type":"$SAA_SignalType_Geological;", "Type_Localised":"Geological (made up)", "Count":2 }}, {{ "Type":"{kind}", "Type_Localised":"{label}", "Count":3 }} ] }}"#
+        );
+        feed(
+            &mut m,
+            &[
+                r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 2", "BodyID":2, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":10.0, "PlanetClass":"Rocky body", "MassEM":0.1, "Landable":true, "WasDiscovered":true, "WasMapped":true, "WasFootfalled":true }"#,
+                &dss,
+            ],
+        );
+        let sys = m.active().unwrap().exploration.systems[&100].clone();
+        let body = &sys.bodies[&2];
+        assert!(body.signals.iter().any(|(k, n)| k == label && *n == 3), "listed as the game names it: {:?}", body.signals);
+        interesting(body, &sys)
+    };
+    for (kind, english, other) in [("$SAA_SignalType_Guardian;", "Guardian", "Uralte Zeichen (DE)"), ("$SAA_SignalType_Thargoid;", "Thargoid", "Fremde Zeichen (DE)")] {
+        assert!(tags_for(kind, english).contains(&Interest::GuardianOrThargoid), "{english}, as before");
+        assert!(tags_for(kind, other).contains(&Interest::GuardianOrThargoid), "{other}");
+    }
+    assert!(!tags_for("$SAA_SignalType_Human;", "Human").contains(&Interest::GuardianOrThargoid));
+}
+
 #[test]
 fn carrier_transfer_is_not_spending() {
     let mut m = Model::default();
