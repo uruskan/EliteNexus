@@ -26,6 +26,12 @@ release time that section becomes the new version and the release workflow publi
   values as they do in English. Before, every genus came out as "(unknown species)" worth nothing, and the body's
   expected value with it. In English, the Exobiology page now also shows its guess for Brain Trees and the other
   genera the game names in the plural.
+- **Fleet carrier › Market orders** (found while looking into GitHub issue #20): an order you had cancelled could stay
+  on the list for good when the game logged the cancel without the commodity's name in its own language, or after you
+  had switched the game to another language. Orders now go by the game's own symbol for the commodity, which is the
+  same in every language, so a cancel always takes its order off. Orders left behind come off the next time Elite
+  Nexus starts, since the list is rebuilt from your journals. An order the game logs without a translated name, such
+  as tritium, now shows the commodity's English name ("Tritium") instead of the journal's "tritium".
 
 ## [0.8.1] - 2026-11-11
 

@@ -1,5 +1,6 @@
 //! The commander's fleet carriers: their own, and their squadron's.
 
+use nexus_journal::companion::commodity_symbol;
 use nexus_journal::events as ev;
 use nexus_journal::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -116,6 +117,7 @@ impl JumpTimer {
 
 #[derive(Debug, Clone, Default)]
 pub struct TradeOrder {
+    /// In the game's language (`Commodity_Localised`; the English name when there's none): to show.
     pub commodity: String,
     pub purchase: Option<i64>,
     pub sale: Option<i64>,
@@ -151,6 +153,7 @@ pub struct Carrier {
     pub pending_jump: Option<PendingJump>,
     pub last_jump: Option<LastJump>,
     pub jumps: Vec<CarrierJumpRecord>,
+    /// Market orders the commander set, by commodity symbol (`steel`).
     pub trade_orders: BTreeMap<String, TradeOrder>,
     pub stats_updated: Timestamp,
 }
@@ -360,17 +363,20 @@ impl Carrier {
         }
     }
 
+    /// Orders are kept by the journal's symbol (`steel`), whatever the game's language: a cancel finds its order
+    /// even when it has no `Commodity_Localised`, or the language changed since the order was set.
     pub fn on_trade_order(&mut self, o: &ev::CarrierTradeOrder, ts: Timestamp) {
         if !self.mine(o.carrier_id) {
             return;
         }
-        let name = o.commodity_localised.clone().unwrap_or_else(|| o.commodity.clone());
+        let symbol = commodity_symbol(&o.commodity);
         if o.cancel_trade.unwrap_or(false) {
-            self.trade_orders.remove(&name);
+            self.trade_orders.remove(&symbol);
             return;
         }
+        let name = o.commodity_localised.clone().unwrap_or_else(|| nexus_data::commodities::display_name(&symbol));
         self.trade_orders.insert(
-            name.clone(),
+            symbol,
             TradeOrder {
                 commodity: name,
                 purchase: o.purchase_order,
@@ -576,6 +582,44 @@ mod tests {
         // Same after a purchase.
         c.on_buy(&ev::CarrierBuy { carrier_id: ID + 2, callsign: "NEW-002".into(), location: "Gamma".into(), system_address: 300, ..Default::default() }, at(400));
         assert_eq!((c.id, c.fuel, c.system.as_deref()), (Some(ID + 2), 0, Some("Gamma")));
+    }
+
+    fn order(commodity: &str, localised: Option<&str>, purchase: Option<i64>, cancel: bool) -> ev::CarrierTradeOrder {
+        ev::CarrierTradeOrder {
+            carrier_id: ID,
+            commodity: commodity.into(),
+            commodity_localised: localised.map(str::to_string),
+            purchase_order: purchase,
+            price: purchase.map(|_| 250_000),
+            cancel_trade: cancel.then_some(true),
+            ..Default::default()
+        }
+    }
+
+    /// Orders go by the journal's symbol: a cancel without `Commodity_Localised`, or written after the game's
+    /// language changed, still finds the order it cancels.
+    #[test]
+    fn a_cancel_finds_its_order_in_any_language() {
+        let mut c = own();
+        c.on_trade_order(&order("buildingschematic", Some("Building Schematic"), Some(100), false), at(0));
+        c.on_trade_order(&order("buildingschematic", None, None, true), at(10));
+        assert!(c.trade_orders.is_empty(), "a cancel without the localised name");
+        c.on_trade_order(&order("steel", Some("Steel"), Some(500), false), at(20));
+        c.on_trade_order(&order("steel", Some("Stahl"), None, true), at(30));
+        assert!(c.trade_orders.is_empty(), "a cancel in another language");
+    }
+
+    #[test]
+    fn an_order_shows_the_games_name() {
+        let mut c = own();
+        // Tritium orders carry no localised name (seen in real journals): the English name stands in.
+        c.on_trade_order(&order("tritium", None, Some(2500), false), at(0));
+        c.on_trade_order(&order("steel", Some("Stahl"), Some(500), false), at(0));
+        let names: Vec<&str> = c.trade_orders.values().map(|o| o.commodity.as_str()).collect();
+        assert_eq!(names, ["Stahl", "Tritium"]);
+        // A new order for the same commodity replaces the old one.
+        c.on_trade_order(&order("tritium", Some("Tritium"), Some(1000), false), at(5));
+        assert_eq!((c.trade_orders.len(), c.trade_orders["tritium"].purchase), (2, Some(1000)));
     }
 
     #[test]
