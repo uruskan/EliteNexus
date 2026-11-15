@@ -159,7 +159,11 @@ fn data_mapped_after_a_sale_is_all_that_is_unsold() {
     feed(&mut m, &[r#"{ "timestamp":"2026-10-01T13:05:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 1", "SystemAddress":100, "BodyID":1, "ProbesUsed":5, "EfficiencyTarget":7 }"#]);
     assert_eq!((ex(&m).unsold_value(), alpha(&m).status()), (earthlike, DataStatus::SoldThenUnsold(sold)));
     sell(&mut m, "13:30:00");
-    assert_eq!(alpha(&m).status(), DataStatus::Sold(t("2026-10-01T13:30:00Z")));
+    let sold = t("2026-10-01T13:30:00Z");
+    assert_eq!(alpha(&m).status(), DataStatus::Sold(sold));
+    // Its mapping sold, the Earth-like mapped once more is no new data, as a sold scan scanned again isn't.
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T14:05:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 1", "SystemAddress":100, "BodyID":1, "ProbesUsed":5, "EfficiencyTarget":7 }"#]);
+    assert_eq!((ex(&m).unsold().count(), alpha(&m).status()), (0, DataStatus::Sold(sold)));
 
     // A system never sold and lost with the ship is lost as a whole, as before.
     let mut m = Model::default();
@@ -169,6 +173,9 @@ fn data_mapped_after_a_sale_is_all_that_is_unsold() {
     let alerts = feed(&mut m, &[r#"{ "timestamp":"2026-10-01T12:30:00Z", "event":"Died", "KillerName":"Gravity" }"#]);
     assert!(alerts.iter().any(|a| a.detail == format!("Unsold data lost: about {} Cr", nexus_data::names::compact_credits(whole))));
     assert_eq!(alpha(&m).status(), DataStatus::Lost);
+    // Back after the loss: a body scanned for the first time is unsold on its own, not with the Earth-like that was lost.
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T13:02:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 2", "BodyID":2, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":10.0, "PlanetClass":"Rocky body", "MassEM":0.1, "Landable":true, "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#]);
+    assert_eq!((alpha(&m).status(), ex(&m).unsold_value()), (DataStatus::Unsold, alpha(&m).bodies[&2].value.current));
 }
 
 #[test]

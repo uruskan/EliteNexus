@@ -61,8 +61,10 @@ release time that section becomes the new version and the release workflow publi
   "Unsold data lost" figure when the ship was destroyed; its history went from Sold to Unsold, then to Lost or Not
   sellable. Universal Cartographics buys data by the body, and now only what you scanned or mapped since the sale
   counts as unsold. A planet mapped after you sold its scan counts at its full mapped value (what Universal
-  Cartographics pays for it then isn't known); probing a ring adds nothing. History shows such a system as **Partly
-  sold**, and as sold if the new data is lost with the ship.
+  Cartographics pays for it then isn't known); probing a ring, or mapping again a planet whose map you sold, adds
+  nothing. History shows such a system as **Partly sold**, and as sold if the new data is lost with the ship. The same
+  goes after a loss: a system whose data went with the ship counts only what you scanned there since, not again what
+  was lost.
 
 ## [0.8.1] - 2026-11-11
 

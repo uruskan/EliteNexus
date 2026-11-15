@@ -137,6 +137,8 @@ pub struct Body {
     /// Holds cartographic data not sold yet: scanned for the first time, or mapped, since the system's last sale (or
     /// the ship's loss). Universal Cartographics buys data by the body, so a system sold before counts only these.
     pub unsold: bool,
+    /// Its mapping went with a sale: mapping it again is no new data (a scan sold is no new data scanned again either).
+    pub map_sold: bool,
     /// Likely species (bodies with biological signals), best first.
     pub predictions: Vec<nexus_data::bio_predict::Prediction>,
 }
@@ -198,6 +200,7 @@ impl Body {
             footfall: false,
             value: BodyValue::default(),
             unsold: false,
+            map_sold: false,
             predictions: Vec::new(),
         }
     }
@@ -846,9 +849,9 @@ impl Exploration {
         body.probes_used = Some(s.probes_used);
         body.efficiency_target = Some(s.efficiency_target);
         body.recompute_value(odyssey);
-        // Mapping a body is new data, also where its scan was sold. Probing a ring isn't: the model gives rings no value
-        // (the research has none for them), so it leaves the system as it was.
-        if !(s.body_name.ends_with(" Ring") || matches!(body.kind, BodyKind::Ring | BodyKind::BeltCluster)) {
+        // Mapping a body is new data, also where its scan was sold; not where its mapping was sold already. Probing a ring
+        // isn't: the model gives rings no value (the research has none for them), so it leaves the system as it was.
+        if !body.map_sold && !(s.body_name.ends_with(" Ring") || matches!(body.kind, BodyKind::Ring | BodyKind::BeltCluster)) {
             body.unsold = true;
             sys.sold = false;
         }
@@ -916,6 +919,8 @@ impl Exploration {
         for s in self.systems.values_mut() {
             if systems.iter().any(|n| n.eq_ignore_ascii_case(&s.name)) {
                 for b in s.bodies.values_mut() {
+                    // A mapping held went with it; one lost with the ship before didn't.
+                    b.map_sold |= b.mapped && b.unsold;
                     b.unsold = false;
                 }
                 s.sold = true;
