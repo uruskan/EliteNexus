@@ -39,6 +39,9 @@ release time that section becomes the new version and the release workflow publi
   one off the list, one without the first-logged bonus instead of one with it (or the other way round), so the
   estimated payout was off by that bonus. A sale now takes off a sample whose expected bonus agrees with what the sale
   paid.
+- **Ask: "where did I mine …?"** in a game in another language: asked for a commodity by its English name, the
+  assistant found none of your Rhino mining sites, because the refinery names what it made in the game's language. It
+  now also matches the commodity by the game's id for it, which is the same in every language.
 
 ## [0.8.1] - 2026-11-11
 

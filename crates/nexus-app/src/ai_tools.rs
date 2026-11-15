@@ -517,10 +517,11 @@ impl NexusTools {
     fn mining_sites(&self, a: &Value) -> Result<Value, String> {
         let model = self.model.read();
         let gs: &GameState = model.active().ok_or("No commander loaded yet.")?;
-        let want = arg_str(a, "commodity").map(|c| c.to_lowercase());
+        let want = arg_str(a, "commodity");
         let limit = arg_f64(a, "limit").map(|v| v as usize).unwrap_or(10).clamp(1, 50);
-        let mut sites: Vec<_> =
-            gs.mining.sites.values().filter(|s| want.as_ref().is_none_or(|w| s.refined.keys().any(|k| k.to_lowercase().contains(w.as_str())))).collect();
+        // By symbol too: the refinery's names are in the game's language.
+        let symbol = want.as_deref().and_then(|w| self.db.as_ref()?.commodity_symbol(w));
+        let mut sites: Vec<_> = gs.mining.sites.values().filter(|s| want.as_deref().is_none_or(|w| s.gave(w, symbol.as_deref()))).collect();
         sites.sort_by_key(|s| std::cmp::Reverse(s.last));
         Ok(json!({
             "sites": sites.iter().take(limit).map(|s| json!({
@@ -3958,6 +3959,39 @@ mod tests {
         assert_eq!(found["sites"][0]["mining_location"], 4);
         assert_eq!(found["sites"][0]["refined_t"]["Iridium"], 1);
         assert!(tools.call("mining_sites", &json!({ "commodity": "Painite" })).unwrap()["sites"].as_array().unwrap().is_empty());
+    }
+
+    /// The refinery names what it made in the game's language, and Ask asks in English: the commodity is matched by its
+    /// symbol. Names are made up here.
+    #[test]
+    fn mining_sites_finds_a_commodity_in_any_language() {
+        let rhino = |index: u32, minute: u32, symbol: &str, shown: &str| {
+            vec![
+                format!(r#"{{ "timestamp":"2026-10-20T10:{minute:02}:00Z", "event":"Touchdown", "PlayerControlled":true, "StarSystem":"Alpha", "SystemAddress":1001, "Body":"Alpha 1", "BodyID":1, "OnStation":false, "OnPlanet":true, "Latitude":-12.5, "Longitude":44.1, "NearestDestination":"$SAA_Unknown_Signal:#type=$PlanetaryMiningLocation_Name;:#index={index};" }}"#),
+                format!(r#"{{ "timestamp":"2026-10-20T10:{:02}:00Z", "event":"LaunchSRV", "SRVType":"mev_rhino", "Loadout":"default", "ID":53, "PlayerControlled":true }}"#, minute + 1),
+                format!(r#"{{ "timestamp":"2026-10-20T10:{:02}:00Z", "event":"MiningRefined", "Type":"${symbol}_name;", "Type_Localised":"{shown}" }}"#, minute + 2),
+                format!(r#"{{ "timestamp":"2026-10-20T10:{:02}:00Z", "event":"DockSRV", "SRVType":"mev_rhino", "ID":53 }}"#, minute + 3),
+                format!(r#"{{ "timestamp":"2026-10-20T10:{:02}:00Z", "event":"Liftoff", "PlayerControlled":true, "StarSystem":"Alpha", "SystemAddress":1001, "Body":"Alpha 1", "BodyID":1, "OnStation":false, "OnPlanet":true }}"#, minute + 4),
+            ]
+        };
+        let lines: Vec<String> = [rhino(4, 0, "iridium", "Xiridion"), rhino(5, 10, "quartzpyroxenite", "Quarzgestein XX"), rhino(6, 20, "lowtemperaturediamond", "Kaltdiamanten XX")].concat();
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let t = TempDb::new("ai-mining-sites");
+        let with_db = NexusTools { db: Some(t.db().clone()), ..model_tools(with_lines(commander(), &lines), &rt) };
+        let without_db = model_tools(with_lines(commander(), &lines), &rt);
+        let locations = |tools: &NexusTools, commodity: &str| -> Vec<Value> {
+            let found = tools.call("mining_sites", &json!({ "commodity": commodity })).unwrap();
+            found["sites"].as_array().unwrap().iter().map(|s| s["mining_location"].clone()).collect()
+        };
+        for tools in [&with_db, &without_db] {
+            assert_eq!(locations(tools, "Iridium"), [json!(4)]);
+            assert_eq!(locations(tools, "Quartz Pyroxenite"), [json!(5)]);
+            assert!(locations(tools, "Painite").is_empty());
+            // What came out is named as the game named it.
+            assert_eq!(tools.call("mining_sites", &json!({ "commodity": "iridium" })).unwrap()["sites"][0]["refined_t"]["Xiridion"], 1);
+        }
+        // The English name that isn't its symbol spelled out: the market database knows it.
+        assert_eq!(locations(&with_db, "Low Temperature Diamonds"), [json!(6)]);
     }
 
     fn eddn(schema: &str, message: Value) -> Value {

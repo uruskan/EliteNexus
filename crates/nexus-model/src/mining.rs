@@ -2,9 +2,10 @@
 //! locations the commander refined at, with the number the game's navigation panel shows, so they can go back.
 
 use crate::location::surface_distance;
+use nexus_journal::companion::commodity_symbol;
 use nexus_journal::events as ev;
 use nexus_journal::Timestamp;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Refines this close to a deposit already on record count as that deposit: the rigs on one deposit stand a little
 /// apart, and the Rhino collects from each.
@@ -117,6 +118,8 @@ pub struct SurfaceSite {
     pub body: String,
     /// Tonnes refined by commodity: the deposit's mineral and its by-products, as the refinery named them.
     pub refined: BTreeMap<String, u32>,
+    /// The symbols of what was refined (`iridium`): the same in every game language, unlike the names in `refined`.
+    pub refined_symbols: BTreeSet<String>,
     pub first: Timestamp,
     pub last: Timestamp,
     /// Mining sessions that refined here.
@@ -145,6 +148,17 @@ impl SurfaceSite {
         let mut v: Vec<(&str, u32)> = self.refined.iter().map(|(k, n)| (k.as_str(), *n)).collect();
         v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
         v
+    }
+
+    /// The refinery made `commodity` here. The names it gave are in the game's language, so an English name matches
+    /// by symbol: `symbol` when the caller knows it (the market database does), or else the name squashed ("Quartz
+    /// Pyroxenite" is `quartzpyroxenite`). Any part of a name the refinery gave matches too.
+    pub fn gave(&self, commodity: &str, symbol: Option<&str>) -> bool {
+        let squashed: String = commodity.chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_lowercase()).collect();
+        let lower = commodity.to_lowercase();
+        symbol.is_some_and(|s| self.refined_symbols.contains(s))
+            || self.refined_symbols.contains(&squashed)
+            || self.refined.keys().any(|k| k.to_lowercase().contains(&lower))
     }
 
     /// The body's name without the system's: "1" for "Hyades Sector NC-V c2-15 1".
@@ -283,6 +297,10 @@ impl Mining {
         let session = self.session.as_ref().map_or(ts, |s| s.start);
         let site = self.sites.entry(key).or_insert_with(|| SurfaceSite { first: ts, ..SurfaceSite::new(key, place.system, place.body) });
         *site.refined.entry(name.clone()).or_default() += 1;
+        let symbol = commodity_symbol(&r.kind);
+        if !symbol.is_empty() {
+            site.refined_symbols.insert(symbol);
+        }
         site.last = ts;
         if site.session != session {
             site.session = session;
