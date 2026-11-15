@@ -5,6 +5,17 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+### Added
+- **Updates** (asked for by many of you): Elite Nexus now tells you when a new version is out. A minute after it
+  starts and every 12 hours, it asks GitHub which version is the newest, a download that sends nothing about you
+  (Settings › About › **Check for updates** switches it off, **Check now** asks once). A banner above every page says
+  what's out, with **What's new** from the changelog. On Windows and Linux, **Update** downloads it, checks it against
+  the release's signed manifest, and puts it in place when you close Elite Nexus, so nothing stops while you play, or
+  at once with **Restart now**. Your settings and data stay as they are, and the next start says what's new. A copy
+  that can't replace itself (on a Mac, in a folder it can't write to such as Program Files, run from inside the zip)
+  says why and offers the release page. This is the first version that knows about updates: earlier ones have to be
+  updated by hand this once.
+
 ### Fixed
 - **Exobiology › Unsold Vista Genomics data** (found while looking into GitHub issue #20): samples you had sold could
   stay on the list, and in the estimated payout, when the sale named a species differently from the scan (the names

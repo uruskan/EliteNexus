@@ -11,6 +11,7 @@ members = [
     "crates/nexus-binds",
     "crates/nexus-hud",
     "crates/nexus-ai",
+    "crates/nexus-update",
     "crates/nexus-app",
 ]
 default-members = ["crates/nexus-app"]
@@ -35,6 +36,7 @@ nexus-spansh = { path = "crates/nexus-spansh" }
 nexus-binds = { path = "crates/nexus-binds" }
 nexus-hud = { path = "crates/nexus-hud" }
 nexus-ai = { path = "crates/nexus-ai" }
+nexus-update = { path = "crates/nexus-update" }
 
 # core
 serde = { version = "1", features = ["derive", "rc"] }

@@ -97,6 +97,12 @@ Key facts for answering questions about it (current as of version 0.8.1, Novembe
 - Recovery: a settings file that can't be read is kept under a dated name, every setting that still reads is kept,
   and a banner says so; nothing is reset silently. A crash is written to crash.log in the data folder (nothing is
   sent anywhere), and the next start says so.
+- Updates (from the release after 0.8.1): a minute after start and every 12 hours the app asks GitHub which version
+  is the newest (a download of the release's signed update.json; nothing about the commander is sent; Settings ›
+  About switches it off) and says so in a banner, with What's new from the changelog. On Windows and Linux, Update
+  downloads the release archive, checks it against the signed manifest and puts the new program in place when the app
+  closes (or at once with Restart now), leaving nexus-data alone. On a Mac, in Program Files or when run from inside
+  the zip, it offers the release page instead. Updating always takes a click.
 - Linux: a native build (since 0.5.0). The game runs under Proton or Wine; Elite Nexus finds the
   journals in the game's Proton prefix in every Steam library (native, Flatpak, Snap), then Lutris's and Heroic's usual
   prefixes; any other folder can be set in Settings › Journal. HUD colours, glare and bindings use the Options folder

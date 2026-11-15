@@ -37,6 +37,10 @@ pub struct SettingsCtx<'a> {
     pub last_screenshot: Option<crate::screenshots::Outcome>,
     /// AI agents over MCP: listening, and the calls answered this run.
     pub agents: crate::mcp::Status,
+    /// Updates: the About section's row and switch.
+    pub update: &'a mut crate::update::Updater,
+    /// A run that follows the game (not a test run): only then do updates check by themselves.
+    pub live: bool,
 }
 
 /// What the Settings page keeps between frames: the folder fields and what checking a folder found.
@@ -206,6 +210,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
             section(ui, "About");
             group(ui, |g| {
                 g.value("Version", format!("Elite Nexus {}", env!("CARGO_PKG_VERSION")));
+                cx.changed |= cx.update.about_rows(g, &mut cx.settings.updates, cx.live);
                 g.row("Support Elite Nexus", "It's free, with no ads. If it helps you, GitHub Sponsors keeps it going.", |ui| {
                     ui.hyperlink_to(format!("{} Sponsor {}", icon::HEART, icon::ARROW_SQUARE_OUT), SPONSOR_URL).on_hover_text(SPONSOR_URL);
                 });

@@ -35,6 +35,7 @@ mod theme;
 mod tours;
 mod tts;
 mod untouched;
+mod update;
 mod widgets;
 
 fn app_icon() -> egui::IconData {
@@ -46,9 +47,24 @@ fn app_icon() -> egui::IconData {
     egui::IconData { rgba: icon::rgba(64), width: 64, height: 64 }
 }
 
+/// The instance lock, waited for up to 15 seconds when `wait`: a copy an update's Restart now started (`--updated`)
+/// begins while the old one is still letting go of it.
+fn single_instance(data_dir: &std::path::Path, wait: bool) -> Option<std::fs::File> {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(if wait { 15 } else { 0 });
+    loop {
+        if let Some(lock) = lock_instance(data_dir) {
+            return Some(lock);
+        }
+        if std::time::Instant::now() >= until {
+            return None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
 /// Holds an exclusive lock on instance.lock for the life of the process. A second instance would
 /// tail the same journal and double-upload to EDDN/EDSM/Inara, so it must not start.
-fn single_instance(data_dir: &std::path::Path) -> Option<std::fs::File> {
+fn lock_instance(data_dir: &std::path::Path) -> Option<std::fs::File> {
     let path = data_dir.join("instance.lock");
     #[cfg(windows)]
     {
@@ -120,7 +136,9 @@ fn main() -> eframe::Result {
     }
     let data_dir = settings::data_dir();
     let screenshot_run = std::env::args().any(|a| a == "--screenshot");
-    let _instance = match single_instance(&data_dir) {
+    // `--updated <version>`: an update's Restart now started this copy, from that version.
+    let restarted_from = std::env::args().skip_while(|a| a != "--updated").nth(1);
+    let _instance = match single_instance(&data_dir, restarted_from.is_some()) {
         Some(lock) => Some(lock),
         None if screenshot_run => None,
         None => {
@@ -185,6 +203,7 @@ fn main() -> eframe::Result {
         demo: args.iter().any(|a| a == "--demo"),
         overlay_demo: arg("--overlay"),
         overlay_see_through: see_through,
+        updated_from: restarted_from,
     };
 
     // --size 1000x700: window size for responsive-layout screenshots.
@@ -255,9 +274,18 @@ fn main() -> eframe::Result {
         overlay::window::NoSeeThrough::record(Some(overlay::window::NoSeeThrough::NoCompositor));
         tracing::info!("see-through overlay: no compositor runs on this X11 desktop");
     }
-    eframe::run_native(
+    let data_dir_at_exit = data_dir.clone();
+    let result = eframe::run_native(
         "Elite Nexus",
         options,
         Box::new(move |cc| Ok(Box::new(app::NexusApp::new(cc, data_dir, start_page, shot, overrides)))),
-    )
+    );
+    // A new version downloaded and waiting (the update banner): now that the window has closed and everything is
+    // saved, it takes this one's place, and starts if the commander chose Restart now. The lock goes first, so the
+    // new copy can take it.
+    if let Some(plan) = update::take_exit_plan() {
+        drop(_instance);
+        update::finish_at_exit(plan, &data_dir_at_exit);
+    }
+    result
 }

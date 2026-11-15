@@ -29,7 +29,12 @@ file is for anyone changing the code. Read it before your first change; several 
   Cockpit lights, with a manifest of what was added; settings files are edited surgically with the original kept.
   Test that code against a copy of the game folder (`ELITE_NEXUS_GAME_DIR`), never a real install. Frontier's
   shader code (3Dmigoto exports, frame captures) never goes into git.
-* Never commit `nexus-data`, databases, logs or keys (`.gitignore` covers them; don't force-add).
+* **Updates take a click.** Elite Nexus asks GitHub for the newest version by itself (Settings › About switches that
+  off; it's a download and sends nothing about the commander), but downloads and installs one only on a click, puts
+  it in place only once the old copy has closed, never touches `nexus-data`, and test runs never check. Every
+  release must carry a signed `update.json` (see Releases).
+* Never commit `nexus-data`, databases, logs or keys (`.gitignore` covers them; don't force-add). The update signing
+  key (`UPDATE_SIGNING_KEY`) lives only in the repository's secrets and the maintainer's offline backup.
 * Never panic on external data: no `unwrap()` on I/O or network data, `#[serde(default)]` on external structs.
 * **Be honest in the UI.** Say where data comes from and what it can't show (the Exobiology bonus hunt explains why
   "no record" isn't proof; Find valuable bodies says Spansh skips populated systems). Explain, don't just show
@@ -49,9 +54,10 @@ cargo test --workspace
 
 CI (`.github/workflows/ci.yml`) runs the same clippy and tests on `windows-latest`, `ubuntu-latest` and
 `macos-latest` for every push to `main` and every pull request; keep them green. A push that changes only the website
-or documents the app doesn't compile (`site/`, `tools/site/`, `CHANGELOG.md`, `AGENTS.md`, `CONTRIBUTING.md`,
+or documents the app doesn't compile (`site/`, `tools/site/`, `AGENTS.md`, `CONTRIBUTING.md`,
 `docs/ARCHITECTURE.md`, `docs/DESIGN.md`, `docs/research/`, `docs/screenshots/`) skips it; the README,
-`docs/USER_GUIDE.md` and `data/` are compiled in, so changes to them still run it.
+`CHANGELOG.md` (What's new after an update), `docs/USER_GUIDE.md` and `data/` are compiled in, so changes to them
+still run it.
 
 * On Windows, `tools\dev\cargo.ps1 -Log build -CargoArgs "build -p nexus-app -j 4"` runs cargo at BelowNormal
   priority and writes the output to `target\cc\<Log>.log`, so a game running on the same PC keeps its frame rate.
@@ -108,7 +114,9 @@ a layout changes.
   (`engineers:selene`: with that engineer's whole way open, any part of a name without spaces), `suits`, `synthesis`,
   `merc`, `rolls` (Engineering; `rolls`: four hull reinforcement packages with the rolls at each grade open), `where`, `where:Monazite`, `where-route` (Mining > Where to mine: near
   you, near you for that material, or along a route towards Colonia), `career`, `activity`, `ships`, `all` (Statistics), `support`, `support-close` (any page: the support card shown at
-  each start, which screenshot runs otherwise never show; its countdown running, or over with Close showing), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from that
+  each start, which screenshot runs otherwise never show; its countdown running, or over with Close showing), `update`,
+  `update-blocked`, `update-download`, `update-ready`, `update-failed`, `update-notes`, `updated` (any page: the update
+  banner's states, a next version made up, the notes from CHANGELOG.md; with `-Page Settings`, About's Updates row too), `glare`, `cockpit` or a preset name such as `mocha` (Hud: that tab, or HUD colours starting from that
   theme; add `,options` to open the protection's options, or `,hue:120` to set the Colour slider to 120° on top of
   the theme; nothing is written). `find`, `untouched`, `known`, `buy`,
   `buy-one`, the `where` tabs and `route-carrier` start their search on the first frame: add
@@ -184,8 +192,23 @@ egui 0.36 layout lessons learned here:
    README › Thanks, where Buy Me a Coffee supporters are added by hand under **Sponsors**. If the run's own token
    can't read sponsors (the log warns), a `SPONSORS_TOKEN` secret holding a classic token with no scopes can.
    Windows and Linux must build; if only the macOS job fails, the release still goes out, without the Mac zip.
+   Before publishing, it writes `update.json` (each archive's name, address, size and SHA-256) and signs it with the
+   `UPDATE_SIGNING_KEY` secret as `update.json.minisig`, then checks that signature against the key the app has
+   compiled in (`crates/nexus-update/src/minisign.pub`); without the secret, or with another key, the release stops
+   there.
 6. Check it without credentials (the repo is public):
-   `https://api.github.com/repos/uruskan/EliteNexus/releases/latest`.
+   `https://api.github.com/repos/uruskan/EliteNexus/releases/latest`, and that
+   `https://github.com/uruskan/EliteNexus/releases/latest/download/update.json` names the new version: that's what
+   every copy already out reads.
+
+**Updates are a promise to every version already out.** Each one reads `releases/latest/download/update.json` (a beta,
+the releases' feed and that release's `update.json`) and checks its signature with the key it was built with. So every
+release carries both files, the manifest's fields are only ever added to, never renamed or removed (`schema` goes up
+only for a format old versions can't read; they then send commanders to the release page), and the archives stay
+`EliteNexus-v<version>-<platform>.zip` or `.tar.gz` with the program at the root or in one folder. The secret key is
+in the repository's secrets and in the maintainer's offline backup, nowhere else: a new key (`update_sign keygen`)
+means every version out refuses releases signed with it, so make one only to replace a lost or leaked key, and say in
+the release notes that this release has to be downloaded by hand.
 
 **Betas** follow the same steps with a hyphenated version: `0.6.0-beta.1` in `Cargo.toml`, `## [0.6.0-beta.1] -
 YYYY-MM-DD` in the changelog, tag `v0.6.0-beta.1`. The workflow publishes it as a pre-release, which GitHub never marks

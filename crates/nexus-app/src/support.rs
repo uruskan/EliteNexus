@@ -20,19 +20,20 @@ const SPONSOR_PINK: Color32 = Color32::from_rgb(0xea, 0x4a, 0xaa);
 const COFFEE_YELLOW: Color32 = Color32::from_rgb(0xff, 0xdd, 0x00);
 
 /// Whether the card opens at this start: at every start of a run that follows the game, never in a test run
-/// (`--screenshot`, `--journal-dir`). The one place that decides it: stable releases will later skip it for
-/// supporters, and that check goes here.
-pub fn wanted(live_run: bool) -> bool {
-    live_run
+/// (`--screenshot`, `--journal-dir`), and not when an update's Restart now started this run (`restarted`: the same
+/// sitting, seconds later). The one place that decides it: stable releases will later skip it for supporters, and
+/// that check goes here.
+pub fn wanted(live_run: bool, restarted: bool) -> bool {
+    live_run && !restarted
 }
 
 /// The card for this start, if it opens: `wanted`, or in a screenshot run `--tab support` (the countdown running) or
 /// `--tab support-close` (the countdown over, Close showing).
-pub fn at_start(live_run: bool, shot_tab: Option<&str>) -> Option<Card> {
+pub fn at_start(live_run: bool, restarted: bool, shot_tab: Option<&str>) -> Option<Card> {
     match shot_tab {
         Some(t) if t.eq_ignore_ascii_case("support") => Some(Card::default()),
         Some(t) if t.eq_ignore_ascii_case("support-close") => Some(Card::finished()),
-        _ if wanted(live_run) => Some(Card::default()),
+        _ if wanted(live_run, restarted) => Some(Card::default()),
         _ => None,
     }
 }
@@ -383,12 +384,13 @@ mod tests {
 
     #[test]
     fn opens_at_every_live_start_and_never_in_a_test_run() {
-        assert!(at_start(true, None).is_some(), "a live run");
-        assert!(at_start(false, None).is_none(), "a test run (--screenshot, --journal-dir)");
-        assert!(at_start(false, Some("history")).is_none(), "another page's tab");
-        let running = at_start(false, Some("support")).expect("--tab support");
+        assert!(at_start(true, false, None).is_some(), "a live run");
+        assert!(at_start(true, true, None).is_none(), "the restart an update's Restart now made");
+        assert!(at_start(false, false, None).is_none(), "a test run (--screenshot, --journal-dir)");
+        assert!(at_start(false, false, Some("history")).is_none(), "another page's tab");
+        let running = at_start(false, false, Some("support")).expect("--tab support");
         assert_eq!(running.countdown.seconds(), 10, "its countdown starts when it's seen");
-        let over = at_start(false, Some("support-close")).expect("--tab support-close");
+        let over = at_start(false, false, Some("support-close")).expect("--tab support-close");
         assert!(over.countdown.done(), "Close showing");
     }
 }

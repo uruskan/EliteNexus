@@ -1,0 +1,26 @@
+[package]
+name = "nexus-update"
+description = "Elite Nexus updates: the signed release manifest, version order, the release archives, the program's swap at exit and the changelog"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+flate2.workspace = true
+sha2 = "0.11"
+# Checks the release manifest's signature against the key compiled in (src/minisign.pub). No dependencies of its own.
+minisign-verify = "0.3"
+# The Windows and macOS release archives; deflate is all Compress-Archive and ditto write.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+# The Linux release archive (a tar.gz).
+tar = { version = "0.4", default-features = false }
+
+[dev-dependencies]
+# examples/update_sign.rs: makes the key, writes and signs the manifest at release time (.github/workflows/release.yml),
+# and the tests sign with a key of their own.
+minisign = "0.10"

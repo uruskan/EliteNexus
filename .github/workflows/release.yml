@@ -100,6 +100,23 @@ jobs:
         with:
           path: out
           merge-multiple: true
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Update manifest
+        # update.json names each archive with its size and SHA-256, and update.json.minisig signs it with the release
+        # key (the UPDATE_SIGNING_KEY secret). Elite Nexus checks that signature against the key it has compiled in
+        # (crates/nexus-update/src/minisign.pub) before it downloads anything. Every release carries both: the versions
+        # already out read them from releases/latest/download/ (AGENTS.md › Releases). Only this step sees the key.
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          if [ -z "$UPDATE_SIGNING_KEY" ]; then
+            echo "::error::The UPDATE_SIGNING_KEY secret is missing: without a signed update.json, Elite Nexus can't offer this release as an update."
+            exit 1
+          fi
+          cargo run --locked -q -p nexus-update --example update_sign -- manifest out "$GITHUB_REF_NAME" "$(date -u +%F)"
+          cargo run --locked -q -p nexus-update --example update_sign -- sign out/update.json
+          # The signature must hold against the key the app has compiled in, or no copy would accept this release.
+          cargo run --locked -q -p nexus-update --example update_sign -- verify out/update.json
       - name: Release notes
         shell: pwsh
         env:
@@ -188,6 +205,8 @@ jobs:
             out/*.zip.sha256
             out/*.tar.gz
             out/*.tar.gz.sha256
+            out/update.json
+            out/update.json.minisig
           body_path: out/notes.md
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ !contains(github.ref_name, '-') }}

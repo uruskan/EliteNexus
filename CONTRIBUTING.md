@@ -35,6 +35,7 @@ cargo build --release -p nexus-app     # target/release/EliteNexus (EliteNexus.e
 | `--overlay <moment>` | The overlay with sample content: the main window shows the moment compact and expanded, see-through, as its own window (see-through off) and in VR's panel, and (except in a screenshot run) the overlay's own window turns between the two every four seconds. Moments: `jump`, `hyperspace`, `arrival`, `approach`, `sampling`, `close`, `mining`, `trade`, `docking`, `docked`, `carrier`, `two`, `alert`, `quiet`. |
 | `--screenshot <png> [--shot-delay <s>] [--size <w>x<h>]` | Render the page off-screen after loading, save the PNG and exit. The window is never visible and nothing is uploaded. `--size 1000x760` checks a narrow layout (the size is in points: on a display scaled above 100 % the PNG comes out that much larger, with the same layout, and `tools\dev\shot.ps1` says so); `--shot-delay 8` or more waits for the galaxy image or a Spansh search (5 to 20 s). |
 | `--install-desktop` / `--uninstall-desktop` | Linux only: add Elite Nexus and its icon to the desktop's app menu, or take it out. |
+| `--updated <version>` | Given by an update's Restart now to the new copy: it waits up to 15 seconds for the old copy to let go of the instance lock, says it was updated from that version, and skips the support card. |
 
 The images in `docs/screenshots/` were made this way, e.g.
 `EliteNexus.exe --page market --tab abnormal --screenshot docs\screenshots\market.png --shot-delay 8 --mute`. Check a
@@ -65,6 +66,14 @@ Each crate ships examples that work on your own journals and database:
 | `cargo run --release -p nexus-uplink --example validate` | Every upload your journals would produce, checked against the EDDN schemas. Sends nothing. |
 | `cargo run --release -p nexus-galaxy --example seed_journal -- <db>` | Build a galaxy database from your journals. |
 | `cargo run -p nexus-eddn --example live -- <db> <seconds>` | Watch the live EDDN feed flow into a database. |
+| `cargo run -p nexus-update --example update_sign -- manifest <dir> <tag> <date>` | Write a release's `update.json` for the archives in `<dir>`; `sign <file>` signs it with the key in `UPDATE_SIGNING_KEY`, `verify <file>` checks it against the key the app has built in (the release workflow runs all three), `keygen <dir>` makes a new key (only to replace a lost or leaked one: every version already out refuses releases signed with another). |
+
+**Testing updates.** `ELITE_NEXUS_UPDATE_URL` points a build at a folder (or an address) holding `update.json`,
+`update.json.minisig`, the archives it names and optionally a `CHANGELOG.md`, instead of GitHub; the signature is still
+checked against the built-in key, so sign the test manifest with `update_sign`. With the variable set even a debug build
+checks by itself; it installs only from a release build outside a `target` folder (copy `EliteNexus.exe` elsewhere),
+and never in a test run. `--tab update` (and `update-blocked`, `update-download`, `update-ready`, `update-failed`,
+`update-notes`, `updated`) shows the banner's states in a screenshot; with `--page Settings`, the About rows too.
 
 ## How it stays fast
 
@@ -119,8 +128,9 @@ What works on Linux and what doesn't yet is collected in [discussion #17](https:
 
 Pushing a tag such as `v0.7.2` runs `.github/workflows/release.yml`: it builds the Windows exe, the Linux binary (on
 Ubuntu 22.04, so the binary starts on older distributions) and the Apple Silicon Mac app, packs each with the README,
-NOTICE, licence and user guide, and publishes a GitHub Release with that version's `CHANGELOG.md` section as the notes. A
-hyphenated version (`v0.8.0-beta.1`) becomes a pre-release. The steps are in AGENTS.md › Releases.
+NOTICE, licence and user guide, and publishes a GitHub Release with that version's `CHANGELOG.md` section as the notes,
+and `update.json` with its signature, which the app reads to offer the release as an update. A hyphenated version
+(`v0.8.0-beta.1`) becomes a pre-release. The steps are in AGENTS.md › Releases.
 
 ## Accounts and APIs
 

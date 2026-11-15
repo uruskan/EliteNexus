@@ -32,6 +32,9 @@
 #        With -Page Statistics: career, activity, ships or all opens that tab.
 #        On any page: support shows the support card of each start with its countdown running,
 #        support-close with the countdown over and Close showing (other shots never show it).
+#        On any page: update, update-blocked, update-download, update-ready, update-failed,
+#        update-notes or updated shows the update banner in that state, for a made-up next
+#        version with notes from CHANGELOG.md (with -Page Settings, About's Updates row too).
 # -JournalDir: read a test journal folder instead of the real one (test runs never upload).
 # -Overlay: an overlay moment with sample content, compact and expanded (jump, hyperspace, arrival, approach,
 #        sampling, close, mining, trade, docking, docked, carrier, two, alert, quiet).

@@ -42,7 +42,8 @@ the older tools need.
    Security › Open Anyway (it isn't notarized).
 3. **Fly.** Elite Nexus finds the game's journal folder by itself and loads your commander. Start it before or after
    the game. Community sync, the overlay, the AI co-pilot and the cockpit tools are optional and wait until you set
-   them up.
+   them up. When a new version is out, Elite Nexus tells you; on Windows and Linux, **Update** installs it with a click
+   and keeps your settings and data.
 
 Everything it keeps (settings, the galaxy database, saved builds, logs) lives in a `nexus-data` folder next to the
 program (on a Mac, in `~/Library/Application Support/EliteNexus`; on Linux, in `~/.local/share/EliteNexus` when the

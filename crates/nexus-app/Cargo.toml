@@ -22,6 +22,7 @@ nexus-uplink.workspace = true
 nexus-galaxy.workspace = true
 nexus-eddn.workspace = true
 nexus-ai.workspace = true
+nexus-update.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui_extras.workspace = true

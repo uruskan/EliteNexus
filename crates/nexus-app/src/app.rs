@@ -33,6 +33,8 @@ pub struct Overrides {
     pub overlay_demo: Option<String>,
     /// The window renderer was set up for a see-through overlay (Settings › Overlay, read at start).
     pub overlay_see_through: bool,
+    /// `--updated <version>`: an update's Restart now started this run, from that version.
+    pub updated_from: Option<String>,
 }
 
 pub struct ScreenshotJob {
@@ -139,12 +141,14 @@ pub struct NexusApp {
     deposits_rev: (String, u64, u64),
     /// The support card shown at start (`support::at_start`) until it's closed.
     support: Option<crate::support::Card>,
+    /// Newer versions: the checks, the banner, the download (update.rs).
+    update: crate::update::Updater,
 }
 
 impl NexusApp {
     pub fn new(cc: &eframe::CreationContext<'_>, data_dir: PathBuf, start_page: Option<Page>, shot: Option<ScreenshotJob>, ov: Overrides) -> Self {
         crate::theme::install(&cc.egui_ctx);
-        let (settings, settings_problem) = Settings::load(&data_dir);
+        let (mut settings, settings_problem) = Settings::load(&data_dir);
         let settings_read_only = settings_problem.as_ref().is_some_and(|p| !p.can_save);
         let mut notices = Vec::new();
         if let Some(p) = settings_problem {
@@ -211,6 +215,9 @@ impl NexusApp {
                 alert_history.toggle();
             }
         }
+        // Test runs never check for updates; `--tab update` and its siblings show the update's states.
+        let update = crate::update::Updater::new(live_run, &mut settings.updates, ov.updated_from.clone(), &data_dir, rt.handle().clone(), shot_tab.as_deref());
+        let restarted = ov.updated_from.is_some();
         NexusApp {
             core,
             settings,
@@ -231,7 +238,8 @@ impl NexusApp {
             alert_history,
             speaker,
             applied_scale: 0.0,
-            settings_dirty: None,
+            // The version that ran last (and a waiting update) is saved soon, so a crash doesn't announce an update twice.
+            settings_dirty: live_run.then(Instant::now),
             explo: pages::exploration::ExplorationUi::new(ov.tab.as_deref(), shot.is_some()),
             exo: pages::exobio::ExobioUi::new(ov.tab.as_deref(), shot.is_some()),
             mining_ui: pages::mining::MiningUi::new(ov.tab.as_deref(), shot.is_some()),
@@ -274,7 +282,8 @@ impl NexusApp {
             // The first frames load fonts and textures: nothing is logged in the first 10 seconds.
             slow_frame_logged: Some(Instant::now()),
             deposits_rev: (String::new(), 0, 0),
-            support: crate::support::at_start(live_run, shot_tab.as_deref()),
+            support: crate::support::at_start(live_run, restarted, shot_tab.as_deref()),
+            update,
         }
     }
 
@@ -459,6 +468,7 @@ impl NexusApp {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     ui.label(RichText::new("Elite Nexus").font(display(size::HEADLINE)).color(pal::TEXT));
                     ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).size(size::CAPTION).color(pal::DIM));
+                    self.update.sidebar_line(ui, &self.settings.updates);
                 });
             }
         });
@@ -655,6 +665,7 @@ impl NexusApp {
 
     fn content(&mut self, ui: &mut Ui) {
         self.notices(ui);
+        self.update.banner(ui, &self.settings.updates);
         let status = self.core.status.read().clone();
         match &status.phase {
             Phase::Loading { done, total } => {
@@ -797,6 +808,8 @@ impl NexusApp {
                     overlay_see_through: self.overlay.see_through(),
                     last_screenshot: self.shots.last(),
                     agents: self.mcp.status(),
+                    update: &mut self.update,
+                    live: self.overrides.journal_dir.is_none() && self.shot.is_none(),
                 };
                 pages::settings::show(ui, &mut cx);
                 settings_changed = cx.changed;
@@ -918,6 +931,8 @@ impl NexusApp {
             overlay_see_through: self.overlay.see_through(),
             last_screenshot: self.shots.last(),
             agents: self.mcp.status(),
+            update: &mut self.update,
+            live: self.overrides.journal_dir.is_none() && self.shot.is_none(),
         };
         // Scrolls: with the settings banner above it, a short window would otherwise cut off the folder's buttons.
         egui::ScrollArea::vertical().id_salt(("page", Page::Settings as u8, settings_page)).auto_shrink([false, false]).show(ui, |ui| {
@@ -1292,6 +1307,11 @@ impl eframe::App for NexusApp {
             self.nav.planned = Some(route);
         }
         self.watch_game();
+        // While the game runs, a downloaded update waits for Elite Nexus to close (the banner says so).
+        let playing = self.game_process.running() == Some(true);
+        if self.update.tick(ctx, &mut self.settings.updates, playing) {
+            self.settings_dirty = Some(Instant::now());
+        }
         self.auto_copy_next();
         self.remember_deposits();
         self.follow_flight();
@@ -1437,6 +1457,10 @@ impl NexusApp {
         let welcome_ahead = !self.settings.welcomed && self.shot.is_none() && !matches!(self.core.status.read().phase, Phase::Error(_));
         if !welcome_ahead &&self.support.as_mut().is_some_and(|card| card.show(&ctx)) {
             self.support = None;
+        }
+        // "What's new" for an update, when the commander opened it.
+        if self.update.windows(&ctx, &mut self.settings.updates) {
+            self.settings_dirty = Some(Instant::now());
         }
         self.toasts(&ctx);
     }

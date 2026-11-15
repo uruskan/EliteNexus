@@ -65,6 +65,8 @@ pub struct Settings {
     pub overlay: crate::overlay::window::OverlayPrefs,
     /// The game's screenshots saved again as PNG (off by default: it writes to the player's Pictures folder).
     pub screenshots: crate::screenshots::ScreenshotPrefs,
+    /// Settings › About › Updates: the checks (on by default), a skipped version, the version that ran last.
+    pub updates: crate::update::UpdatePrefs,
 }
 
 /// A named HUD colour matrix.
@@ -248,6 +250,7 @@ impl Default for Settings {
             mining: Default::default(),
             overlay: Default::default(),
             screenshots: Default::default(),
+            updates: Default::default(),
         }
     }
 }
