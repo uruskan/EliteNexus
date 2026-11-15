@@ -186,10 +186,17 @@ fn nothing_scanned(ui: &mut Ui, gs: &GameState, sys: Option<&SystemScan>, st: &m
     });
 }
 
-fn status_badge(ui: &mut Ui, s: DataStatus) -> egui::Response {
-    match s {
+fn status_badge(ui: &mut Ui, s: &SystemScan) -> egui::Response {
+    match s.status() {
         DataStatus::Unsold => badge(ui, "Unsold", pal::GOLD),
         DataStatus::Sold(ts) => badge(ui, &format!("Sold {}", ts.to_local_string("%d %b")), pal::GOOD),
+        DataStatus::SoldThenUnsold(ts) => badge(ui, "Partly sold", pal::GOLD).on_hover_text(format!(
+            "Sold on {}. What you scanned or mapped here since isn't sold yet: about {}, and only that counts as unsold. Value is the whole system's.",
+            ts.to_local_string("%d %b"),
+            short_credits(s.unsold_value())
+        )),
+        DataStatus::SoldThenLost(ts) => badge(ui, &format!("Sold {}", ts.to_local_string("%d %b")), pal::GOOD)
+            .on_hover_text("What you scanned or mapped here after that sale was lost when the ship was destroyed."),
         DataStatus::NotSellable => badge(ui, "Not sellable", pal::WARN)
             .on_hover_text("Scanned before a sale that Universal Cartographics didn't buy. The game keeps refusing it, so it's left out of unsold totals."),
         DataStatus::Lost => badge(ui, "Lost", pal::BAD).on_hover_text("Unsold when the ship was destroyed."),
@@ -264,7 +271,7 @@ fn history(ui: &mut Ui, gs: &GameState, st: &mut ExplorationUi) {
                     ui.label(RichText::new(short_credits(s.value())).color(pal::GOLD));
                 });
                 row.col(|ui| {
-                    status_badge(ui, s.status());
+                    status_badge(ui, s);
                 });
                 row.col(|ui| {
                     ui.label(RichText::new(s.last_visit.to_local_string("%d %b %H:%M")).color(pal::DIM));
@@ -281,8 +288,8 @@ fn history(ui: &mut Ui, gs: &GameState, st: &mut ExplorationUi) {
 fn keep(f: HistoryFilter, s: DataStatus) -> bool {
     match f {
         HistoryFilter::All => true,
-        HistoryFilter::Unsold => s == DataStatus::Unsold,
-        HistoryFilter::Sold => matches!(s, DataStatus::Sold(_)),
+        HistoryFilter::Unsold => matches!(s, DataStatus::Unsold | DataStatus::SoldThenUnsold(_)),
+        HistoryFilter::Sold => matches!(s, DataStatus::Sold(_) | DataStatus::SoldThenLost(_)),
         HistoryFilter::NotSellable => s == DataStatus::NotSellable,
         HistoryFilter::Lost => s == DataStatus::Lost,
     }
@@ -440,9 +447,15 @@ fn systems_list(ui: &mut Ui, mut list: Vec<&SystemScan>, st: &mut ExplorationUi,
         empty(ui, icon::CHECK_CIRCLE, empty_text, "");
         return;
     }
-    list.sort_by_key(|s| std::cmp::Reverse(s.value()));
-    let total: i64 = list.iter().map(|s| s.value()).sum();
+    list.sort_by_key(|s| std::cmp::Reverse(s.unsold_value()));
+    let total: i64 = list.iter().map(|s| s.unsold_value()).sum();
     ui.label(RichText::new(format!("{} systems · {}", list.len(), short_credits(total))).font(display(size::HEADLINE)).color(pal::GOLD));
+    if list.iter().any(|s| s.sold_at.is_some()) {
+        footnote(
+            ui,
+            "Where you sold data before, only what you scanned or mapped since counts. A planet mapped after you sold its scan counts at its full mapped value: what Universal Cartographics pays for it then isn't known.",
+        );
+    }
     ui.add_space(4.0);
     TableBuilder::new(ui)
         .striped(true)
@@ -466,13 +479,13 @@ fn systems_list(ui: &mut Ui, mut list: Vec<&SystemScan>, st: &mut ExplorationUi,
                     ui.label(&s.name);
                 });
                 row.col(|ui| {
-                    ui.label(s.scanned_bodies().to_string());
+                    ui.label(s.unsold_bodies().to_string());
                 });
                 row.col(|ui| {
-                    ui.label(RichText::new(short_credits(s.value())).color(pal::GOLD));
+                    ui.label(RichText::new(short_credits(s.unsold_value())).color(pal::GOLD));
                 });
                 row.col(|ui| {
-                    ui.label(short_credits(s.potential_value()));
+                    ui.label(short_credits(s.unsold_potential_value()));
                 });
                 row.col(|ui| {
                     ui.label(RichText::new(s.last_visit.to_local_string("%d %b %H:%M")).color(pal::DIM));

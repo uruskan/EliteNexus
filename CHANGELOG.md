@@ -56,6 +56,13 @@ release time that section becomes the new version and the release workflow publi
   a body with Guardian or Thargoid signals is now tagged by the signal's journal id, the same in every language.
   Before, the tag looked for the English word in the signal's name, so in a language that calls them something else
   it never showed. The body still lists its signals as your game names them.
+- **Exploration › Unsold data and History** after you come back to a system you sold: mapping one planet there, or
+  probing a ring, put the whole system back among the unsold data, bodies already sold included, and into the
+  "Unsold data lost" figure when the ship was destroyed; its history went from Sold to Unsold, then to Lost or Not
+  sellable. Universal Cartographics buys data by the body, and now only what you scanned or mapped since the sale
+  counts as unsold. A planet mapped after you sold its scan counts at its full mapped value (what Universal
+  Cartographics pays for it then isn't known); probing a ring adds nothing. History shows such a system as **Partly
+  sold**, and as sold if the new data is lost with the ship.
 
 ## [0.8.1] - 2026-11-11
 

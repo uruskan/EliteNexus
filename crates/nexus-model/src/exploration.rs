@@ -134,6 +134,9 @@ pub struct Body {
     pub organics: Vec<OrganicSpecies>,
     pub footfall: bool,
     pub value: BodyValue,
+    /// Holds cartographic data not sold yet: scanned for the first time, or mapped, since the system's last sale (or
+    /// the ship's loss). Universal Cartographics buys data by the body, so a system sold before counts only these.
+    pub unsold: bool,
     /// Likely species (bodies with biological signals), best first.
     pub predictions: Vec<nexus_data::bio_predict::Prediction>,
 }
@@ -194,6 +197,7 @@ impl Body {
             organics: Vec::new(),
             footfall: false,
             value: BodyValue::default(),
+            unsold: false,
             predictions: Vec::new(),
         }
     }
@@ -394,10 +398,12 @@ pub struct SystemScan {
     pub nav_beacon: bool,
     pub bodies: BTreeMap<u32, Body>,
     pub signals: Vec<FssSignal>,
+    /// Nothing held here is left to sell: the data went with a sale, or with the ship. Which bodies hold data not sold
+    /// yet is [`Body::unsold`].
     pub sold: bool,
-    /// When the data was last sold (Universal Cartographics).
+    /// When a sale last took this system's data (Universal Cartographics).
     pub sold_at: Option<Timestamp>,
-    /// The data was lost when the ship was destroyed.
+    /// Data held here was lost when the ship was destroyed, after the last sale.
     pub lost: bool,
     /// Scanned before a sale but not included in it. The game sells everything it will buy, so
     /// this data is very likely not sellable (shown separately, excluded from unsold totals).
@@ -409,6 +415,10 @@ pub struct SystemScan {
 pub enum DataStatus {
     Unsold,
     Sold(Timestamp),
+    /// Sold then; scanned or mapped there since, and that much isn't sold yet.
+    SoldThenUnsold(Timestamp),
+    /// Sold then; what was scanned or mapped there since was lost with the ship.
+    SoldThenLost(Timestamp),
     /// Left out of a sale: the game won't buy it.
     NotSellable,
     /// Lost with the ship.
@@ -445,18 +455,28 @@ impl SystemScan {
         }
     }
 
+    /// What became of the data scanned here. A sale and what came after it are told apart: sold, then a planet mapped
+    /// is [`DataStatus::SoldThenUnsold`], not unsold as a whole.
     pub fn status(&self) -> DataStatus {
-        match (self.sold, self.lost, self.sold_at) {
-            (true, true, _) => DataStatus::Lost,
-            (true, false, Some(ts)) => DataStatus::Sold(ts),
-            _ if self.skipped_in_sale => DataStatus::NotSellable,
-            _ => DataStatus::Unsold,
+        match (self.sold, self.sold_at) {
+            (false, _) if self.skipped_in_sale => DataStatus::NotSellable,
+            (false, None) => DataStatus::Unsold,
+            (false, Some(ts)) => DataStatus::SoldThenUnsold(ts),
+            (true, Some(ts)) if self.lost => DataStatus::SoldThenLost(ts),
+            (true, Some(ts)) => DataStatus::Sold(ts),
+            (true, None) if self.lost => DataStatus::Lost,
+            (true, None) => DataStatus::Unsold,
         }
     }
 
     /// Estimated value of what we've scanned here (current state), plus full-scan/map bonuses.
     pub fn value(&self) -> i64 {
-        let mut v: i64 = self.bodies.values().map(|b| b.value.current).sum();
+        self.bodies.values().map(|b| b.value.current).sum::<i64>() + self.bonuses()
+    }
+
+    /// The full-scan and full-map bonuses, once earned.
+    fn bonuses(&self) -> i64 {
+        let mut v = 0;
         if self.all_bodies_found {
             v += xv::FULL_SCAN_BONUS_PER_BODY * self.fss_body_count.unwrap_or(0) as i64;
         }
@@ -472,8 +492,40 @@ impl SystemScan {
         self.bodies.values().map(|b| b.value.mapped.max(b.value.current)).sum()
     }
 
+    /// Nothing scanned here has been sold or lost yet.
+    fn all_held(&self) -> bool {
+        self.sold_at.is_none() && !self.lost
+    }
+
+    /// Estimated value of the data held here that isn't sold yet: everything, bonuses included, while nothing here
+    /// has been sold or lost; after that, only the bodies scanned or mapped since ([`Body::unsold`]). A planet mapped
+    /// after its scan was sold counts at its mapped value, and the full-scan and full-map bonuses aren't counted
+    /// again: the research doesn't say what Universal Cartographics pays for either.
+    pub fn unsold_value(&self) -> i64 {
+        if self.all_held() {
+            return self.value();
+        }
+        self.bodies.values().filter(|b| b.unsold).map(|b| b.value.current).sum()
+    }
+
+    /// What the data not sold yet would be worth with every planet among it mapped.
+    pub fn unsold_potential_value(&self) -> i64 {
+        if self.all_held() {
+            return self.potential_value();
+        }
+        self.bodies.values().filter(|b| b.unsold).map(|b| b.value.mapped.max(b.value.current)).sum()
+    }
+
     pub fn scanned_bodies(&self) -> usize {
         self.bodies.values().filter(|b| b.has_scan && matches!(b.kind, BodyKind::Star | BodyKind::Planet)).count()
+    }
+
+    /// The scanned bodies (as [`SystemScan::scanned_bodies`] counts them) whose data isn't sold yet.
+    pub fn unsold_bodies(&self) -> usize {
+        if self.all_held() {
+            return self.scanned_bodies();
+        }
+        self.bodies.values().filter(|b| b.unsold && b.has_scan && matches!(b.kind, BodyKind::Star | BodyKind::Planet)).count()
     }
 
     pub fn bio_signal_total(&self) -> u32 {
@@ -690,13 +742,19 @@ impl Exploration {
     pub fn on_scan(&mut self, s: &ev::Scan, ts: Timestamp) -> (u64, u32) {
         let odyssey = self.odyssey;
         let sys = self.system_mut(s.system_address, &s.star_system, ts);
-        // A system we sold data for and come back to: new scans are new unsold data.
+        let held = !sys.sold;
         let body = sys.body_mut(s.body_id, &s.body_name);
+        let first = !body.has_scan;
         let was_scanned = body.has_scan && body.scan_type != "NavBeaconDetail";
         body.apply_scan(s, ts, odyssey);
-        if !was_scanned && s.scan_type != "NavBeaconDetail" {
+        // A body scanned for the first time is new data, also in a system we sold data for and came back to; one scanned
+        // again (the arrival star on a return visit) isn't. A nav beacon's scan counts only alongside data not sold.
+        let new_data = !was_scanned && s.scan_type != "NavBeaconDetail";
+        if new_data || (first && held) {
+            body.unsold = true;
+        }
+        if new_data {
             sys.sold = false;
-            sys.lost = false;
             sys.skipped_in_sale = false;
         }
         let is_star = s.is_star();
@@ -788,8 +846,12 @@ impl Exploration {
         body.probes_used = Some(s.probes_used);
         body.efficiency_target = Some(s.efficiency_target);
         body.recompute_value(odyssey);
-        sys.sold = false;
-        sys.lost = false;
+        // Mapping a body is new data, also where its scan was sold. Probing a ring isn't: the model gives rings no value
+        // (the research has none for them), so it leaves the system as it was.
+        if !(s.body_name.ends_with(" Ring") || matches!(body.kind, BodyKind::Ring | BodyKind::BeltCluster)) {
+            body.unsold = true;
+            sys.sold = false;
+        }
     }
 
     pub fn on_fss_signal(&mut self, f: &ev::FSSSignalDiscovered, system_name: &str, ts: Timestamp) {
@@ -844,33 +906,37 @@ impl Exploration {
         }
     }
 
-    /// Selling marks the listed systems as sold; returns the number matched. Systems scanned
-    /// before the sale that the game did not buy are flagged `skipped_in_sale` (verified on real
-    /// journals: data the game refuses stays unlisted across every later sale).
+    /// Selling marks the listed systems as sold, with everything held there; returns the number matched. Systems
+    /// scanned before the sale that the game did not buy are flagged `skipped_in_sale` (verified on real journals:
+    /// data the game refuses stays unlisted across every later sale).
     pub fn on_sell(&mut self, systems: &[String], earnings: i64, ts: Timestamp) -> usize {
         self.sold_total += earnings;
         self.sales.push(DataSale { ts, systems: systems.len(), earnings });
         let mut matched = 0;
         for s in self.systems.values_mut() {
-            if s.sold {
-                continue;
-            }
             if systems.iter().any(|n| n.eq_ignore_ascii_case(&s.name)) {
+                for b in s.bodies.values_mut() {
+                    b.unsold = false;
+                }
                 s.sold = true;
                 s.sold_at = Some(ts);
+                s.lost = false;
                 s.skipped_in_sale = false;
                 matched += 1;
-            } else if s.last_visit <= ts && s.scanned_bodies() > 0 && self.current != Some(s.address) {
+            } else if !s.sold && s.last_visit <= ts && s.scanned_bodies() > 0 && self.current != Some(s.address) {
                 s.skipped_in_sale = true;
             }
         }
         matched
     }
 
-    /// Unsold cartographic data is lost on death.
+    /// Unsold cartographic data is lost on death: what was sold before stays sold.
     pub fn on_death(&mut self) {
         for s in self.systems.values_mut() {
             if !s.sold {
+                for b in s.bodies.values_mut() {
+                    b.unsold = false;
+                }
                 s.sold = true;
                 s.lost = s.scanned_bodies() > 0;
             }
@@ -895,8 +961,10 @@ impl Exploration {
         self.systems.values().filter(|s| !s.sold && s.skipped_in_sale)
     }
 
+    /// Estimated value of the cartographic data not sold yet: of a system sold before, only what was scanned or
+    /// mapped there since.
     pub fn unsold_value(&self) -> i64 {
-        self.unsold().map(SystemScan::value).sum()
+        self.unsold().map(SystemScan::unsold_value).sum()
     }
 
     pub fn set_odyssey(&mut self, odyssey: bool) {

@@ -24,7 +24,7 @@ fn main() {
             s.last_visit.to_iso(),
             s.name,
             s.scanned_bodies(),
-            s.value(),
+            s.unsold_value(),
             types
         );
     }

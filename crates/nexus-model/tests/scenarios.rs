@@ -74,6 +74,103 @@ fn unsold_data_and_sale_skipping() {
     assert_eq!(ex.systems[&200].status(), DataStatus::NotSellable);
 }
 
+/// Universal Cartographics buys data by the body: sell a system, come back and map one of its planets, and only that
+/// mapping is unsold data. Its other bodies stay sold, a probed ring adds nothing (the model gives rings no value), and
+/// a death loses only what was new.
+#[test]
+fn data_mapped_after_a_sale_is_all_that_is_unsold() {
+    use nexus_journal::Timestamp;
+    use nexus_model::exploration::DataStatus;
+    let t = |s: &str| Timestamp::parse(s).expect("time");
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(
+        &mut m,
+        &[
+            r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"AutoScan", "BodyName":"Alpha", "BodyID":0, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":0.0, "StarType":"K", "StellarMass":0.7, "WasDiscovered":false, "WasMapped":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 1", "BodyID":1, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":400.0, "PlanetClass":"Earthlike body", "MassEM":1.0, "TerraformState":"", "Landable":false, "WasDiscovered":false, "WasMapped":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 2", "BodyID":2, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":10.0, "PlanetClass":"Rocky body", "MassEM":0.1, "Landable":true, "Rings":[ { "Name":"Alpha 2 A Ring", "RingClass":"eRingClass_Icy", "MassMT":1.0e9, "InnerRad":5.0e6, "OuterRad":9.0e6 } ], "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
+            r#"{ "timestamp":"2026-10-01T10:04:00Z", "event":"FSSAllBodiesFound", "SystemName":"Alpha", "SystemAddress":100, "Count":3 }"#,
+        ],
+    );
+    let ex = |m: &Model| m.active().unwrap().exploration.clone();
+    let alpha = |m: &Model| m.active().unwrap().exploration.systems[&100].clone();
+    // Never sold: everything scanned is unsold, the full-scan bonus with it, as before.
+    assert_eq!(ex(&m).unsold_value(), alpha(&m).value());
+    assert!(alpha(&m).value() > alpha(&m).bodies.values().map(|b| b.value.current).sum::<i64>(), "with the full-scan bonus");
+
+    let sell = |m: &mut Model, at: &str| {
+        let lines = [
+            jump(&format!("2026-10-01T{at}Z"), "Gamma", 300, 30.0),
+            format!(r#"{{ "timestamp":"2026-10-01T{at}Z", "event":"MultiSellExplorationData", "Discovered":[ {{ "SystemName":"Alpha", "NumBodies":3 }} ], "BaseValue":300000, "Bonus":400000, "TotalEarnings":700000 }}"#),
+        ];
+        feed(m, &lines.iter().map(String::as_str).collect::<Vec<_>>());
+    };
+    sell(&mut m, "10:10:00");
+    let sold = t("2026-10-01T10:10:00Z");
+    assert_eq!((ex(&m).unsold().count(), alpha(&m).status()), (0, DataStatus::Sold(sold)));
+
+    // Back in Alpha: the star scanned again on arrival and a ring probed are no new data.
+    feed(
+        &mut m,
+        &[
+            jump("2026-10-01T11:00:00Z", "Alpha", 100, 0.0).as_str(),
+            r#"{ "timestamp":"2026-10-01T11:00:30Z", "event":"Scan", "ScanType":"AutoScan", "BodyName":"Alpha", "BodyID":0, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":0.0, "StarType":"K", "StellarMass":0.7, "WasDiscovered":true, "WasMapped":false }"#,
+            r#"{ "timestamp":"2026-10-01T11:05:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 2 A Ring", "SystemAddress":100, "BodyID":3, "ProbesUsed":2, "EfficiencyTarget":0 }"#,
+        ],
+    );
+    assert_eq!((ex(&m).unsold().count(), alpha(&m).status()), (0, DataStatus::Sold(sold)), "still sold");
+
+    // Mapping a planet is new data: that planet alone is unsold, at its mapped value.
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T11:10:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 2", "SystemAddress":100, "BodyID":2, "ProbesUsed":3, "EfficiencyTarget":4 }"#]);
+    let rocky = alpha(&m).bodies[&2].value;
+    assert_eq!(rocky.current, rocky.mapped);
+    assert_eq!(ex(&m).unsold().count(), 1);
+    assert_eq!(ex(&m).unsold_value(), rocky.current, "not the star, the Earth-like or the bonus sold before");
+    assert_eq!(alpha(&m).unsold_potential_value(), rocky.mapped);
+    assert_eq!((alpha(&m).unsold_bodies(), alpha(&m).scanned_bodies()), (1, 3));
+    assert_eq!(alpha(&m).status(), DataStatus::SoldThenUnsold(sold), "the sale stays in the history");
+    assert!(alpha(&m).value() > rocky.current, "the system's own value is still all of it");
+
+    // Sold again, then the Earth-like mapped: the full-map bonus it completes was not counted again, nor the rest.
+    sell(&mut m, "11:20:00");
+    let sold = t("2026-10-01T11:20:00Z");
+    assert_eq!((ex(&m).unsold().count(), alpha(&m).status()), (0, DataStatus::Sold(sold)));
+    feed(
+        &mut m,
+        &[
+            jump("2026-10-01T12:00:00Z", "Alpha", 100, 0.0).as_str(),
+            r#"{ "timestamp":"2026-10-01T12:05:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 1", "SystemAddress":100, "BodyID":1, "ProbesUsed":5, "EfficiencyTarget":7 }"#,
+        ],
+    );
+    let earthlike = alpha(&m).bodies[&1].value.current;
+    assert_eq!(ex(&m).unsold_value(), earthlike);
+    assert_eq!(alpha(&m).status(), DataStatus::SoldThenUnsold(sold));
+
+    // Destroyed: only the Earth-like's mapping is lost; the system was sold and stays so in the history.
+    let alerts = feed(&mut m, &[r#"{ "timestamp":"2026-10-01T12:30:00Z", "event":"Died", "KillerName":"Gravity" }"#]);
+    let lost = format!("Unsold data lost: about {} Cr", nexus_data::names::compact_credits(earthlike));
+    assert!(alerts.iter().any(|a| a.detail == lost), "{lost}: {:?}", alerts.iter().map(|a| &a.detail).collect::<Vec<_>>());
+    assert_eq!((ex(&m).unsold().count(), ex(&m).unsold_value()), (0, 0));
+    assert_eq!(alpha(&m).status(), DataStatus::SoldThenLost(sold));
+    assert_eq!(ex(&m).history().count(), 1);
+
+    // Mapped again after the loss, then sold: sold as a whole once more.
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T13:05:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 1", "SystemAddress":100, "BodyID":1, "ProbesUsed":5, "EfficiencyTarget":7 }"#]);
+    assert_eq!((ex(&m).unsold_value(), alpha(&m).status()), (earthlike, DataStatus::SoldThenUnsold(sold)));
+    sell(&mut m, "13:30:00");
+    assert_eq!(alpha(&m).status(), DataStatus::Sold(t("2026-10-01T13:30:00Z")));
+
+    // A system never sold and lost with the ship is lost as a whole, as before.
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    feed(&mut m, &[r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 1", "BodyID":1, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":400.0, "PlanetClass":"Earthlike body", "MassEM":1.0, "TerraformState":"", "Landable":false, "WasDiscovered":false, "WasMapped":false }"#]);
+    let whole = alpha(&m).value();
+    let alerts = feed(&mut m, &[r#"{ "timestamp":"2026-10-01T12:30:00Z", "event":"Died", "KillerName":"Gravity" }"#]);
+    assert!(alerts.iter().any(|a| a.detail == format!("Unsold data lost: about {} Cr", nexus_data::names::compact_credits(whole))));
+    assert_eq!(alpha(&m).status(), DataStatus::Lost);
+}
+
 #[test]
 fn exobiology_sampling_and_bonus() {
     let mut m = Model::default();
