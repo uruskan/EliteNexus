@@ -46,6 +46,12 @@ release time that section becomes the new version and the release workflow publi
   extraction sites their grade, and a compromised nav beacon showed as a plain nav beacon, because the page read the
   signal names the game shows, which are in its language. It now reads each signal's id, which is the same in every
   language.
+- **Predicted species in a system where you logged a codex entry** in a game that names regions in another language
+  (Exobiology, Exploration, Ask): the codex entry tells the system's galactic region, which rules some species in or
+  out. The predictions now take the region by its codex id, the same in every language. Before, a region named in
+  another language wasn't recognised, so species that grow only in other regions stayed among the likely ones, and
+  thinned out the predictions, their expected values and the alerts. The Codex tab still names the region in your
+  game's language.
 
 ## [0.8.1] - 2026-11-11
 

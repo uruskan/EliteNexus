@@ -364,7 +364,10 @@ pub struct CodexRecord {
     pub name: String,
     pub category: String,
     pub sub_category: String,
+    /// As the game's language names it (`Region_Localised`): for showing.
     pub region: String,
+    /// The journal's region symbol (`$Codex_RegionName_18;`): the same in every language. See [`Exploration::region_of`].
+    pub region_symbol: String,
     pub system: String,
     pub body_id: Option<u32>,
     pub new_entry: bool,
@@ -811,6 +814,7 @@ impl Exploration {
             category: c.category_localised.clone().unwrap_or_else(|| c.category.clone()),
             sub_category: c.sub_category_localised.clone().unwrap_or_else(|| c.sub_category.clone()),
             region: c.region_localised.clone().unwrap_or_else(|| c.region.clone()),
+            region_symbol: c.region.clone(),
             system: c.system.clone(),
             body_id: c.body_id,
             new_entry: c.is_new_entry.unwrap_or(false),
@@ -954,9 +958,17 @@ pub fn body_facts(b: &Body, sys: &SystemScan, region: Option<String>) -> Option<
 }
 
 impl Exploration {
-    /// Codex region known for a system (from a codex entry logged there), if any.
+    /// Codex region known for a system (from a codex entry logged there), if any, as the exobiology data names it
+    /// ("Inner Orion Spur") whatever the game's language: found by the entry's region symbol, which is the same in every
+    /// language, else by its name (English names only). A region the data doesn't know keeps the name the game wrote.
+    /// The Codex tab shows [`CodexRecord::region`], in the game's language.
     pub fn region_of(&self, system: &str) -> Option<String> {
-        self.codex.iter().rev().find(|c| c.system.eq_ignore_ascii_case(system)).map(|c| c.region.clone())
+        let c = self.codex.iter().rev().find(|c| c.system.eq_ignore_ascii_case(system) && !(c.region.is_empty() && c.region_symbol.is_empty()))?;
+        let id = nexus_data::exobio::region_id(&c.region_symbol).or_else(|| nexus_data::exobio::region_id(&c.region));
+        match id.and_then(nexus_data::exobio::region_name) {
+            Some(name) => Some(name.to_string()),
+            None => Some(if c.region.is_empty() { c.region_symbol.clone() } else { c.region.clone() }),
+        }
     }
 
     /// (Re)computes species predictions for bio bodies of a system (all of them, or one).

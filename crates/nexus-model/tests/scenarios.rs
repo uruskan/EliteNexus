@@ -387,6 +387,52 @@ fn dss_genera_predict_the_same_in_every_language() {
     assert!(by_name.iter().all(|p| p.species.ends_with("(unknown species)") && p.value == 0));
 }
 
+/// A codex entry tells the system's galactic region, which rules some species in or out. The journal names the region
+/// in the game's language, but the exobiology data knows it in English: predictions take it by its symbol, so every
+/// language gets the predictions English gets. The Codex tab keeps the game's own name.
+#[test]
+fn codex_region_predicts_the_same_in_every_language() {
+    use nexus_data::bio_predict as bp;
+    // A Tussock on a thin-ammonia rock under a K star: three of its species grow only in some regions.
+    let body_in = |region: Option<&str>| {
+        let mut m = Model::default();
+        feed(&mut m, LOGIN);
+        feed(
+            &mut m,
+            &[
+                r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"AutoScan", "BodyName":"Alpha", "BodyID":0, "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":0.0, "StarType":"K", "Subclass":3, "StellarMass":0.7, "Luminosity":"Vab", "WasDiscovered":true, "WasMapped":false }"#,
+                r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 3", "BodyID":3, "Parents":[ { "Star":0 } ], "StarSystem":"Alpha", "SystemAddress":100, "DistanceFromArrivalLS":777.0, "PlanetClass":"Rocky body", "Atmosphere":"thin ammonia atmosphere", "AtmosphereType":"Ammonia", "AtmosphereComposition":[ { "Name":"Ammonia", "Percent":100.0 } ], "Volcanism":"", "MassEM":0.01, "Radius":1500000.0, "SurfaceGravity":0.563, "SurfaceTemperature":167.06, "SurfacePressure":347.5, "Landable":true, "Materials":[ { "Name":"iron", "Percent":19.6 }, { "Name":"cadmium", "Percent":1.5 }, { "Name":"ruthenium", "Percent":1.2 }, { "Name":"tin", "Percent":1.2 } ], "WasDiscovered":false, "WasMapped":false, "WasFootfalled":false }"#,
+                r#"{ "timestamp":"2026-10-01T10:05:00Z", "event":"SAASignalsFound", "BodyName":"Alpha 3", "SystemAddress":100, "BodyID":3, "Signals":[ { "Type":"$SAA_SignalType_Biological;", "Type_Localised":"Biological", "Count":1 } ], "Genuses":[ { "Genus":"$Codex_Ent_Tussocks_Genus_Name;", "Genus_Localised":"Tussock" } ] }"#,
+            ],
+        );
+        if let Some(region) = region {
+            let codex = format!(
+                r#"{{ "timestamp":"2026-10-01T10:06:00Z", "event":"CodexEntry", "EntryID":1400160, "Name":"$Codex_Ent_Standard_Rocky_Ammonia_Name;", "Name_Localised":"Rocky ammonia world", "SubCategory":"$Codex_SubCategory_Terrestrials;", "SubCategory_Localised":"Terrestrial planets", "Category":"$Codex_Category_StellarBodies;", "Category_Localised":"Astronomical Bodies", "Region":"$Codex_RegionName_18;", "Region_Localised":"{region}", "System":"Alpha", "SystemAddress":100, "BodyID":3, "IsNewEntry":false }}"#
+            );
+            feed(&mut m, &[&codex]);
+        }
+        m
+    };
+    let body = |m: &Model| m.active().unwrap().exploration.systems[&100].bodies[&3].clone();
+    let english = body_in(Some("Inner Orion Spur"));
+    let other = body_in(Some("Innerer Orionsporn (DE)"));
+    let unknown = body_in(None);
+    let (en, de, none) = (body(&english), body(&other), body(&unknown));
+    assert_ne!(en.predictions, none.predictions, "the region decides between species here");
+
+    // English: what the region's name gave before.
+    let sys = &english.active().unwrap().exploration.systems[&100];
+    let facts = nexus_model::exploration::body_facts(&en, sys, Some("Inner Orion Spur".into())).expect("facts");
+    assert_eq!(en.predictions, bp::predict(&facts, &en.genera_for_prediction()), "English predictions unchanged");
+
+    // Another language: the same species, chances and values as English.
+    assert_eq!(de.predictions, en.predictions);
+    assert_eq!(de.predicted_value(false), en.predicted_value(false));
+    let ex = &other.active().unwrap().exploration;
+    assert_eq!(ex.region_of("Alpha").as_deref(), Some("Inner Orion Spur"), "for predictions and Ask");
+    assert_eq!(ex.codex[0].region, "Innerer Orionsporn (DE)", "the Codex tab shows the game's own name");
+}
+
 #[test]
 fn carrier_transfer_is_not_spending() {
     let mut m = Model::default();
