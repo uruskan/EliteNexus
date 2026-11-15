@@ -32,6 +32,9 @@ release time that section becomes the new version and the release workflow publi
   same in every language, so a cancel always takes its order off. Orders left behind come off the next time Elite
   Nexus starts, since the list is rebuilt from your journals. An order the game logs without a translated name, such
   as tritium, now shows the commodity's English name ("Tritium") instead of the journal's "tritium".
+- **Mining › live session: high / med / low** in a game in another language: every asteroid you prospected counted as
+  low, because the count read the material content ("High") from the text the game shows, which is in its language.
+  It now reads the game's id for the content, which is the same in every language.
 
 ## [0.8.1] - 2026-11-11
 

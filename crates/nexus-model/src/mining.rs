@@ -30,7 +30,10 @@ pub fn add_point(points: &mut Vec<(f64, f64)>, p: (f64, f64), radius_m: f64) -> 
 #[derive(Debug, Clone, Default)]
 pub struct ProspectResult {
     pub ts: Timestamp,
+    /// The material content as the game showed it, in its language.
     pub content: String,
+    /// The game's symbol for it, the same in every language: `$AsteroidMaterialContent_High;`, `_Medium;` or `_Low;`.
+    pub content_symbol: String,
     pub motherlode: Option<String>,
     pub materials: Vec<(String, f64)>,
     pub remaining: f64,
@@ -68,10 +71,13 @@ impl MiningSession {
         self.total_refined() as f64 * 3600.0 / self.duration_secs() as f64
     }
 
+    /// High, medium and low prospects, by the content's symbol: the text shown is in the game's language. The text is
+    /// only the fallback, for a prospect without a symbol.
     pub fn content_counts(&self) -> (u32, u32, u32) {
         let mut h = (0, 0, 0);
         for p in &self.prospects {
-            match p.content.as_str() {
+            let content = if p.content_symbol.is_empty() { &p.content } else { &p.content_symbol };
+            match content.as_str() {
                 c if c.contains("High") => h.0 += 1,
                 c if c.contains("Medium") => h.1 += 1,
                 _ => h.2 += 1,
@@ -255,6 +261,7 @@ impl Mining {
         s.prospects.push(ProspectResult {
             ts,
             content: p.content_localised.clone().unwrap_or_else(|| p.content.clone()),
+            content_symbol: p.content.clone(),
             motherlode,
             materials,
             remaining: p.remaining,
@@ -441,6 +448,23 @@ mod tests {
             add_point(&mut points, (10.0 + 0.002 * f64::from(i), 21.0), r);
         }
         assert_eq!(points.len(), MAX_POINTS);
+    }
+
+    /// High, medium and low prospects count by the game's symbol for the content: the text shown beside it is in the
+    /// game's language.
+    #[test]
+    fn prospects_count_by_content_in_any_language() {
+        let counts = |shown: [&str; 3]| {
+            let mut m = Mining::default();
+            for (level, shown) in [("High", shown[0]), ("High", shown[0]), ("Medium", shown[1]), ("Low", shown[2])] {
+                let p = ev::ProspectedAsteroid { content: format!("$AsteroidMaterialContent_{level};"), content_localised: Some(shown.into()), remaining: 100.0, ..Default::default() };
+                m.on_prospected(&p, Timestamp(1), "Alpha", Some("Alpha 1 A Ring"));
+            }
+            m.session.expect("a session").content_counts()
+        };
+        assert_eq!(counts(["Material Content: High", "Material Content: Medium", "Material Content: Low"]), (2, 1, 1));
+        // Another language (made up here): the same counts. Every prospect used to count as low.
+        assert_eq!(counts(["Gehalt (XX): hoch", "Gehalt (XX): mittel", "Gehalt (XX): niedrig"]), (2, 1, 1));
     }
 
     #[test]
