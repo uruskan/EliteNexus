@@ -568,7 +568,9 @@ fn combat_signals(gs: &GameState) -> Vec<String> {
     let since = Timestamp(gs.location.last_arrival.0 - 120);
     let mut out: Vec<String> = Vec::new();
     for s in sys.signals.iter().filter(|s| s.ts >= since) {
-        if let Some(label) = combat_site(&s.name, s.kind.as_deref())
+        // The key starts with the journal's own name for the signal: its symbol, the same in every game language.
+        let symbol = s.key.split('|').next().unwrap_or_default();
+        if let Some(label) = combat_site(symbol, &s.name, s.kind.as_deref())
             && !out.contains(&label)
         {
             out.push(label);
@@ -577,11 +579,23 @@ fn combat_signals(gs: &GameState) -> Vec<String> {
     out
 }
 
-/// What a signal is, for a fighter: conflict zones, extraction sites, nav beacons. `name` is the name the journal
-/// gave (localised when it could), `kind` its `SignalType`.
-pub(crate) fn combat_site(name: &str, kind: Option<&str>) -> Option<String> {
+/// What a signal is, for a fighter: conflict zones, extraction sites, nav beacons. `symbol` is the journal's own name
+/// for it (`$Warzone_PointRace_High:#index=1;`), the same in every game language; `name` the name the game showed, in
+/// its language; `kind` its `SignalType`. The symbol decides, with the intensity or grade; the name only when the
+/// symbol isn't one known here, and the type last.
+pub(crate) fn combat_site(symbol: &str, name: &str, kind: Option<&str>) -> Option<String> {
+    site_named(symbol).or_else(|| site_named(name)).or_else(|| match kind.unwrap_or_default() {
+        // A game in another language names it in that language, and its symbol may be new; its type still says.
+        "Combat" => Some("Conflict zone".into()),
+        "ResourceExtraction" => Some("Extraction site".into()),
+        "NavBeacon" => Some("Nav beacon".into()),
+        _ => None,
+    })
+}
+
+/// A combat site by its symbol or its English name.
+fn site_named(name: &str) -> Option<String> {
     let n = name.to_ascii_lowercase();
-    let kind = kind.unwrap_or_default();
     if n.contains("warzone_powerplay") || n.contains("power conflict zone") {
         return Some("Powerplay conflict zone".into());
     }
@@ -592,11 +606,7 @@ pub(crate) fn combat_site(name: &str, kind: Option<&str>) -> Option<String> {
         let intensity = if n.contains("high") { " (high)" } else if n.contains("med") { " (medium)" } else if n.contains("low") { " (low)" } else { "" };
         return Some(format!("Conflict zone{intensity}"));
     }
-    // A game in another language names it in that language; its type is still Combat.
-    if kind == "Combat" {
-        return Some("Conflict zone".into());
-    }
-    if kind == "ResourceExtraction" || n.contains("resource extraction") || n.contains("scenario14_") || n.contains("scenario77_") || n.contains("scenario78_") || n.contains("scenario79_") {
+    if n.contains("resource extraction") || n.contains("scenario14_") || n.contains("scenario77_") || n.contains("scenario78_") || n.contains("scenario79_") {
         let grade = if n.contains("hazardous") || n.contains("scenario79_") {
             " (hazardous)"
         } else if n.contains("[high]") || n.contains("scenario78_") {
@@ -611,7 +621,7 @@ pub(crate) fn combat_site(name: &str, kind: Option<&str>) -> Option<String> {
     if n.contains("compromised") || n.contains("scenario80_") {
         return Some("Compromised nav beacon".into());
     }
-    if kind == "NavBeacon" || n.contains("nav beacon") || n.contains("scenario42_") {
+    if n.contains("nav beacon") || n.contains("scenario42_") {
         return Some("Nav beacon".into());
     }
     None
@@ -874,16 +884,67 @@ mod tests {
 
     #[test]
     fn combat_sites_from_signal_names() {
-        assert_eq!(combat_site("Conflict Zone [High Intensity]", Some("Combat")).as_deref(), Some("Conflict zone (high)"));
-        assert_eq!(combat_site("$Warzone_PointRace_Low:#index=1;", Some("Combat")).as_deref(), Some("Conflict zone (low)"));
-        assert_eq!(combat_site("Power Conflict Zone [Medium Intensity]", Some("Combat")).as_deref(), Some("Powerplay conflict zone"));
-        assert_eq!(combat_site("Konfliktzone [Hohe Intensität]", Some("Combat")).as_deref(), Some("Conflict zone"), "another language");
-        assert_eq!(combat_site("Resource Extraction Site [Hazardous]", Some("ResourceExtraction")).as_deref(), Some("Extraction site (hazardous)"));
-        assert_eq!(combat_site("$MULTIPLAYER_SCENARIO77_TITLE;", Some("ResourceExtraction")).as_deref(), Some("Extraction site (low)"));
-        assert_eq!(combat_site("Resource Extraction Site", Some("ResourceExtraction")).as_deref(), Some("Extraction site"));
-        assert_eq!(combat_site("Nav Beacon", Some("NavBeacon")).as_deref(), Some("Nav beacon"));
-        assert_eq!(combat_site("$MULTIPLAYER_SCENARIO80_TITLE;", Some("NavBeacon")).as_deref(), Some("Compromised nav beacon"));
-        assert_eq!(combat_site("Leesti's History", Some("TouristBeacon")), None);
-        assert_eq!(combat_site("TCG BARBAROS KFK-L3V", Some("FleetCarrier")), None);
+        // By symbol; the English name beside it says the same.
+        let site = |symbol: &str, name: &str, kind: &str| combat_site(symbol, name, Some(kind));
+        assert_eq!(site("$Warzone_PointRace_High:#index=2;", "Conflict Zone [High Intensity]", "Combat").as_deref(), Some("Conflict zone (high)"));
+        assert_eq!(site("$Warzone_PointRace_Med:#index=1;", "Conflict Zone [Medium Intensity]", "Combat").as_deref(), Some("Conflict zone (medium)"));
+        assert_eq!(site("$Warzone_PointRace_Low:#index=1;", "", "Combat").as_deref(), Some("Conflict zone (low)"));
+        assert_eq!(site("$Warzone_Powerplay_Med:#index=1;", "Power Conflict Zone [Medium Intensity]", "Combat").as_deref(), Some("Powerplay conflict zone"));
+        assert_eq!(site("$MULTIPLAYER_SCENARIO14_TITLE;", "Resource Extraction Site", "ResourceExtraction").as_deref(), Some("Extraction site"));
+        assert_eq!(site("$MULTIPLAYER_SCENARIO78_TITLE;", "Resource Extraction Site [High]", "ResourceExtraction").as_deref(), Some("Extraction site (high)"));
+        assert_eq!(site("$MULTIPLAYER_SCENARIO77_TITLE;", "", "ResourceExtraction").as_deref(), Some("Extraction site (low)"));
+        assert_eq!(site("$MULTIPLAYER_SCENARIO42_TITLE;", "Nav Beacon", "NavBeacon").as_deref(), Some("Nav beacon"));
+        assert_eq!(site("$MULTIPLAYER_SCENARIO80_TITLE;", "Compromised Nav Beacon", "NavBeacon").as_deref(), Some("Compromised nav beacon"));
+        // A symbol not known here: the English name, then the type.
+        assert_eq!(site("$New_Site;", "Conflict Zone [High Intensity]", "Combat").as_deref(), Some("Conflict zone (high)"));
+        assert_eq!(site("", "Power Conflict Zone [Medium Intensity]", "Combat").as_deref(), Some("Powerplay conflict zone"));
+        assert_eq!(site("$New_Site;", "Konfliktzone [Hohe Intensität]", "Combat").as_deref(), Some("Conflict zone"), "another language");
+        assert_eq!(site("", "Resource Extraction Site [Hazardous]", "ResourceExtraction").as_deref(), Some("Extraction site (hazardous)"));
+        assert_eq!(site("", "Nav Beacon", "NavBeacon").as_deref(), Some("Nav beacon"));
+        assert_eq!(site("Leesti's History", "Leesti's History", "TouristBeacon"), None);
+        assert_eq!(site("TCG BARBAROS KFK-L3V", "TCG BARBAROS KFK-L3V", "FleetCarrier"), None);
+    }
+
+    /// The combat sites logged since arriving in a system, from the game's journal lines for its signals: each one's
+    /// symbol, the name the game shows for it, and its type.
+    fn logged_here(signals: &[(&str, &str, &str)]) -> Vec<String> {
+        use nexus_journal::{Event, EventCtx, raw::scan_line};
+        let mut lines = vec![
+            r#"{ "timestamp":"2026-11-01T10:00:00Z", "event":"Fileheader", "part":1, "language":"English/UK", "Odyssey":true, "gameversion":"4.4.1.1", "build":"r1 " }"#.to_string(),
+            r#"{ "timestamp":"2026-11-01T10:00:00Z", "event":"Commander", "FID":"F1", "Name":"Tester" }"#.to_string(),
+            r#"{ "timestamp":"2026-11-01T10:00:01Z", "event":"LoadGame", "FID":"F1", "Commander":"Tester", "Ship":"Anaconda", "ShipID":1, "GameMode":"Solo", "Credits":1000, "Loan":0 }"#.to_string(),
+            r#"{ "timestamp":"2026-11-01T10:00:02Z", "event":"FSDJump", "StarSystem":"Alpha", "SystemAddress":1001, "StarPos":[0.0,0.0,0.0], "Population":1000, "JumpDist":10.0 }"#.to_string(),
+        ];
+        lines.extend(signals.iter().map(|(symbol, shown, kind)| {
+            format!(r#"{{ "timestamp":"2026-11-01T10:00:03Z", "event":"FSSSignalDiscovered", "SystemAddress":1001, "SignalName":"{symbol}", "SignalName_Localised":"{shown}", "SignalType":"{kind}" }}"#)
+        }));
+        let mut m = nexus_model::Model::default();
+        let mut quiet = nexus_model::Alerts::disabled();
+        for line in &lines {
+            let (ts, name) = scan_line(line).expect("line");
+            let ev = Event::parse(name, line).expect("event");
+            m.apply(&EventCtx { ts, name, line, live: false }, &ev, &mut quiet);
+        }
+        combat_signals(m.active().expect("commander"))
+    }
+
+    /// A conflict zone's intensity, an extraction site's grade and a compromised nav beacon come from the signal's
+    /// symbol, which is the same in every game language: in another language the name shown says nothing readable.
+    #[test]
+    fn combat_sites_here_in_any_language() {
+        let sites = |names: [&str; 5]| {
+            logged_here(&[
+                ("$Warzone_PointRace_High:#index=1;", names[0], "Combat"),
+                ("$MULTIPLAYER_SCENARIO79_TITLE;", names[1], "ResourceExtraction"),
+                ("$MULTIPLAYER_SCENARIO77_TITLE;", names[2], "ResourceExtraction"),
+                ("$MULTIPLAYER_SCENARIO80_TITLE;", names[3], "NavBeacon"),
+                ("$MULTIPLAYER_SCENARIO42_TITLE;", names[4], "NavBeacon"),
+            ])
+        };
+        let want = ["Conflict zone (high)", "Extraction site (hazardous)", "Extraction site (low)", "Compromised nav beacon", "Nav beacon"];
+        let english = ["Conflict Zone [High Intensity]", "Resource Extraction Site [Hazardous]", "Resource Extraction Site [Low]", "Compromised Nav Beacon", "Nav Beacon"];
+        assert_eq!(sites(english), want);
+        // Another language, made up here.
+        assert_eq!(sites(["Kampfgebiet XX [3]", "Abbaugebiet XX [4]", "Abbaugebiet XX [1]", "Leuchtfeuer XX [!]", "Leuchtfeuer XX"]), want);
     }
 }

@@ -42,6 +42,10 @@ release time that section becomes the new version and the release workflow publi
 - **Ask: "where did I mine …?"** in a game in another language: asked for a commodity by its English name, the
   assistant found none of your Rhino mining sites, because the refinery names what it made in the game's language. It
   now also matches the commodity by the game's id for it, which is the same in every language.
+- **Combat › your current system** in a game in another language: conflict zones lost their intensity, resource
+  extraction sites their grade, and a compromised nav beacon showed as a plain nav beacon, because the page read the
+  signal names the game shows, which are in its language. It now reads each signal's id, which is the same in every
+  language.
 
 ## [0.8.1] - 2026-11-11
 
