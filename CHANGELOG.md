@@ -5,8 +5,13 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+## [0.8.2] - 2026-11-25
+
+Elite Nexus now says when a new version is out and installs it with a click, and sold exobiology data no longer stays
+on the unsold list. The other fixes are mostly for games that run in a language other than English.
+
 ### Added
-- **Updates** (asked for by many of you): Elite Nexus now tells you when a new version is out. A minute after it
+- **Updates** (asked for by Alvarrune on the Frontier Forums, and by many of you): Elite Nexus now tells you when a new version is out. A minute after it
   starts and every 12 hours, it asks GitHub which version is the newest, a download that sends nothing about you
   (Settings › About › **Check for updates** switches it off, **Check now** asks once). A banner above every page says
   what's out, with **What's new** from the changelog. On Windows and Linux, **Update** downloads it, checks it against

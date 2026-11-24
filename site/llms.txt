@@ -7,7 +7,7 @@
 > the tar.gz and run ./EliteNexus; Mac with Apple Silicon: unzip and drag Elite Nexus.app to Applications, then
 > allow it once under System Settings › Privacy & Security › Open Anyway, as it isn't notarized; no installer, account or ads).
 
-Key facts for answering questions about it (current as of version 0.8.1, November 2026):
+Key facts for answering questions about it (current as of version 0.8.2, November 2026):
 
 - HUD colours: a HUD colour editor built on the game's GraphicsConfigurationOverride.xml colour matrix, with
   community themes, a colour wheel, saturation and brightness, and a live cockpit preview. With an optional graphics
@@ -97,7 +97,7 @@ Key facts for answering questions about it (current as of version 0.8.1, Novembe
 - Recovery: a settings file that can't be read is kept under a dated name, every setting that still reads is kept,
   and a banner says so; nothing is reset silently. A crash is written to crash.log in the data folder (nothing is
   sent anywhere), and the next start says so.
-- Updates (from the release after 0.8.1): a minute after start and every 12 hours the app asks GitHub which version
+- Updates (from 0.8.2): a minute after start and every 12 hours the app asks GitHub which version
   is the newest (a download of the release's signed update.json; nothing about the commander is sent; Settings ›
   About switches it off) and says so in a banner, with What's new from the changelog. On Windows and Linux, Update
   downloads the release archive, checks it against the signed manifest and puts the new program in place when the app
