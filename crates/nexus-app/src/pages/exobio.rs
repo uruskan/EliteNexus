@@ -559,6 +559,9 @@ fn unlisted_note(sales: &[Timestamp]) -> String {
     format!("The game logged {logged}, so Elite Nexus can't tell which of these were sold, or for how much. If Vista Genomics has nothing left to sell, use Clear list.")
 }
 
+/// How tall the unsold list grows before it scrolls: about eight samples, newest first.
+const UNSOLD_LIST_HEIGHT: f32 = 240.0;
+
 /// The question Clear list asks before it clears `n` samples.
 fn clear_question(n: usize) -> String {
     match n {
@@ -610,17 +613,20 @@ fn unsold(ui: &mut Ui, bio: &ExoBio, confirm: &mut bool) -> Option<Timestamp> {
                     *confirm = true;
                 }
                 ui.add_space(8.0);
-                Grid::new("unsoldbio").max_col_width(ui.available_width()).num_columns(3).striped(true).spacing([10.0, 3.0]).show(ui, |ui| {
-                    for r in bio.unsold.iter().rev() {
-                        ui.label(RichText::new(&r.species).color(pal::TEXT));
-                        ui.label(RichText::new(&r.body_name).color(pal::DIM));
-                        let mut t = RichText::new(short_credits(r.expected_payout())).color(pal::GOLD);
-                        if r.bonus_expected {
-                            t = t.strong();
+                // A long trip's list scrolls inside the card, so the signals under it stay in reach (GitHub issue #24).
+                egui::ScrollArea::vertical().id_salt("unsoldbio-scroll").max_height(UNSOLD_LIST_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
+                    Grid::new("unsoldbio").max_col_width(ui.available_width()).num_columns(3).striped(true).spacing([10.0, 3.0]).show(ui, |ui| {
+                        for r in bio.unsold.iter().rev() {
+                            ui.label(RichText::new(&r.species).color(pal::TEXT));
+                            ui.label(RichText::new(&r.body_name).color(pal::DIM));
+                            let mut t = RichText::new(short_credits(r.expected_payout())).color(pal::GOLD);
+                            if r.bonus_expected {
+                                t = t.strong();
+                            }
+                            ui.label(t).on_hover_text(if r.bonus_expected { "Includes the first-logged bonus (5× total)" } else { "Base value" });
+                            ui.end_row();
                         }
-                        ui.label(t).on_hover_text(if r.bonus_expected { "Includes the first-logged bonus (5× total)" } else { "Base value" });
-                        ui.end_row();
-                    }
+                    });
                 });
             }
             ui.add_space(4.0);

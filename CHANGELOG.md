@@ -29,6 +29,9 @@ release time that section becomes the new version and the release workflow publi
   once Vista Genomics has nothing left to sell. It changes only this list in Elite Nexus, nothing in the game or its
   journals, and the list stays cleared when Elite Nexus starts again; samples you analyse afterwards are listed as
   usual. The activity feed now says such a sale came without its samples, instead of "Sold exobiology data: 0 Cr".
+- **Exobiology › Unsold Vista Genomics data** on a long trip (reported by nEo-1664 in GitHub issue #24): the list grew
+  with every sample and pushed the rest of the page further and further down. From about eight samples on it now scrolls
+  inside its card, newest first, so the biological signals under it stay where they are.
 - **Exobiology › Sampling** in a game that names species in another language: a sample's value (and with it the
   estimated payout) and its colony range are now found by the species' codex id. Before, they were looked up by the
   English name, so another language left the value at 0 and the sampling radar without its colony-range circle.
