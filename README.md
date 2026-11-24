@@ -124,8 +124,18 @@ else's report, idea or help. Thank you, commanders.
 **Sponsors**
 
 * **[sjgarth](https://github.com/sjgarth)** (Alvarrune on the Frontier Forums),
-  **[Joseph-Davila](https://github.com/Joseph-Davila)**, and one sponsor who chose to stay anonymous. Everyone who
-  bought a coffee: thank you too.
+  **[mkulicke](https://github.com/mkulicke)** and **[Joseph-Davila](https://github.com/Joseph-Davila)** on GitHub
+  Sponsors, and the sponsors who chose to stay anonymous.
+* **yazcamapp**
+* **NK**
+* **NetworX**
+* **CMDR Robbed**
+* **Fedifensor**
+* **Quwartos Grimmbart**
+* **Matt**
+* **CMDR Suganami**
+
+  They bought a coffee, and so did others who left no name: thank you too.
 
 **Bug reports and ideas on GitHub**
 
@@ -147,13 +157,17 @@ else's report, idea or help. Thank you, commanders.
 * **[WadRail](https://github.com/WadRail)**: sold exobiology data that stayed listed as unsold, and the journal lines
   that showed the game logging sales without their samples
   ([issue #20](https://github.com/uruskan/EliteNexus/issues/20)).
+* **[chrisvfritz](https://github.com/chrisvfritz)**: the Merc blueprints that were missing from Engineering
+  ([issue #10](https://github.com/uruskan/EliteNexus/issues/10)).
+* **[nEo-1664](https://github.com/nEo-1664)**: a long unsold exobiology list that pushed the rest of the page down,
+  which now scrolls inside its card ([issue #24](https://github.com/uruskan/EliteNexus/issues/24)).
 
 **Bug reports and ideas on the Frontier Forums**
 
 * **cmdr chequers**: journals on a network share, the fleet carrier jump and cooldown timers, and the memory
   comparison with EDDiscovery.
 * **Alvarrune**: a Steam library on another drive, a colonisation depot that wasn't theirs, the route countdown, the
-  dimmer crash, and screenshots saved as PNG.
+  dimmer crash, screenshots saved as PNG, and a notice in the app when a new version is out.
 * **Asmodeus**: Elite Nexus changing bindings (it never touches them now), and clearing the recent mission history.
 * **Smallfishnz**: the window vanishing, which is why there is a crash log.
 * **NetworX**: the BGS tick hour resetting, the merits earned in each system, trade routes from the station you're
