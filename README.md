@@ -126,7 +126,6 @@ else's report, idea or help. Thank you, commanders.
 * **[sjgarth](https://github.com/sjgarth)** (Alvarrune on the Frontier Forums),
   **[mkulicke](https://github.com/mkulicke)** and **[Joseph-Davila](https://github.com/Joseph-Davila)** on GitHub
   Sponsors, and the sponsors who chose to stay anonymous.
-* **yazcamapp**
 * **NK**
 * **NetworX**
 * **CMDR Robbed**
