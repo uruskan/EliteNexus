@@ -231,7 +231,10 @@ If Elite Nexus closes unexpectedly, it writes where to `crash.log` in the data f
 › **Open**), and the next start says it didn't close normally. `nexus.log` there shows what it was doing. Neither file
 is sent anywhere: attaching them to a GitHub issue or a Frontier Forums post helps fix the problem. A journal entry
 Elite Nexus can't handle is skipped (and listed under Settings › Journal) instead of stopping it from following the
-game. Start it from a folder you unzipped it into: run from inside the zip, Windows unpacks it to a new temporary
+game. When Windows or the graphics driver resets the graphics card (after sleep, a driver update, or the card stopping
+under load), the window can't draw any more: Elite Nexus starts again by itself and says why, at most once a minute;
+a newer graphics driver usually makes it rarer. On Windows it draws with DirectX 12 when the computer has it (setting
+the `WGPU_BACKEND` environment variable to `vulkan` chooses Vulkan instead). Start it from a folder you unzipped it into: run from inside the zip, Windows unpacks it to a new temporary
 folder each time, settings and database included, and Elite Nexus says so.
 
 ## Updates

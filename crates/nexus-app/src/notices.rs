@@ -72,11 +72,20 @@ pub fn old_dimmer() -> Notice {
 /// Written at start, removed on a normal exit: still there at the next start, the last run ended some other way.
 const RUNNING_MARKER: &str = "running";
 
-/// The notice when the last run didn't end normally (and the marker for this one).
-pub fn last_run(data_dir: &Path) -> Option<Notice> {
+/// The notice when the last run didn't end normally (and the marker for this one). `gpu_reset`: it lost its graphics
+/// device and started this run itself (gpu.rs).
+pub fn last_run(data_dir: &Path, gpu_reset: bool) -> Option<Notice> {
     let marker = data_dir.join(RUNNING_MARKER);
     let started = std::fs::metadata(&marker).and_then(|m| m.modified()).ok();
     let _ = std::fs::write(&marker, b"");
+    if gpu_reset {
+        return Some(Notice {
+            title: "Elite Nexus restarted after the graphics card reset",
+            text: "Windows or the graphics driver reset the graphics card (after sleep, a driver update, or the card stopping under load), and the window couldn't draw on it any more, so Elite Nexus started again by itself. If it happens often, a newer graphics driver usually helps; crash.log in the data folder has the details.".into(),
+            closable: true,
+            action: Some(Action::DataFolder),
+        });
+    }
     let started = started?;
     let crashed = std::fs::metadata(data_dir.join("crash.log")).and_then(|m| m.modified()).is_ok_and(|t| t >= started);
     let text = if crashed {
@@ -114,18 +123,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("dir");
         // First start: nothing to report, and the marker is down.
-        assert!(last_run(&dir).is_none());
+        assert!(last_run(&dir, false).is_none());
         assert!(dir.join(RUNNING_MARKER).exists());
         // Not removed (no normal exit): reported, without blaming a crash it can't see.
-        let n = last_run(&dir).expect("notice");
+        let n = last_run(&dir, false).expect("notice");
         assert!(n.text.starts_with("It may have crashed"), "{}", n.text);
         // A crash.log written during that run: it says so.
         std::thread::sleep(Duration::from_millis(20));
         std::fs::write(dir.join("crash.log"), "panicked").expect("crash.log");
-        assert!(last_run(&dir).expect("notice").text.starts_with("It probably crashed"));
+        assert!(last_run(&dir, false).expect("notice").text.starts_with("It probably crashed"));
         // A normal exit removes the marker.
         clean_exit(&dir);
-        assert!(last_run(&dir).is_none());
+        assert!(last_run(&dir, false).is_none());
+        // Started after the last run lost its graphics device: it says that, not "didn't close normally".
+        clean_exit(&dir);
+        assert!(last_run(&dir, true).expect("notice").title.contains("graphics card reset"));
+        clean_exit(&dir);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
