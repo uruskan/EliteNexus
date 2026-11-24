@@ -8,7 +8,8 @@ release time that section becomes the new version and the release workflow publi
 ## [0.8.2] - 2026-11-25
 
 Elite Nexus now says when a new version is out and installs it with a click, and sold exobiology data no longer stays
-on the unsold list. The other fixes are mostly for games that run in a language other than English.
+on the unsold list. On Windows it draws with DirectX 12 now, and starts again by itself if the graphics card resets.
+The other fixes are mostly for games that run in a language other than English.
 
 ### Added
 - **Updates** (asked for by Alvarrune on the Frontier Forums, and by many of you): Elite Nexus now tells you when a new version is out. A minute after it
@@ -22,6 +23,12 @@ on the unsold list. The other fixes are mostly for games that run in a language 
   updated by hand this once.
 
 ### Fixed
+- **Crashes after the graphics card resets** (reported by yqol in GitHub issue #22): when Windows or the graphics
+  driver reset the card (after sleep, a driver update, or the card stopping under load), Elite Nexus closed with
+  "Failed to create staging buffer" in crash.log. The window can't draw on a reset card, a limit of the UI library it's
+  built with, but on Windows it now draws with DirectX 12 where the computer has it, where this hasn't been reported,
+  instead of Vulkan. If the card is lost anyway, Elite Nexus starts again by itself and says why (at most once a
+  minute), and nexus.log names the graphics card and driver it draws with.
 - **Exobiology › Unsold Vista Genomics data** (found while looking into GitHub issue #20): samples you had sold could
   stay on the list, and in the estimated payout, when the sale named a species differently from the scan (the names
   are in the game's language). A sale now takes each sample off by the species' codex id, which is the same in every

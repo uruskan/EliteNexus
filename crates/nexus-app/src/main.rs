@@ -14,6 +14,7 @@ mod finder;
 mod folders;
 mod follow;
 mod game_process;
+mod gpu;
 mod icon;
 mod jobs;
 mod market;
@@ -47,8 +48,9 @@ fn app_icon() -> egui::IconData {
     egui::IconData { rgba: icon::rgba(64), width: 64, height: 64 }
 }
 
-/// The instance lock, waited for up to 15 seconds when `wait`: a copy an update's Restart now started (`--updated`)
-/// begins while the old one is still letting go of it.
+/// The instance lock, waited for up to 15 seconds when `wait`: a copy an update's Restart now started (`--updated`),
+/// or one started after the last lost its graphics device (`--gpu-reset`), begins while the old one is still letting
+/// go of it.
 fn single_instance(data_dir: &std::path::Path, wait: bool) -> Option<std::fs::File> {
     let until = std::time::Instant::now() + std::time::Duration::from_secs(if wait { 15 } else { 0 });
     loop {
@@ -134,11 +136,13 @@ fn main() -> eframe::Result {
     if let Some(code) = desktop_entry_cli() {
         std::process::exit(code);
     }
+    let started = std::time::Instant::now();
     let data_dir = settings::data_dir();
     let screenshot_run = std::env::args().any(|a| a == "--screenshot");
     // `--updated <version>`: an update's Restart now started this copy, from that version.
     let restarted_from = std::env::args().skip_while(|a| a != "--updated").nth(1);
-    let _instance = match single_instance(&data_dir, restarted_from.is_some()) {
+    let gpu_reset = std::env::args().any(|a| a == gpu::RESTART_FLAG);
+    let _instance = match single_instance(&data_dir, restarted_from.is_some() || gpu_reset) {
         Some(lock) => Some(lock),
         None if screenshot_run => None,
         None => {
@@ -179,6 +183,11 @@ fn main() -> eframe::Result {
             use std::io::Write;
             let _ = f.write_all(text.as_bytes());
         }
+        // The window's graphics device was lost and egui-wgpu can't draw on a new one: a new copy takes over, once.
+        static RESTARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if name == "main" && !screenshot_run && gpu::is_loss(&info.to_string()) && !RESTARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            gpu::restart(started);
+        }
     }));
 
     // Optional: --page <name>  --screenshot <file.png>
@@ -204,6 +213,7 @@ fn main() -> eframe::Result {
         overlay_demo: arg("--overlay"),
         overlay_see_through: see_through,
         updated_from: restarted_from,
+        gpu_reset,
     };
 
     // --size 1000x700: window size for responsive-layout screenshots.
@@ -237,20 +247,30 @@ fn main() -> eframe::Result {
         window_builder: Some(Box::new(|builder: egui::ViewportBuilder| builder.with_transparent(false))),
         ..Default::default()
     };
-    // Windows: a DirectX 12 swap chain made on a window is opaque, and so is Vulkan's there; one made through
-    // DirectComposition can be see-through. A computer without DirectX 12 still starts, with an opaque overlay.
+    // Windows: DirectX 12 draws the window when the computer has it, on the graphics card rather than the processor's
+    // own, and Vulkan (wgpu's first pick) only when it hasn't: egui-wgpu's crash on a lost graphics device (GitHub issue
+    // #22, emilk/egui#8450) is reported under Vulkan, not DirectX 12. WGPU_BACKEND=vulkan still chooses Vulkan. A DirectX 12 swap chain made on a window is
+    // opaque, and so is Vulkan's there; one made through DirectComposition can be see-through, for the overlay. A
+    // computer without DirectX 12 still starts, with an opaque overlay.
     #[cfg(windows)]
-    if see_through && let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_options.wgpu_setup {
         use eframe::wgpu;
         use overlay::window::NoSeeThrough;
-        setup.instance_descriptor.backend_options.dx12.presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
-        setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'_>>| {
+        if see_through {
+            setup.instance_descriptor.backend_options.dx12.presentation_system = wgpu::Dx12SwapchainKind::DxgiFromVisual;
+        }
+        setup.native_adapter_selector = Some(std::sync::Arc::new(move |adapters: &[wgpu::Adapter], surface: Option<&wgpu::Surface<'_>>| {
             let usable = |a: &&wgpu::Adapter| surface.is_none_or(|s| a.is_surface_supported(s));
+            // A real graphics card first (DirectX 12's software renderer is a "CPU" adapter), then DirectX 12, then
+            // the discrete card of a laptop that has two (egui's own default, high performance).
             let rank = |a: &&wgpu::Adapter| {
                 let info = a.get_info();
-                (info.backend == wgpu::Backend::Dx12, info.device_type == wgpu::DeviceType::DiscreteGpu)
+                (info.device_type != wgpu::DeviceType::Cpu, info.backend == wgpu::Backend::Dx12, info.device_type == wgpu::DeviceType::DiscreteGpu)
             };
             let chosen = adapters.iter().filter(usable).max_by_key(rank).cloned().ok_or_else(|| "No graphics adapter can draw to the window".to_string())?;
+            if !see_through {
+                return Ok(chosen);
+            }
             // Another adapter, or a surface that blends nothing, draws no see-through window: the overlay's island is
             // then a window of its own.
             let info = chosen.get_info();

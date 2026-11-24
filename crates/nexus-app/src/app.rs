@@ -35,6 +35,8 @@ pub struct Overrides {
     pub overlay_see_through: bool,
     /// `--updated <version>`: an update's Restart now started this run, from that version.
     pub updated_from: Option<String>,
+    /// `--gpu-reset`: the last run lost its graphics device and started this one (gpu.rs).
+    pub gpu_reset: bool,
 }
 
 pub struct ScreenshotJob {
@@ -148,6 +150,7 @@ pub struct NexusApp {
 impl NexusApp {
     pub fn new(cc: &eframe::CreationContext<'_>, data_dir: PathBuf, start_page: Option<Page>, shot: Option<ScreenshotJob>, ov: Overrides) -> Self {
         crate::theme::install(&cc.egui_ctx);
+        crate::gpu::watch(cc.wgpu_render_state.as_ref());
         let (mut settings, settings_problem) = Settings::load(&data_dir);
         let settings_read_only = settings_problem.as_ref().is_some_and(|p| !p.can_save);
         let mut notices = Vec::new();
@@ -157,7 +160,7 @@ impl NexusApp {
         }
         // Test runs (screenshots) leave the marker and the notices of real runs alone.
         if shot.is_none() {
-            notices.extend(crate::notices::last_run(&data_dir));
+            notices.extend(crate::notices::last_run(&data_dir, ov.gpu_reset));
             notices.extend(crate::notices::running_from_zip());
         }
         nexus_hud::install::set_game_dir(settings.game_dir.as_deref());

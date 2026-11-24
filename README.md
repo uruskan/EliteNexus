@@ -161,6 +161,8 @@ else's report, idea or help. Thank you, commanders.
   ([issue #10](https://github.com/uruskan/EliteNexus/issues/10)).
 * **[nEo-1664](https://github.com/nEo-1664)**: a long unsold exobiology list that pushed the rest of the page down,
   which now scrolls inside its card ([issue #24](https://github.com/uruskan/EliteNexus/issues/24)).
+* **[yqol](https://github.com/yqol)**: the crash log of a graphics card that reset under Elite Nexus
+  ([issue #22](https://github.com/uruskan/EliteNexus/issues/22)).
 
 **Bug reports and ideas on the Frontier Forums**
 
