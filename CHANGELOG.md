@@ -5,6 +5,10 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+### Added
+- **Exploration › Recent scans** shows the current system's scans and mappings, newest activity first, one row per
+  body. Mapping moves the body back to the top. Filters narrow the list without changing its order.
+
 ## [0.8.2] - 2026-11-25
 
 Elite Nexus now says when a new version is out and installs it with a click, and sold exobiology data no longer stays

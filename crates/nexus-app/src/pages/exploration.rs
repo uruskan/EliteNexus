@@ -6,7 +6,7 @@ use crate::widgets::{self, GAP, Steps, badge, bar, card, card_tinted, cards, emp
 use egui::{Grid, RichText, Sense, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
-use nexus_model::exploration::{interesting, Body, BodyKind, DataStatus, FssSignal, Interest, SystemScan};
+use nexus_model::exploration::{interesting, Body, BodyKind, DataStatus, FssSignal, Interest, ScanActivityKind, SystemScan};
 use nexus_model::GameState;
 use nexus_spansh::RichesRouteRequest;
 use std::collections::BTreeMap;
@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 pub enum Tab {
     #[default]
     Current,
+    Recent,
     Find,
     Unsold,
     History,
@@ -80,6 +81,42 @@ impl Default for FindBodies {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum MappingFilter {
+    #[default]
+    All,
+    Unmapped,
+    Mapped,
+}
+
+#[derive(Default, PartialEq)]
+struct RecentFilters {
+    mapping: MappingFilter,
+    body_type: Option<String>,
+    min_value: f64,
+    min_mapped_value: f64,
+    max_distance: f64,
+    max_gravity: f64,
+    max_temperature: f64,
+}
+
+impl RecentFilters {
+    fn matches(&self, body: &Body) -> bool {
+        let mapping_matches = match self.mapping {
+            MappingFilter::All => true,
+            MappingFilter::Unmapped => body.kind == BodyKind::Planet && !body.mapped,
+            MappingFilter::Mapped => body.mapped,
+        };
+        mapping_matches
+            && self.body_type.as_ref().is_none_or(|kind| type_label(body) == *kind)
+            && body.value.current as f64 >= self.min_value
+            && (self.min_mapped_value == 0.0 || (body.kind == BodyKind::Planet && body.value.mapped as f64 >= self.min_mapped_value))
+            && (self.max_distance == 0.0 || (body.has_scan && body.distance_ls <= self.max_distance))
+            && (self.max_gravity == 0.0 || body.gravity_g().is_some_and(|g| g <= self.max_gravity))
+            && (self.max_temperature == 0.0 || body.temperature_k.is_some_and(|t| t <= self.max_temperature))
+    }
+}
+
 #[derive(Default)]
 pub struct ExplorationUi {
     pub tab: Tab,
@@ -88,15 +125,18 @@ pub struct ExplorationUi {
     pub system: Option<u64>,
     pub history: HistoryFilter,
     pub find: FindBodies,
+    recent_filters: RecentFilters,
+    recent_system: Option<u64>,
     /// A body was just picked: in a narrow window its details (above the table) scroll into view.
     reveal: bool,
 }
 
 impl ExplorationUi {
-    /// Opens on a tab by name (`find`, `history`, `unsold`); `autorun` starts the Find search on
+    /// Opens on a tab by name (`recent`, `find`, `history`, `unsold`); `autorun` starts the Find search on
     /// the first frame (screenshot runs).
     pub fn new(tab: Option<&str>, autorun: bool) -> Self {
         let tab = match tab {
+            Some("recent") => Tab::Recent,
             Some("find") => Tab::Find,
             Some("history") => Tab::History,
             Some("unsold") => Tab::Unsold,
@@ -112,7 +152,11 @@ impl ExplorationUi {
 pub fn show(ui: &mut Ui, gs: &GameState, st: &mut ExplorationUi, high_value: i64, spansh: &nexus_spansh::Spansh, rt: &tokio::runtime::Handle) -> Option<PlannedRoute> {
     let mut follow = None;
     ui.horizontal(|ui| {
-        if let Some(t) = widgets::tabs(ui, st.tab, &[(Tab::Current, "Current system"), (Tab::Find, "Find valuable bodies"), (Tab::Unsold, "Unsold data"), (Tab::History, "History"), (Tab::Codex, "Codex")]) {
+        if let Some(t) = widgets::tabs(ui, st.tab, &[(Tab::Current, "Current system"), (Tab::Recent, "Recent scans"), (Tab::Find, "Find valuable bodies"), (Tab::Unsold, "Unsold data"), (Tab::History, "History"), (Tab::Codex, "Codex")]) {
+            if t == Tab::Recent || st.tab == Tab::Recent {
+                st.selected_body = None;
+                st.reveal = false;
+            }
             st.tab = t;
             if t == Tab::Current {
                 st.system = None;
@@ -130,10 +174,16 @@ pub fn show(ui: &mut Ui, gs: &GameState, st: &mut ExplorationUi, high_value: i64
     });
     ui.add_space(GAP);
     match st.tab {
-        Tab::Current => {
-            let addr = st.system.or(gs.exploration.current);
+        Tab::Current | Tab::Recent => {
+            let recent = st.tab == Tab::Recent;
+            let addr = if recent { gs.exploration.current } else { st.system.or(gs.exploration.current) };
+            if recent && st.recent_system != addr {
+                st.recent_system = addr;
+                st.selected_body = None;
+                st.reveal = false;
+            }
             // The whole tab scrolls (the bodies table draws only the rows in view), each system from its top.
-            egui::ScrollArea::vertical().id_salt(("current-system", addr)).auto_shrink([false, false]).show(ui, |ui| match addr.and_then(|a| gs.exploration.systems.get(&a)) {
+            egui::ScrollArea::vertical().id_salt(("current-system", addr, recent)).auto_shrink([false, false]).show(ui, |ui| match addr.and_then(|a| gs.exploration.systems.get(&a)) {
                 Some(sys) => system_view(ui, gs, sys, st, high_value),
                 None => nothing_scanned(ui, gs, None, st),
             });
@@ -500,7 +550,8 @@ fn systems_list(ui: &mut Ui, mut list: Vec<&SystemScan>, st: &mut ExplorationUi,
 }
 
 fn system_view(ui: &mut Ui, gs: &GameState, sys: &SystemScan, st: &mut ExplorationUi, high_value: i64) {
-    if sys.bodies.values().all(|b| b.kind == BodyKind::BeltCluster) {
+    let recent = st.tab == Tab::Recent;
+    if !recent && sys.bodies.values().all(|b| b.kind == BodyKind::BeltCluster) {
         // Nothing scanned: four cards of zeros would only look broken.
         if st.system.is_some() && Some(sys.address) != gs.exploration.current && widgets::button(ui, &format!("{} Back to the current system", icon::ARROW_U_UP_LEFT)).clicked() {
             st.system = None;
@@ -522,7 +573,7 @@ fn system_view(ui: &mut Ui, gs: &GameState, sys: &SystemScan, st: &mut Explorati
         c.add(|ui| {
             card_tinted(ui, icon::PLANET, "System", pal::TEAL, |ui| {
                 big(ui, sys.name.clone(), pal::TEXT);
-                if st.system.is_some() && Some(sys.address) != gs.exploration.current && widgets::button(ui, "Back to the current system").clicked() {
+                if !recent && st.system.is_some() && Some(sys.address) != gs.exploration.current && widgets::button(ui, "Back to the current system").clicked() {
                     back = true;
                 }
             });
@@ -561,10 +612,26 @@ fn system_view(ui: &mut Ui, gs: &GameState, sys: &SystemScan, st: &mut Explorati
     ui.add_space(GAP);
 
     let mut bodies: Vec<&Body> = sys.bodies.values().filter(|b| b.kind != BodyKind::BeltCluster).collect();
-    // System-map order: walk the parent chain root-first so moons follow their planet.
-    bodies.sort_by_cached_key(|b| tree_key(b));
+    if recent {
+        bodies.retain(|b| b.recent_scan.is_some());
+        if bodies.is_empty() {
+            empty(ui, icon::BROADCAST, "No recent scans in this system", "Scan a body with the FSS or finish mapping it to add it here.");
+            return;
+        }
+        recent_filters(ui, &mut st.recent_filters, &bodies);
+        bodies.retain(|body| st.recent_filters.matches(body));
+        bodies.sort_by_key(|b| std::cmp::Reverse(b.recent_scan.map(|scan| (scan.time, scan.sequence))));
+        if bodies.is_empty() {
+            empty(ui, icon::BROADCAST, "No matching bodies", "Change or reset the filters to see more bodies.");
+            return;
+        }
+    } else {
+        // System-map order: walk the parent chain root-first so moons follow their planet.
+        bodies.sort_by_cached_key(|b| tree_key(b));
+    }
 
-    let selected = st.selected_body.and_then(|id| sys.bodies.get(&id));
+    let selected = st.selected_body.and_then(|id| sys.bodies.get(&id))
+        .filter(|b| !recent || bodies.iter().any(|row| row.id == b.id));
     match selected {
         // Wide windows: the table with the body's details beside it, kept in view as the page scrolls past the
         // table (never below its end); narrow: details first, scrolled into view when a body is picked.
@@ -603,7 +670,54 @@ fn system_view(ui: &mut Ui, gs: &GameState, sys: &SystemScan, st: &mut Explorati
         }
         None => body_table(ui, sys, &bodies, st, high_value),
     }
-    signals_panel(ui, sys, sys.address == gs.location.system_address);
+    if !recent {
+        signals_panel(ui, sys, sys.address == gs.location.system_address);
+    }
+}
+
+fn recent_filters(ui: &mut Ui, filters: &mut RecentFilters, bodies: &[&Body]) {
+    ui.horizontal_wrapped(|ui| {
+        widgets::segmented(ui, &mut filters.mapping, &[
+            (MappingFilter::All, "All bodies"),
+            (MappingFilter::Unmapped, "Unmapped planets"),
+            (MappingFilter::Mapped, "Mapped"),
+        ]);
+        if *filters != RecentFilters::default() && widgets::button(ui, "Reset filters").clicked() {
+            *filters = RecentFilters::default();
+        }
+    });
+    let advanced_active = filters.body_type.is_some() || filters.min_value > 0.0 || filters.min_mapped_value > 0.0
+        || filters.max_distance > 0.0 || filters.max_gravity > 0.0 || filters.max_temperature > 0.0;
+    let title = if advanced_active { "More filters (active)" } else { "More filters" };
+    egui::CollapsingHeader::new(title).id_salt("recent-filters").show(ui, |ui| {
+        widgets::settings_bar(ui, |bar| {
+            bar.field("Type", "The type shown in the body table.", |ui| {
+                let kinds: std::collections::BTreeSet<_> = bodies.iter().map(|b| type_label(b)).collect();
+                egui::ComboBox::from_id_salt("recent-body-type")
+                    .selected_text(filters.body_type.as_deref().unwrap_or("All types"))
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut filters.body_type, None, "All types");
+                        for kind in kinds {
+                            ui.selectable_value(&mut filters.body_type, Some(kind.clone()), kind);
+                        }
+                    });
+            });
+            recent_number(bar, "Min. value", &mut filters.min_value, 1000.0, 0, " Cr");
+            recent_number(bar, "Min. value if mapped", &mut filters.min_mapped_value, 1000.0, 0, " Cr");
+            recent_number(bar, "Max. distance", &mut filters.max_distance, 100.0, 0, " ls");
+            recent_number(bar, "Max. gravity", &mut filters.max_gravity, 0.1, 2, " g");
+            recent_number(bar, "Max. temperature", &mut filters.max_temperature, 10.0, 0, " K");
+        });
+    });
+    ui.add_space(GAP);
+}
+
+fn recent_number(bar: &mut widgets::SettingsBar<'_>, label: &str, value: &mut f64, step: f64, decimals: usize, unit: &str) {
+    bar.field(label, "0 means no limit.", |ui| {
+        ui.add(egui::DragValue::new(value).range(0.0..=f64::INFINITY).speed(step).fixed_decimals(decimals)
+            .suffix(unit).custom_formatter(move |v, _| widgets::grouped(v, decimals))
+            .custom_parser(move |text| widgets::parse_typed(text, unit)));
+    });
 }
 
 /// What kind of signal source a signal is, in the order the kinds are listed: the few notable ones first, the
@@ -898,8 +1012,9 @@ fn interest_color(i: Interest) -> egui::Color32 {
 }
 
 fn body_table(ui: &mut Ui, sys: &SystemScan, bodies: &[&Body], st: &mut ExplorationUi, high_value: i64) {
+    let recent = st.tab == Tab::Recent;
     TableBuilder::new(ui)
-        .id_salt(("bodies", sys.address))
+        .id_salt(("bodies", sys.address, recent))
         .striped(true)
         .resizable(false)
         .sense(Sense::click())
@@ -924,13 +1039,22 @@ fn body_table(ui: &mut Ui, sys: &SystemScan, bodies: &[&Body], st: &mut Explorat
                 row.set_selected(st.selected_body == Some(b.id));
                 let tags = interesting(b, sys);
                 row.col(|ui| {
-                    let indent = "    ".repeat(depth(b).min(4));
-                    let prefix = if depth(b) > 0 { format!("{} ", icon::ARROW_ELBOW_DOWN_RIGHT) } else { String::new() };
+                    let depth = if recent { 0 } else { depth(b) };
+                    let indent = "    ".repeat(depth.min(4));
+                    let prefix = if depth > 0 { format!("{} ", icon::ARROW_ELBOW_DOWN_RIGHT) } else { String::new() };
                     let mut t = RichText::new(format!("{indent}{prefix}{}", b.short_name(&sys.name)));
                     if b.mapped {
                         t = t.color(pal::GOOD);
                     }
                     ui.label(t);
+                    if let Some(scan) = b.recent_scan.filter(|_| recent) {
+                        let (text, activity, color) = match scan.kind {
+                            ScanActivityKind::Scan => ("FSS", "FSS scan", pal::BLUE),
+                            ScanActivityKind::Mapping => ("DSS", "DSS mapping", pal::GOOD),
+                        };
+                        badge(ui, text, color)
+                            .on_hover_text(format!("{activity} · {}", scan.time.to_local_string("%d %b %H:%M:%S")));
+                    }
                 });
                 row.col(|ui| {
                     let mut t = RichText::new(type_label(b));

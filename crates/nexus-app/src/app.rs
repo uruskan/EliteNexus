@@ -397,7 +397,9 @@ impl NexusApp {
             // The page's live view, not a planner or another system left open there.
             match target {
                 Page::Exploration => {
-                    self.explo.tab = pages::exploration::Tab::Current;
+                    if self.explo.tab != pages::exploration::Tab::Recent {
+                        self.explo.tab = pages::exploration::Tab::Current;
+                    }
                     self.explo.system = None;
                 }
                 Page::Exobiology => self.exo.tab = pages::exobio::Tab::ThisSystem,

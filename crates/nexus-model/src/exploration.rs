@@ -68,6 +68,20 @@ pub struct BodyValue {
     pub current: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanActivityKind {
+    Scan,
+    Mapping,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ScanActivity {
+    pub time: Timestamp,
+    /// Journal order breaks ties between events written in the same second.
+    pub sequence: u64,
+    pub kind: ScanActivityKind,
+}
+
 #[derive(Debug, Clone)]
 pub struct Body {
     pub id: u32,
@@ -111,6 +125,7 @@ pub struct Body {
     pub was_footfalled: Option<bool>,
     pub scan_type: String,
     pub scanned: Timestamp,
+    pub recent_scan: Option<ScanActivity>,
     /// We have a detailed scan (not just a signal or name).
     pub has_scan: bool,
     pub mapped: bool,
@@ -144,6 +159,12 @@ pub struct Body {
 }
 
 impl Body {
+    fn record_scan_activity(&mut self, activity: ScanActivity) {
+        if self.recent_scan.is_none_or(|previous| activity.time >= previous.time) {
+            self.recent_scan = Some(activity);
+        }
+    }
+
     fn placeholder(id: u32, name: &str) -> Self {
         Body {
             id,
@@ -185,6 +206,7 @@ impl Body {
             was_footfalled: None,
             scan_type: String::new(),
             scanned: Timestamp::ZERO,
+            recent_scan: None,
             has_scan: false,
             mapped: false,
             probes_used: None,
@@ -717,9 +739,15 @@ pub struct Exploration {
     /// Every sale of cartographic data, oldest first.
     pub sales: Vec<DataSale>,
     pub odyssey: bool,
+    scan_sequence: u64,
 }
 
 impl Exploration {
+    fn scan_activity(&mut self, time: Timestamp, kind: ScanActivityKind) -> ScanActivity {
+        self.scan_sequence += 1;
+        ScanActivity { time, sequence: self.scan_sequence, kind }
+    }
+
     pub fn system_mut(&mut self, address: u64, name: &str, ts: Timestamp) -> &mut SystemScan {
         let s = self.systems.entry(address).or_insert_with(|| SystemScan::new(address, name, ts));
         if s.name.is_empty() && !name.is_empty() {
@@ -743,6 +771,7 @@ impl Exploration {
 
     /// Returns (system address, body id) of the scanned body.
     pub fn on_scan(&mut self, s: &ev::Scan, ts: Timestamp) -> (u64, u32) {
+        let activity = (s.scan_type == "Detailed").then(|| self.scan_activity(ts, ScanActivityKind::Scan));
         let odyssey = self.odyssey;
         let sys = self.system_mut(s.system_address, &s.star_system, ts);
         let held = !sys.sold;
@@ -750,6 +779,9 @@ impl Exploration {
         let first = !body.has_scan;
         let was_scanned = body.has_scan && body.scan_type != "NavBeaconDetail";
         body.apply_scan(s, ts, odyssey);
+        if let Some(activity) = activity {
+            body.record_scan_activity(activity);
+        }
         // A body scanned for the first time is new data, also in a system we sold data for and came back to; one scanned
         // again (the arrival star on a return visit) isn't. A nav beacon's scan counts only alongside data not sold.
         let new_data = !was_scanned && s.scan_type != "NavBeaconDetail";
@@ -842,9 +874,11 @@ impl Exploration {
     }
 
     pub fn on_saa_complete(&mut self, s: &ev::SAAScanComplete, ts: Timestamp) {
+        let activity = self.scan_activity(ts, ScanActivityKind::Mapping);
         let odyssey = self.odyssey;
         let sys = self.system_mut(s.system_address, "", ts);
         let body = sys.body_mut(s.body_id, &s.body_name);
+        body.record_scan_activity(activity);
         body.mapped = true;
         body.probes_used = Some(s.probes_used);
         body.efficiency_target = Some(s.efficiency_target);
