@@ -11,7 +11,7 @@ native app instead of a pile of tools and browser tabs.</p>
   <a href="https://github.com/uruskan/EliteNexus/releases/latest"><img src="https://img.shields.io/github/v/release/uruskan/EliteNexus?label=Download&logo=github" alt="Download the latest release"></a>
   <a href="https://uruskan.github.io/EliteNexus/"><img src="https://img.shields.io/badge/Website-uruskan.github.io%2FEliteNexus-0b7285" alt="Website"></a>
   <a href="https://github.com/sponsors/uruskan"><img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors" alt="Sponsor on GitHub"></a>
-  <a href="https://buymeacoffee.com/uruskan"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-%E2%98%95-ffdd00" alt="Buy me a coffee"></a>
+  <a href="https://buymeacoffee.com/uruskan"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-%E2%98%95-ffdd00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-GPL--3.0-blue" alt="Licence: GPL-3.0-or-later"></a>
   <a href="https://github.com/uruskan/EliteNexus/actions/workflows/ci.yml"><img src="https://github.com/uruskan/EliteNexus/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
 </p>
