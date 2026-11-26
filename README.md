@@ -14,6 +14,7 @@ native app instead of a pile of tools and browser tabs.</p>
   <a href="https://buymeacoffee.com/uruskan"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-%E2%98%95-ffdd00?logo=buymeacoffee&logoColor=black" alt="Buy me a coffee"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-GPL--3.0-blue" alt="Licence: GPL-3.0-or-later"></a>
   <a href="https://github.com/uruskan/EliteNexus/actions/workflows/ci.yml"><img src="https://github.com/uruskan/EliteNexus/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <img src="https://img.shields.io/badge/babayla-yar%C4%B1%C5%9F%C4%B1lmaz-ff69b4" alt="Babayla yarışılmaz">
 </p>
 
 Elite Nexus reads the game's journal as you play and brings together what commanders usually run side by side:
