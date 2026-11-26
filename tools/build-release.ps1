@@ -15,7 +15,7 @@ $version = (Select-String -Path (Join-Path $root 'Cargo.toml') -Pattern '^versio
 $built = Join-Path $root 'target\release\EliteNexus.exe'
 $dist = Join-Path $root 'dist\EliteNexus'
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
-foreach ($f in 'README.md', 'NOTICE.md', 'docs\USER_GUIDE.md') { Copy-Item (Join-Path $root $f) $dist -Force }
+foreach ($f in 'LICENSE', 'LICENSE-ADDITIONAL-TERMS.md', 'NAME-POLICY.md', 'README.md', 'NOTICE.md', 'docs\USER_GUIDE.md') { Copy-Item (Join-Path $root $f) $dist -Force }
 # The bundled Inter font's licence (SIL OFL) travels with the program.
 Copy-Item (Join-Path $root 'data\fonts\inter\LICENSE.txt') (Join-Path $dist 'Inter-LICENSE.txt') -Force
 
@@ -35,7 +35,7 @@ $stage = Join-Path $root 'target\release-zip\EliteNexus'
 Remove-Item (Split-Path $stage) -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item $built $stage
-foreach ($f in 'README.md', 'NOTICE.md', 'docs\USER_GUIDE.md') { Copy-Item (Join-Path $root $f) $stage }
+foreach ($f in 'LICENSE', 'LICENSE-ADDITIONAL-TERMS.md', 'NAME-POLICY.md', 'README.md', 'NOTICE.md', 'docs\USER_GUIDE.md') { Copy-Item (Join-Path $root $f) $stage }
 Copy-Item (Join-Path $root 'data\fonts\inter\LICENSE.txt') (Join-Path $stage 'Inter-LICENSE.txt')
 Compress-Archive -Path $stage -DestinationPath $zip -Force
 $exe = Get-Item $built

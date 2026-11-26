@@ -5,6 +5,15 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+### Changed
+
+- **The licence says what a changed version may call itself.** Elite Nexus stays free software under the GPL,
+  version 3 or later: anyone may run, change and share it. From this version on, two terms the GPL's section 7 allows
+  come with it (`LICENSE-ADDITIONAL-TERMS.md`): a changed version must say that it is one and must not be presented
+  as Elite Nexus or as its official successor, and the licence gives no trademark rights to the name or the icon.
+  `NAME-POLICY.md` says how the name may be used: unchanged copies keep it, a fork takes a name and an icon of its
+  own.
+
 ## [0.8.2] - 2026-11-25
 
 Elite Nexus now says when a new version is out and installs it with a click, and sold exobiology data no longer stays

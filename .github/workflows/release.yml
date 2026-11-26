@@ -26,7 +26,7 @@ jobs:
         run: |
           $name = "EliteNexus-${{ github.ref_name }}-windows-x64"
           New-Item -ItemType Directory -Force -Path "out\$name" | Out-Null
-          Copy-Item target\release\EliteNexus.exe, LICENSE, README.md, NOTICE.md, docs\USER_GUIDE.md "out\$name"
+          Copy-Item target\release\EliteNexus.exe, LICENSE, LICENSE-ADDITIONAL-TERMS.md, NAME-POLICY.md, README.md, NOTICE.md, docs\USER_GUIDE.md "out\$name"
           # The bundled Inter font's licence (SIL OFL) travels with the program.
           Copy-Item data\fonts\inter\LICENSE.txt "out\$name\Inter-LICENSE.txt"
           Compress-Archive -Path "out\$name\*" -DestinationPath "out\$name.zip"
@@ -54,7 +54,7 @@ jobs:
         run: |
           name="EliteNexus-${GITHUB_REF_NAME}-linux-x64"
           mkdir -p "out/$name"
-          cp target/release/EliteNexus LICENSE README.md NOTICE.md docs/USER_GUIDE.md "out/$name/"
+          cp target/release/EliteNexus LICENSE LICENSE-ADDITIONAL-TERMS.md NAME-POLICY.md README.md NOTICE.md docs/USER_GUIDE.md "out/$name/"
           cp data/fonts/inter/LICENSE.txt "out/$name/Inter-LICENSE.txt"
           tar -C out -czf "out/$name.tar.gz" "$name"
           # Check a download with: sha256sum -c <file>.sha256

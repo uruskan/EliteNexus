@@ -1,3 +1,4 @@
+// Licence: GPL-3.0-or-later, with additional terms under its section 7: see LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! Spansh API client (<https://spansh.co.uk>): route planners and galaxy search.
 //!
 //! * **Route planners** — neutron, galaxy (exact) with journal-`Loadout` ship parameters, fleet

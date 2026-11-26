@@ -1,3 +1,4 @@
+// Licence: GPL-3.0-or-later, with additional terms under its section 7: see LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! Everything Elite Nexus uploads: EDDN, EDSM journal sync, Inara and EDAstro.
 //!
 //! ```no_run

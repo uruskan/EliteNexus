@@ -74,7 +74,7 @@ PLIST
 plutil -lint -s "$app/Contents/Info.plist"
 
 # The licences travel with the program (GPL for Elite Nexus, SIL OFL for the bundled Inter font).
-cp LICENSE NOTICE.md README.md "$app/Contents/Resources/"
+cp LICENSE LICENSE-ADDITIONAL-TERMS.md NAME-POLICY.md NOTICE.md README.md "$app/Contents/Resources/"
 cp docs/USER_GUIDE.md "$app/Contents/Resources/USER_GUIDE.md"
 cp data/fonts/inter/LICENSE.txt "$app/Contents/Resources/Inter-LICENSE.txt"
 

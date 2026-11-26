@@ -258,4 +258,9 @@ License as published by the Free Software Foundation, either version 3 of the Li
 version. It comes with no warranty. See [LICENSE](LICENSE). Third-party data and fonts keep their own licences: see
 [NOTICE.md](NOTICE.md).
 
+The code is yours to build on; the name stays with the original. A changed version must say that it is one and must
+not be presented as Elite Nexus, and the licence gives no trademark rights to the name or the icon
+([LICENSE-ADDITIONAL-TERMS.md](LICENSE-ADDITIONAL-TERMS.md), under section 7 of the GPL). A fork needs a name and an
+icon of its own: [NAME-POLICY.md](NAME-POLICY.md).
+
 *Elite Dangerous is a trademark of Frontier Developments plc. Elite Nexus is an unofficial community tool.*
