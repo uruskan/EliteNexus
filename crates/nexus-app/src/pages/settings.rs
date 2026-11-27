@@ -94,7 +94,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                     });
                 });
                 if cfg!(windows) {
-                    g.row("Speech engine", "Piper downloads its local English voice on first selection (94 MB on Windows x64).", |ui| {
+                    g.row("Speech engine", "Select Piper to download the English neural voice (94 MB).", |ui| {
                         egui::ComboBox::from_id_salt("ttsengine").selected_text(s.tts_engine.label()).show_ui(ui, |ui| {
                             for e in EngineKind::ALL {
                                 if ui.selectable_value(&mut s.tts_engine, e, e.label()).changed() {
@@ -124,6 +124,14 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                             combo.response.on_hover_text(name);
                         });
                     }
+                } else if cfg!(target_os = "linux") {
+                    g.row("Speech engine", "Uses Speech Dispatcher when installed, or eSpeak if available.", |ui| {
+                        ui.label("System speech");
+                    });
+                } else if cfg!(target_os = "macos") {
+                    g.row("Speech engine", "Choose the voice in System Settings › Accessibility › Spoken Content.", |ui| {
+                        ui.label("System speech");
+                    });
                 }
                 g.row("Speech rate", "", |ui| cx.changed |= slider(ui, &mut s.tts_rate, 0.5..=2.0, 2, "×"));
                 g.row("Volume", "", |ui| {

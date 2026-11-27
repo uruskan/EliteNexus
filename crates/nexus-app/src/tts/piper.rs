@@ -122,7 +122,7 @@ impl Drop for Worker {
 
 fn play(wav: &[u8], volume: f32) -> Result<(), String> {
     // Copy the header as is and scale PCM samples, leaving the cache independent of volume.
-    let mut audio: Vec<u16> = wav.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
+    let mut audio: Vec<u16> = wav.as_chunks::<2>().0.iter().copied().map(u16::from_le_bytes).collect();
     if volume < 1.0 {
         for sample in &mut audio[22..] {
             *sample = (f32::from(*sample as i16) * volume) as i16 as u16;
