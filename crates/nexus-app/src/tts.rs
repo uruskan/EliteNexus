@@ -404,6 +404,7 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
                 pending_test = None;
                 *status.lock() = VoiceStatus::Untried;
                 if kind == EngineKind::Piper && (install.is_some() || piper_install::installed().is_none()) {
+                    lines.clear();
                     voices.lock().clear();
                     if let Err(e) = start_install(&mut install) {
                         install_failed(e);
