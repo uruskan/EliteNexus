@@ -12,14 +12,16 @@ use icon::pixel;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=src/icon.rs");
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
-    }
+    let os = std::env::var("CARGO_CFG_TARGET_OS").expect("target OS");
+    let env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
     if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64")
-        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+        && matches!((os.as_str(), env.as_str()), ("windows", "msvc") | ("linux", "gnu"))
     {
-        build_piper_worker(&out);
+        build_piper_worker(&out, os == "windows");
+    }
+    if os != "windows" {
+        return;
     }
     let ico = out.join("app.ico");
     std::fs::write(&ico, make_ico(&[16, 20, 24, 32, 48, 64, 128, 256])).expect("write app.ico");
@@ -62,19 +64,24 @@ END
     embed_resource::compile(&rc_path, embed_resource::NONE).manifest_optional().expect("embed Windows resources");
 }
 
-fn build_piper_worker(out: &std::path::Path) {
+fn build_piper_worker(out: &std::path::Path, windows: bool) {
     let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/dev");
     let source = dev.join("piper-worker.cpp");
     let vendor = dev.join("piper-vendor");
     println!("cargo:rerun-if-changed={}", source.display());
     println!("cargo:rerun-if-changed={}", vendor.display());
-    let status = cc::Build::new().cpp(true).get_compiler().to_command()
-        .current_dir(out)
-        .args(["/nologo", "/std:c++17", "/O2", "/MT", "/EHsc"])
-        .arg(format!("/I{}", vendor.display()))
-        .args(["/Fopiper-worker.obj", "/Fenexus-piper.exe"])
-        .arg(source)
-        .status().expect("run the Piper worker compiler");
+    let mut cmd = cc::Build::new().cpp(true).get_compiler().to_command();
+    cmd.current_dir(out);
+    if windows {
+        cmd.args(["/nologo", "/std:c++17", "/O2", "/MT", "/EHsc"])
+            .arg(format!("/I{}", vendor.display()))
+            .args(["/Fopiper-worker.obj", "/Fenexus-piper.exe"])
+            .arg(source);
+    } else {
+        cmd.args(["-std=c++17", "-O2", "-I"]).arg(vendor).arg(source)
+            .args(["-o", "nexus-piper", "-static-libstdc++", "-static-libgcc", "-ldl"]);
+    }
+    let status = cmd.status().expect("run the Piper worker compiler");
     assert!(status.success(), "compile the Piper worker");
 }
 

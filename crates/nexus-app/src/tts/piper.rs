@@ -1,9 +1,9 @@
 use super::audio_cache::{Cache, MAX_WAV_BYTES, valid_wav};
 use std::io::{Read, Write};
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+#[cfg(windows)]
 #[link(name = "winmm")]
 unsafe extern "system" {
     fn PlaySoundW(sound: *const u16, module: *mut core::ffi::c_void, flags: u32) -> i32;
@@ -77,13 +77,18 @@ struct Worker {
 
 impl Worker {
     fn start(folder: &Path) -> Result<Self, String> {
-        let helper = folder.join("nexus-piper.exe");
+        let helper = folder.join(super::piper_install::HELPER);
         if !helper.is_file() || !folder.join("model/en_US-kristin-medium.onnx").is_file() {
             return Err("the Piper installation is incomplete".into());
         }
-        let mut process = Command::new(helper)
+        let mut command = Command::new(helper);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_4000); // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+        }
+        let mut process = command
             .current_dir(folder)
-            .creation_flags(0x0800_4000) // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -120,6 +125,7 @@ impl Drop for Worker {
     }
 }
 
+#[cfg(windows)]
 fn play(wav: &[u8], volume: f32) -> Result<(), String> {
     // Copy the header as is and scale PCM samples, leaving the cache independent of volume.
     let mut audio: Vec<u16> = wav.as_chunks::<2>().0.iter().copied().map(u16::from_le_bytes).collect();
@@ -134,3 +140,6 @@ fn play(wav: &[u8], volume: f32) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(target_os = "linux")]
+use super::piper_linux::play;

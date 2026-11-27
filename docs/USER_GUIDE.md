@@ -184,7 +184,7 @@ When the ship enters hyperspace, a Normal priority alert announces the destinati
 
 After collecting the second exobiology sample, the app announces the required distance to the final colony when it knows the distance. This alert has Normal priority.
 
-On Windows x64, select **Piper (Kristin)** under **Settings → Voice and alerts → Speech engine**. Elite Nexus downloads the voice and runtime in the background (94 MB). Once installed, the English neural voice works offline. **Test voice** plays a sample. If the download fails, use **Retry Piper download**. Elite Nexus saves generated phrases and rates as compressed audio in `nexus-data/piper-audio` and reuses them across restarts. The cache holds up to 1 GB and evicts the least recently used clips. **Uninstall Piper and clear its cache** removes both the voice and cached audio. If Piper was selected, the app switches to Windows speech.
+On Windows and Linux x64, select **Piper (Kristin)** under **Settings → Voice and alerts → Speech engine**. Elite Nexus downloads the voice and runtime in the background (94 MB). Once installed, the English neural voice works offline. On Linux, playback uses PulseAudio or PipeWire's PulseAudio compatibility layer. **Test voice** plays a sample. If the download fails, use **Retry Piper download**. Elite Nexus saves generated phrases and rates as compressed audio in `nexus-data/piper-audio` and reuses them across restarts. The cache holds up to 1 GB and evicts the least recently used clips. **Uninstall Piper and clear its cache** removes both the voice and cached audio. If Piper was selected, the app switches to the platform's default speech engine.
 
 On Windows, Settings › **Speech engine** chooses between **Windows speech** (the default: the voices of Windows
 Settings › Time & language › Speech) and **SAPI** (Windows' classic speech engine: its desktop voices and the voices
@@ -298,7 +298,7 @@ yet. Reports are collected in GitHub discussion #17 (github.com/uruskan/EliteNex
   (`~/.local/share/applications/elite-nexus.desktop` and icons under `~/.local/share/icons`, no root needed); Wayland
   docks then show its icon too. From a terminal: `./EliteNexus --install-desktop` (`--uninstall-desktop` takes it
   out). Move the program and the row says the menu still starts the old copy, with **Point it here**.
-* **Voice** uses `spd-say` (speech-dispatcher), else `espeak-ng` or `espeak`. Under **Test voice**, Settings says
+* **System speech** uses `spd-say` (speech-dispatcher), else `espeak-ng` or `espeak`. Linux x64 also offers **Piper (Kristin)**. Under **Test voice**, Settings says
   which one spoke, that none is installed, or what went wrong (speech-dispatcher also needs an output module, such as
   `speech-dispatcher-espeak-ng` on Fedora and Nobara). **API keys** aren't encrypted (Linux has no DPAPI); the settings
   file that holds them is readable only by your user account.

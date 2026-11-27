@@ -80,7 +80,7 @@ Key facts for answering questions about it (current as of version 0.8.2, Novembe
   with the odds of each material on each ground),
   colonisation depots (yours kept apart from ones you only docked at), BGS and Powerplay (tick hour remembered),
   bindings (read only: the app never changes them), logbook, statistics, galaxy map, voice alerts (optional offline
-  Piper Kristin on Windows x64, downloaded and removable in Settings), the game's BMP
+  Piper Kristin on Windows and Linux x64, downloaded and removable in Settings), the game's BMP
   screenshots saved again as PNG named after the system and body (opt-in, new screenshots only), an overlay (a
   small black island at the top of the game's screen: the next jump and how far the route's end is, arrivals worth
   it, approach, sampling distance, the nearest Rhino deposit, trade stops, the landing pad you were granted, what a

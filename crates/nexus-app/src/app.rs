@@ -712,7 +712,7 @@ impl NexusApp {
         let high_value = self.settings.high_value_threshold;
         let mut settings_changed = false;
         let mut test_voice = false;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         let mut remove_piper = false;
         let mut restart = false;
         let mut refresh_voices = false;
@@ -806,7 +806,7 @@ impl NexusApp {
                     data_dir: &self.data_dir,
                     changed: false,
                     test_voice: false,
-                    #[cfg(windows)]
+                    #[cfg(any(windows, target_os = "linux"))]
                     remove_piper: false,
                     restart_core: false,
                     voice: self.speaker.status(),
@@ -821,7 +821,7 @@ impl NexusApp {
                 pages::settings::show(ui, &mut cx);
                 settings_changed = cx.changed;
                 test_voice = cx.test_voice;
-                #[cfg(windows)]
+                #[cfg(any(windows, target_os = "linux"))]
                 { remove_piper = cx.remove_piper; }
                 restart = cx.restart_core;
                 refresh_voices = cx.refresh_voices;
@@ -916,7 +916,7 @@ impl NexusApp {
             None => {}
         }
         self.after_settings(ui.ctx(), settings_changed, test_voice, restart);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         if remove_piper {
             self.speaker.remove_piper();
         }
@@ -937,7 +937,7 @@ impl NexusApp {
             data_dir: &self.data_dir,
             changed: false,
             test_voice: false,
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "linux"))]
             remove_piper: false,
             restart_core: false,
             voice: self.speaker.status(),
@@ -962,13 +962,13 @@ impl NexusApp {
             }
         });
         let (changed, test_voice, restart) = (cx.changed, cx.test_voice, cx.restart_core);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         let remove_piper = cx.remove_piper;
         if cx.refresh_voices {
             self.speaker.refresh_voices();
         }
         self.after_settings(ui.ctx(), changed, test_voice, restart);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         if remove_piper {
             self.speaker.remove_piper();
         }

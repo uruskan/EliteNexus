@@ -1,4 +1,4 @@
-//! Install the pinned Windows x64 Piper runtime and Kristin voice into the user's data directory.
+//! Install the pinned Piper runtime and Kristin voice into the user's data directory.
 
 use anyhow::{Context, Result};
 use std::{
@@ -6,14 +6,24 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[cfg(windows)]
 const INSTALL_DIR: &str = "piper-kristin-sherpa-1.12.20";
+#[cfg(target_os = "linux")]
+const INSTALL_DIR: &str = "piper-kristin-sherpa-1.12.20-linux";
 const STAGING_DIR: &str = "piper-download";
 const MODEL: &str = "model/en_US-kristin-medium.onnx";
-const DLLS: [&str; 3] = [
+#[cfg(windows)]
+pub(super) const HELPER: &str = "nexus-piper.exe";
+#[cfg(target_os = "linux")]
+pub(super) const HELPER: &str = "nexus-piper";
+#[cfg(windows)]
+const LIBRARIES: &[&str] = &[
     "sherpa-onnx-c-api.dll",
     "onnxruntime.dll",
     "onnxruntime_providers_shared.dll",
 ];
+#[cfg(target_os = "linux")]
+const LIBRARIES: &[&str] = &["libsherpa-onnx-c-api.so", "libonnxruntime.so"];
 
 pub(super) fn installed() -> Option<PathBuf> {
     // Keep existing portable Piper packages and their seeded audio working.
@@ -30,11 +40,13 @@ fn portable_folder() -> Option<PathBuf> {
 }
 
 fn complete(folder: &Path) -> bool {
-    folder.join("nexus-piper.exe").is_file()
+    folder.join(HELPER).is_file()
         && folder.join(MODEL).is_file()
         && folder.join("model/tokens.txt").is_file()
         && folder.join("model/espeak-ng-data").is_dir()
-        && DLLS.iter().all(|dll| folder.join(dll).is_file())
+        && LIBRARIES
+            .iter()
+            .all(|library| folder.join(library).is_file())
 }
 
 pub(super) fn lock_file(root: &Path) -> Result<fs::File> {
@@ -75,7 +87,13 @@ fn remove_folder(folder: &Path) -> Result<()> {
     }
 }
 
-#[cfg(all(target_arch = "x86_64", target_env = "msvc"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(
+        all(windows, target_env = "msvc"),
+        all(target_os = "linux", target_env = "gnu")
+    )
+))]
 pub(super) fn install() -> Result<()> {
     let root = std::path::absolute(crate::settings::data_dir())?;
     let lock = lock_file(&root)?;
@@ -93,26 +111,42 @@ pub(super) fn install() -> Result<()> {
     result.and(cleanup)
 }
 
-#[cfg(not(all(target_arch = "x86_64", target_env = "msvc")))]
+#[cfg(not(all(
+    target_arch = "x86_64",
+    any(
+        all(windows, target_env = "msvc"),
+        all(target_os = "linux", target_env = "gnu")
+    )
+)))]
 pub(super) fn install() -> Result<()> {
-    anyhow::bail!("Automatic Piper installation requires the Windows x64 build")
+    anyhow::bail!("Automatic Piper installation requires a supported Windows or Linux x64 build")
 }
 
-#[cfg(all(target_arch = "x86_64", target_env = "msvc"))]
+#[cfg(all(
+    target_arch = "x86_64",
+    any(
+        all(windows, target_env = "msvc"),
+        all(target_os = "linux", target_env = "gnu")
+    )
+))]
 fn install_staged(staging: &Path, dest: &Path) -> Result<()> {
     use anyhow::ensure;
-    use std::{os::windows::process::CommandExt, process::Command, time::Duration};
+    use std::time::Duration;
 
-    const RUNTIME: &str = "sherpa-onnx-v1.12.20-win-x64-shared";
+    #[cfg(windows)]
+    const RUNTIME: (&str, u64, &str) = (
+        "sherpa-onnx-v1.12.20-win-x64-shared",
+        26_662_986,
+        "2aa9c11f13d6a20308afedcaa8c04a678a1aaebc206b7609e4df7d7910582f56",
+    );
+    #[cfg(target_os = "linux")]
+    const RUNTIME: (&str, u64, &str) = (
+        "sherpa-onnx-v1.12.20-linux-x64-shared",
+        26_742_838,
+        "13a2c502f5ef373f514a5fc5c5ad03cc0798dcb564a6f8cbd54f8f6ce9e47462",
+    );
     const VOICE: &str = "vits-piper-en_US-kristin-medium";
     const RELEASES: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
-    let system_root =
-        std::env::var_os("SystemRoot").context("finding the Windows system folder")?;
-    let tar = PathBuf::from(system_root).join("System32/tar.exe");
-    ensure!(
-        tar.is_absolute() && tar.is_file(),
-        "Windows tar.exe is unavailable"
-    );
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(15))
         .read_timeout(Duration::from_secs(30))
@@ -122,12 +156,7 @@ fn install_staged(staging: &Path, dest: &Path) -> Result<()> {
         .enable_all()
         .build()?;
     for (release, name, size, digest) in [
-        (
-            "v1.12.20",
-            RUNTIME,
-            26_662_986,
-            "2aa9c11f13d6a20308afedcaa8c04a678a1aaebc206b7609e4df7d7910582f56",
-        ),
+        ("v1.12.20", RUNTIME.0, RUNTIME.1, RUNTIME.2),
         (
             "tts-models",
             VOICE,
@@ -144,32 +173,30 @@ fn install_staged(staging: &Path, dest: &Path) -> Result<()> {
             digest,
         ))
         .with_context(|| format!("downloading {name}"))?;
-        let result = Command::new(&tar)
-            .args(["-xf"])
-            .arg(&archive)
-            .arg("-C")
-            .arg(staging)
-            .creation_flags(0x0800_4000) // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
-            .output()
-            .context("running Windows tar.exe")?;
-        ensure!(
-            result.status.success(),
-            "extracting {name}: {}",
-            String::from_utf8_lossy(&result.stderr)
-        );
+        extract(&archive, staging).with_context(|| format!("extracting {name}"))?;
         fs::remove_file(archive)?;
     }
 
     let ready = staging.join("ready");
     fs::create_dir(&ready)?;
     fs::rename(staging.join(VOICE), ready.join("model"))?;
-    for dll in DLLS {
-        fs::rename(staging.join(RUNTIME).join("lib").join(dll), ready.join(dll))?;
+    for library in LIBRARIES {
+        fs::rename(
+            staging.join(RUNTIME.0).join("lib").join(library),
+            ready.join(library),
+        )?;
     }
-    fs::write(
-        ready.join("nexus-piper.exe"),
-        include_bytes!(concat!(env!("OUT_DIR"), "/nexus-piper.exe")),
-    )?;
+    #[cfg(windows)]
+    let worker = include_bytes!(concat!(env!("OUT_DIR"), "/nexus-piper.exe"));
+    #[cfg(target_os = "linux")]
+    let worker = include_bytes!(concat!(env!("OUT_DIR"), "/nexus-piper"));
+    let helper = ready.join(HELPER);
+    fs::write(&helper, worker)?;
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o755))?;
+    }
     fs::write(
         ready.join("LICENSE-sherpa-onnx.txt"),
         include_bytes!(concat!(
@@ -197,7 +224,46 @@ fn install_staged(staging: &Path, dest: &Path) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(target_arch = "x86_64", target_env = "msvc"))]
+#[cfg(all(windows, target_arch = "x86_64", target_env = "msvc"))]
+fn extract(archive: &Path, dest: &Path) -> Result<()> {
+    use std::{os::windows::process::CommandExt, process::Command};
+
+    let system_root =
+        std::env::var_os("SystemRoot").context("finding the Windows system folder")?;
+    let tar = PathBuf::from(system_root).join("System32/tar.exe");
+    anyhow::ensure!(
+        tar.is_absolute() && tar.is_file(),
+        "Windows tar.exe is unavailable"
+    );
+    let result = Command::new(tar)
+        .arg("-xf")
+        .arg(archive)
+        .arg("-C")
+        .arg(dest)
+        .creation_flags(0x0800_4000) // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+        .output()
+        .context("running Windows tar.exe")?;
+    anyhow::ensure!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    Ok(())
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))]
+fn extract(archive: &Path, dest: &Path) -> Result<()> {
+    tar::Archive::new(bzip2::read::BzDecoder::new(fs::File::open(archive)?)).unpack(dest)?;
+    Ok(())
+}
+
+#[cfg(all(
+    target_arch = "x86_64",
+    any(
+        all(windows, target_env = "msvc"),
+        all(target_os = "linux", target_env = "gnu")
+    )
+))]
 async fn download(
     client: &reqwest::Client,
     url: &str,

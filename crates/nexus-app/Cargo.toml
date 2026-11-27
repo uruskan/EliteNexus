@@ -64,6 +64,12 @@ libc = "0.2"
 # The overlay asks X11 which window is in front. libX11 is loaded at run time (as winit does), so the binary links
 # no system library for it.
 x11-dl = "2.21"
+sha2 = "0.10"
+libloading = "0.8"
+
+[target.'cfg(all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"))'.dependencies]
+bzip2 = "0.6"
+tar = { version = "0.4", default-features = false }
 
 [build-dependencies]
 cc = "1"

@@ -20,7 +20,7 @@ Each source's licence text and exact commit are kept next to the data in `data/*
 | SQLite (via rusqlite, bundled) | local galaxy/market database | public domain | |
 | zeromq (zmq.rs) | EDDN relay subscriber | MIT | |
 | reqwest / rustls / aws-lc-rs | HTTPS | MIT / Apache-2.0 / ISC | |
-| sherpa-onnx 1.12.20, ONNX Runtime 1.17.1 and Piper Kristin | optional local speech synthesis on Windows x64 | sherpa-onnx: Apache-2.0. ONNX Runtime: MIT. Kristin recording dataset: public domain. | The app embeds the worker and downloads the runtime and voice on selection. The installation contains the runtime licences, notices and the Kristin model card. |
+| sherpa-onnx 1.12.20, ONNX Runtime and Piper Kristin | optional local speech synthesis on Windows and Linux x64 | sherpa-onnx: Apache-2.0. ONNX Runtime: MIT. Kristin recording dataset: public domain. | The app embeds the worker and downloads the runtime and voice on selection. The installation contains the runtime licences, notices and the Kristin model card. |
 | egui / eframe / wgpu, tokio and other crates | UI and runtime | MIT / Apache-2.0 | See `cargo tree` / crate licences. |
 
 Not bundled on purpose: EDSY's data (CC BY-NC). Elite Nexus links to EDSY instead.

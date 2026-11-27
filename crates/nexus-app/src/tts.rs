@@ -1,7 +1,6 @@
 //! Text-to-speech on a background thread. Windows: the engine chosen in Settings, Windows speech (WinRT speech
-//! synthesis via the `tts` crate), SAPI 5, or the bundled Piper backend.
-//! Linux: speech-dispatcher's `spd-say`, else `espeak-ng` or `espeak`, run as programs (nothing to link); without
-//! any of them the app stays quiet and Settings says why.
+//! synthesis via the `tts` crate), SAPI 5, or Piper. Linux: Piper or system speech through `spd-say`,
+//! `espeak-ng` or `espeak`. If none is installed, Settings explains why the app stays quiet.
 //! macOS: the system's `say`, in the voice chosen in System Settings › Accessibility › Spoken Content.
 
 use crossbeam_channel::{Receiver, Sender};
@@ -11,31 +10,33 @@ use std::sync::Arc;
 
 #[cfg(windows)]
 mod sapi;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod piper;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 mod piper_install;
-#[cfg(windows)]
+#[cfg(target_os = "linux")]
+mod piper_linux;
+#[cfg(any(windows, target_os = "linux"))]
 mod audio_cache;
 
 pub enum TtsCmd {
     Say(String),
     Test(String),
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     RemovePiper,
     Rate(f32),
     Volume(f32),
-    /// Windows: speak through this engine.
-    #[cfg_attr(not(windows), allow(dead_code))]
+    /// Speak through this engine on Windows and Linux.
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
     Engine(EngineKind),
     /// Windows: the voice's id (empty: the engine's default voice).
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
     Voice(String),
     /// Windows: list the engine's voices again, so one installed while Elite Nexus runs shows up.
     ListVoices,
 }
 
-/// Which Windows speech engine speaks. Linux and macOS have one each, and don't use it.
+/// Which speech engine to use. The default represents system speech on every platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EngineKind {
@@ -44,18 +45,34 @@ pub enum EngineKind {
     WinRt,
     /// SAPI 5: Windows' desktop voices and the ones other programs install for it (IVONA, CereProc, …).
     Sapi,
-    /// Offline neural synthesis installed on demand on Windows x64.
+    /// Offline neural synthesis installed on demand on Windows and Linux x64.
     #[serde(alias = "kokoro")]
     Piper,
 }
 
 impl EngineKind {
     pub const ALL: [EngineKind; 3] = [EngineKind::WinRt, EngineKind::Sapi, EngineKind::Piper];
+    pub const PIPER_SUPPORTED: bool = cfg!(all(target_arch = "x86_64", any(
+        all(windows, target_env = "msvc"), all(target_os = "linux", target_env = "gnu"),
+    )));
+
+    pub fn available(self) -> bool {
+        match self {
+            Self::WinRt => true,
+            Self::Sapi => cfg!(windows),
+            Self::Piper => Self::PIPER_SUPPORTED,
+        }
+    }
+
+    pub fn effective(self) -> Self {
+        if self.available() { self } else { Self::default() }
+    }
 
     /// As Settings and the voice line under Test voice name it.
     pub fn label(self) -> &'static str {
         match self {
-            EngineKind::WinRt => "Windows speech",
+            EngineKind::WinRt if cfg!(windows) => "Windows speech",
+            EngineKind::WinRt => "System speech",
             EngineKind::Sapi => "SAPI",
             EngineKind::Piper => "Piper (Kristin)",
         }
@@ -84,15 +101,15 @@ pub enum VoiceStatus {
     Missing,
     /// This engine failed, with what it said.
     Failed(&'static str, String),
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     PiperInstalling,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     PiperReady,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     PiperInstallFailed(String),
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     PiperRemoved,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     PiperRemoveFailed(String),
 }
 
@@ -123,7 +140,7 @@ impl Speaker {
         let _ = self.tx.send(TtsCmd::Test("Elite Nexus voice check. All systems nominal, commander.".into()));
     }
 
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     pub fn remove_piper(&self) {
         let _ = self.tx.send(TtsCmd::RemovePiper);
     }
@@ -136,9 +153,9 @@ impl Speaker {
         let _ = self.tx.send(TtsCmd::Volume(v));
     }
 
-    /// Windows: the engine to speak through (started again only when it changes).
+    /// The engine to speak through (started again only when it changes).
     pub fn set_engine(&self, engine: EngineKind) {
-        let _ = self.tx.send(TtsCmd::Engine(engine));
+        let _ = self.tx.send(TtsCmd::Engine(engine.effective()));
     }
 
     /// Windows: the voice's id; empty for the engine's default voice.
@@ -161,31 +178,44 @@ impl Speaker {
     }
 }
 
-/// The Windows engine speaking now.
-#[cfg(windows)]
+/// The engine speaking now.
+#[cfg(any(windows, target_os = "linux"))]
 enum Engine {
     /// With the id of the voice it started with (Windows' default), for going back to it.
+    #[cfg(windows)]
     WinRt(tts::Tts, Option<String>),
+    #[cfg(windows)]
     Sapi(sapi::Sapi),
+    #[cfg(target_os = "linux")]
+    System { program: Option<&'static str>, rate: f32, volume: f32 },
     Piper(piper::Piper),
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 impl Engine {
     fn open(kind: EngineKind) -> Result<Engine, String> {
         match kind {
+            #[cfg(windows)]
             EngineKind::WinRt => {
                 let tts = tts::Tts::default().map_err(|e| e.to_string())?;
                 let default = tts.voice().ok().flatten().map(|v| v.id());
                 Ok(Engine::WinRt(tts, default))
             }
+            #[cfg(windows)]
             EngineKind::Sapi => sapi::Sapi::open().map(Engine::Sapi),
+            #[cfg(target_os = "linux")]
+            EngineKind::WinRt | EngineKind::Sapi => Ok(Engine::System {
+                program: find_program(std::env::var_os("PATH"), PROGRAMS),
+                rate: 1.0,
+                volume: 1.0,
+            }),
             EngineKind::Piper => piper::Piper::open().map(Engine::Piper),
         }
     }
 
     fn voices(&self) -> Vec<VoiceInfo> {
         match self {
+            #[cfg(windows)]
             Engine::WinRt(tts, _) => match tts.voices() {
                 Ok(voices) => voices.into_iter().map(|v| VoiceInfo { id: v.id(), name: v.name() }).collect(),
                 Err(e) => {
@@ -193,13 +223,17 @@ impl Engine {
                     Vec::new()
                 }
             },
+            #[cfg(windows)]
             Engine::Sapi(sapi) => sapi.voices(),
+            #[cfg(target_os = "linux")]
+            Engine::System { .. } => Vec::new(),
             Engine::Piper(_) => Vec::new(),
         }
     }
 
     /// The voices, listed again (SAPI keeps the list it read when it started; Windows speech lists them each time).
     fn reload_voices(&mut self) -> Vec<VoiceInfo> {
+        #[cfg(windows)]
         if let Engine::Sapi(sapi) = self {
             sapi.reload();
         }
@@ -218,13 +252,17 @@ impl Engine {
     /// A voice installed since the engine started is found too.
     fn try_voice(&mut self, id: &str) -> bool {
         match self {
+            #[cfg(windows)]
             Engine::WinRt(tts, default) => {
                 let wanted = if id.is_empty() { default.clone() } else { Some(id.to_string()) };
                 let Some(wanted) = wanted else { return false };
                 let voice = tts.voices().ok().and_then(|voices| voices.into_iter().find(|v| v.id() == wanted));
                 voice.is_some_and(|v| tts.set_voice(&v).is_ok())
             }
+            #[cfg(windows)]
             Engine::Sapi(sapi) => sapi.set_voice(id),
+            #[cfg(target_os = "linux")]
+            Engine::System { .. } => true,
             Engine::Piper(_) => id.is_empty(),
         }
     }
@@ -232,20 +270,28 @@ impl Engine {
     /// The speed setting, 1.0 = normal.
     fn set_rate(&mut self, rate: f32) {
         match self {
+            #[cfg(windows)]
             Engine::WinRt(tts, _) => {
                 let _ = tts.set_rate((tts.normal_rate() * rate).clamp(tts.min_rate(), tts.max_rate()));
             }
+            #[cfg(windows)]
             Engine::Sapi(sapi) => sapi.set_rate(rate),
+            #[cfg(target_os = "linux")]
+            Engine::System { rate: current, .. } => *current = rate,
             Engine::Piper(piper) => piper.set_rate(rate),
         }
     }
 
     fn set_volume(&mut self, volume: f32) {
         match self {
+            #[cfg(windows)]
             Engine::WinRt(tts, _) => {
                 let _ = tts.set_volume(volume.clamp(0.0, 1.0));
             }
+            #[cfg(windows)]
             Engine::Sapi(sapi) => sapi.set_volume(volume),
+            #[cfg(target_os = "linux")]
+            Engine::System { volume: current, .. } => *current = volume,
             Engine::Piper(piper) => piper.set_volume(volume),
         }
     }
@@ -254,32 +300,60 @@ impl Engine {
     /// SAPI starts this line (`speaking` until `wait` says it ended) and the speech thread gives it the next one then.
     fn speak(&mut self, text: &str) -> Result<(), String> {
         match self {
+            #[cfg(windows)]
             Engine::WinRt(tts, _) => tts.speak(text, false).map(|_| ()).map_err(|e| e.to_string()),
+            #[cfg(windows)]
             Engine::Sapi(sapi) => sapi.speak(text),
+            #[cfg(target_os = "linux")]
+            Engine::System { program, rate, volume } => {
+                program.map_or(Ok(()), |program| speak(program, text, *rate, *volume))
+            }
             Engine::Piper(piper) => piper.speak(text),
         }
     }
 
     /// SAPI is speaking a line.
     fn speaking(&self) -> bool {
-        matches!(self, Engine::Sapi(sapi) if sapi.speaking())
+        #[cfg(windows)]
+        { matches!(self, Engine::Sapi(sapi) if sapi.speaking()) }
+        #[cfg(target_os = "linux")]
+        { false }
     }
 
     /// Waits up to `up_to` for SAPI's line: how it went once it has ended, None while it goes on.
-    fn wait(&mut self, up_to: std::time::Duration) -> Option<Result<(), String>> {
-        match self {
-            Engine::Sapi(sapi) => sapi.wait(up_to),
-            Engine::WinRt(..) | Engine::Piper(_) => None,
+    fn wait(&mut self, _up_to: std::time::Duration) -> Option<Result<(), String>> {
+        #[cfg(windows)]
+        if let Engine::Sapi(sapi) = self {
+            return sapi.wait(_up_to);
+        }
+        None
+    }
+
+    fn spoken(&self, kind: EngineKind, result: Result<(), String>) -> VoiceStatus {
+        let label = match self {
+            #[cfg(target_os = "linux")]
+            Engine::System { program: Some(program), .. } => program,
+            #[cfg(target_os = "linux")]
+            Engine::System { program: None, .. } => return VoiceStatus::Missing,
+            _ => kind.label(),
+        };
+        match result {
+            Ok(()) => VoiceStatus::Spoke(label),
+            Err(why) => {
+                tracing::warn!("text-to-speech ({label}) failed: {why}");
+                VoiceStatus::Failed(label, why)
+            }
         }
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<Vec<VoiceInfo>>>) {
     use crossbeam_channel::TryRecvError;
     use std::collections::VecDeque;
     use std::time::Duration;
-    let com = sapi::Com::init();
+    #[cfg(windows)]
+    let _com = sapi::Com::init();
     let (mut kind, mut voice, mut rate, mut volume) = (EngineKind::default(), String::new(), 1.0, 1.0);
     // Started by the first engine choice or line to speak. One that can't start says why on every line.
     let mut engine: Option<Result<Engine, String>> = None;
@@ -326,7 +400,7 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
                     if let Some(Ok(e)) = &mut engine
                         && let Some(result) = e.wait(Duration::from_millis(50))
                     {
-                        *status.lock() = spoken(kind, result);
+                        *status.lock() = e.spoken(kind, result);
                     }
                     continue;
                 }
@@ -345,7 +419,7 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
                     match e.speak(&text) {
                         // SAPI says how the line went once it has ended (above); Windows speech queues it.
                         Ok(()) if e.speaking() => {}
-                        result => *status.lock() = spoken(kind, result),
+                        result => *status.lock() = e.spoken(kind, result),
                     }
                 }
                 Some(Err(why)) => *status.lock() = VoiceStatus::Failed(kind.label(), why.clone()),
@@ -466,19 +540,6 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
     }
     // The engine's COM objects go before COM does (a line it speaks is stopped first).
     drop(engine);
-    drop(com);
-}
-
-/// What became of a line, for Settings.
-#[cfg(windows)]
-fn spoken(kind: EngineKind, result: Result<(), String>) -> VoiceStatus {
-    match result {
-        Ok(()) => VoiceStatus::Spoke(kind.label()),
-        Err(why) => {
-            tracing::warn!("text-to-speech ({}) failed: {why}", kind.label());
-            VoiceStatus::Failed(kind.label(), why)
-        }
-    }
 }
 
 /// Linux speech programs, in the order they're tried.
@@ -490,7 +551,7 @@ const LINUX_PROGRAMS: [&str; 3] = ["spd-say", "espeak-ng", "espeak"];
 #[cfg(not(windows))]
 const PROGRAMS: &[&str] = if cfg!(target_os = "macos") { &["/usr/bin/say"] } else { &LINUX_PROGRAMS };
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, _voices: Arc<Mutex<Vec<VoiceInfo>>>) {
     let program = find_program(std::env::var_os("PATH"), PROGRAMS);
     if program.is_none() {
@@ -514,7 +575,7 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, _voices: Arc<Mutex
             }
             TtsCmd::Rate(r) => rate = r,
             TtsCmd::Volume(v) => volume = v,
-            // Only Windows has engines and voices to choose from here.
+            // This platform uses only its system voice.
             TtsCmd::Engine(_) | TtsCmd::Voice(_) | TtsCmd::ListVoices => {}
         }
     }
