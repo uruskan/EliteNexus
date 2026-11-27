@@ -1004,6 +1004,7 @@ fn interest_color(i: Interest) -> egui::Color32 {
 
 fn body_table(ui: &mut Ui, sys: &SystemScan, bodies: &[&Body], st: &mut ExplorationUi, high_value: i64) {
     let recent = st.body_order == BodyOrder::NewestFirst;
+    let compact = recent && ui.available_width() < 950.0;
     TableBuilder::new(ui)
         .id_salt(("bodies", sys.address, recent))
         .striped(true)
@@ -1012,20 +1013,20 @@ fn body_table(ui: &mut Ui, sys: &SystemScan, bodies: &[&Body], st: &mut Explorat
         .vscroll(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
         .column(if recent { Column::initial(174.0).at_least(165.0).clip(true) } else { Column::initial(130.0).at_least(90.0).clip(true) })
-        .column(Column::initial(150.0).at_least(90.0).clip(true))
-        .column(Column::initial(84.0))
+        .column(Column::initial(if compact { 135.0 } else { 150.0 }).at_least(90.0).clip(true))
+        .column(Column::initial(if compact { 76.0 } else { 84.0 }))
         .column(Column::initial(92.0))
         .column(Column::initial(92.0))
         .column(Column::initial(70.0))
         .column(Column::initial(70.0))
-        .column(Column::remainder().at_least(160.0).clip(true))
+        .column(Column::remainder().at_least(if compact { 104.0 } else { 160.0 }).clip(true))
         .header(30.0, |mut h| {
             for t in ["Body", "Type", "Distance", "Value", "Mapped", "Gravity", "Temp", "Notes"] {
                 h.col(|ui| th(ui, t));
             }
         })
         .body(|body| {
-            body.rows(if recent { 44.0 } else { 32.0 }, bodies.len(), |mut row| {
+            body.rows(if recent { 48.0 } else { 32.0 }, bodies.len(), |mut row| {
                 let b = bodies[row.index()];
                 row.set_selected(st.selected_body == Some(b.id));
                 let tags = interesting(b, sys);
@@ -1039,6 +1040,7 @@ fn body_table(ui: &mut Ui, sys: &SystemScan, bodies: &[&Body], st: &mut Explorat
                     }
                     if recent && let Some(scan) = b.recent_scan {
                         ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
                             ui.label(t);
                             ui.horizontal(|ui| {
                                 scan_badge(ui, scan);
