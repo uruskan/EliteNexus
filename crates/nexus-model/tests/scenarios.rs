@@ -23,6 +23,34 @@ const LOGIN: &[&str] = &[
 ];
 
 #[test]
+fn recent_scan_activity_promotes_mappings_and_breaks_ties_in_journal_order() {
+    use nexus_model::exploration::ScanActivityKind;
+
+    let mut model = Model::default();
+    feed(&mut model, LOGIN);
+    let order = |model: &Model| {
+        let system = &model.active().unwrap().exploration.systems[&100];
+        let mut rows: Vec<_> = system.bodies.values()
+            .filter_map(|body| body.recent_scan.map(|scan| (body.id, scan)))
+            .collect();
+        rows.sort_by_key(|(_, scan)| std::cmp::Reverse(scan.order_key()));
+        rows.into_iter().map(|(id, scan)| (id, scan.kind)).collect::<Vec<_>>()
+    };
+    feed(&mut model, &[
+        r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"Scan", "ScanType":"AutoScan", "BodyName":"Alpha", "BodyID":0, "StarSystem":"Alpha", "SystemAddress":100, "StarType":"K" }"#,
+        r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"Scan", "ScanType":"Detailed", "BodyName":"Alpha 1", "BodyID":1, "StarSystem":"Alpha", "SystemAddress":100, "PlanetClass":"Rocky body" }"#,
+        r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"Scan", "ScanType":"Basic", "BodyName":"Alpha 2", "BodyID":2, "StarSystem":"Alpha", "SystemAddress":100, "PlanetClass":"Rocky body" }"#,
+    ]);
+    assert_eq!(order(&model), [(2, ScanActivityKind::Basic), (1, ScanActivityKind::Scan), (0, ScanActivityKind::AutoScan)]);
+
+    feed(&mut model, &[
+        r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"SAAScanComplete", "BodyName":"Alpha 1", "BodyID":1, "SystemAddress":100, "ProbesUsed":3, "EfficiencyTarget":4 }"#,
+        r#"{ "timestamp":"2026-10-01T10:03:00Z", "event":"Scan", "ScanType":"NavBeaconDetail", "BodyName":"Alpha 3", "BodyID":3, "StarSystem":"Alpha", "SystemAddress":100, "PlanetClass":"Rocky body" }"#,
+    ]);
+    assert_eq!(order(&model), [(1, ScanActivityKind::Mapping), (2, ScanActivityKind::Basic), (0, ScanActivityKind::AutoScan)]);
+}
+
+#[test]
 fn login_sets_commander_and_location() {
     let mut m = Model::default();
     feed(&mut m, LOGIN);

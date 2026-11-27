@@ -71,6 +71,8 @@ pub struct BodyValue {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanActivityKind {
     Scan,
+    AutoScan,
+    Basic,
     Mapping,
 }
 
@@ -80,6 +82,12 @@ pub struct ScanActivity {
     /// Journal order breaks ties between events written in the same second.
     pub sequence: u64,
     pub kind: ScanActivityKind,
+}
+
+impl ScanActivity {
+    pub fn order_key(self) -> (Timestamp, u64) {
+        (self.time, self.sequence)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -160,7 +168,7 @@ pub struct Body {
 
 impl Body {
     fn record_scan_activity(&mut self, activity: ScanActivity) {
-        if self.recent_scan.is_none_or(|previous| activity.time >= previous.time) {
+        if self.recent_scan.is_none_or(|previous| activity.order_key() >= previous.order_key()) {
             self.recent_scan = Some(activity);
         }
     }
@@ -771,7 +779,13 @@ impl Exploration {
 
     /// Returns (system address, body id) of the scanned body.
     pub fn on_scan(&mut self, s: &ev::Scan, ts: Timestamp) -> (u64, u32) {
-        let activity = (s.scan_type == "Detailed").then(|| self.scan_activity(ts, ScanActivityKind::Scan));
+        let kind = match s.scan_type.as_str() {
+            "Detailed" => Some(ScanActivityKind::Scan),
+            "AutoScan" => Some(ScanActivityKind::AutoScan),
+            "Basic" => Some(ScanActivityKind::Basic),
+            _ => None,
+        };
+        let activity = kind.map(|kind| self.scan_activity(ts, kind));
         let odyssey = self.odyssey;
         let sys = self.system_mut(s.system_address, &s.star_system, ts);
         let held = !sys.sold;

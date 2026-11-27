@@ -107,7 +107,7 @@ saves `target\shots\<Out>.png` and exits; open the PNG to look at it. Check a na
 a layout changes.
 
 * `-Page`: a sidebar page (`Dashboard`, `Exploration`, `Exobiology`, `Navigation`, `Market`, `Settings`, ...).
-* `-Tab`: `abnormal`, `database`, ... (Market), `galaxy` (whole-galaxy map), `find`, `history`, `unsold`
+* `-Tab`: `abnormal`, `database`, ... (Market), `galaxy` (whole-galaxy map), `recent` (Exploration › Current system, Newest First), `find`, `history`, `unsold`
   (Exploration), `carrier`, `exact`, `neutron`, `route-carrier` (Navigation: that planner; `route-carrier` plots a
   route for your ship to your carrier on the first frame), `untouched`, `known` (Exobiology > Find planets), `clear-unsold` (Exobiology > This system, with the unsold list's Clear list asking to confirm), `buy` (Fleet > Where to buy, from the current
   ship's build with every row ticked, as for a second ship like it; `buy-build`: nothing loaded), `buy-one` (Fleet > Where to buy, one module: a 6A frame shift drive), `plan`, `plan-fsd`, `plan-new`, `plan-hull` (Fleet > Plan a loadout with the current ship; `plan-fsd` opens its frame shift drive's list, with engineering planned for it; `plan-new`: its start, with saved builds and every hull; `plan-hull`: a new Python; `plan-defence`, `plan-weapons`, `plan-power`, `plan-travel`, `plan-compare`: the current ship on that panel, Compare beside the hull as a shipyard sells it, Weapons against an Anaconda as sold), `materials`, `engineers`
