@@ -92,7 +92,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                     });
                 });
                 if cfg!(windows) {
-                    g.row("Speech engine", "SAPI also has the voices other programs install for it.", |ui| {
+                    g.row("Speech engine", "Piper uses a local neural voice and requires the Piper test package.", |ui| {
                         egui::ComboBox::from_id_salt("ttsengine").selected_text(s.tts_engine.label()).show_ui(ui, |ui| {
                             for e in EngineKind::ALL {
                                 if ui.selectable_value(&mut s.tts_engine, e, e.label()).changed() {
@@ -103,23 +103,25 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                             }
                         });
                     });
-                    g.row("Voice", "", |ui| {
-                        // As wide as the voice's name, but no wider than the row leaves beside its title: a long SAPI
-                        // name ("Microsoft Zira Desktop - English (United States)") ends in "…" and shows whole on hover.
-                        let name = voice_name(&s.tts_voice, &cx.voices);
-                        let text_w = ui.painter().layout_no_wrap(name.clone(), egui::TextStyle::Button.resolve(ui.style()), pal::TEXT).size().x;
-                        let combo = egui::ComboBox::from_id_salt("ttsvoice").width((text_w + 40.0).min(ui.available_width())).truncate().selected_text(name.clone()).show_ui(ui, |ui| {
-                            cx.changed |= ui.selectable_value(&mut s.tts_voice, String::new(), "Default").changed();
-                            for v in &cx.voices {
-                                cx.changed |= ui.selectable_value(&mut s.tts_voice, v.id.clone(), &v.name).changed();
+                    if s.tts_engine != EngineKind::Piper {
+                        g.row("Voice", "", |ui| {
+                            // As wide as the voice's name, but no wider than the row leaves beside its title: a long SAPI
+                            // name ("Microsoft Zira Desktop - English (United States)") ends in "…" and shows whole on hover.
+                            let name = voice_name(&s.tts_voice, &cx.voices);
+                            let text_w = ui.painter().layout_no_wrap(name.clone(), egui::TextStyle::Button.resolve(ui.style()), pal::TEXT).size().x;
+                            let combo = egui::ComboBox::from_id_salt("ttsvoice").width((text_w + 40.0).min(ui.available_width())).truncate().selected_text(name.clone()).show_ui(ui, |ui| {
+                                cx.changed |= ui.selectable_value(&mut s.tts_voice, String::new(), "Default").changed();
+                                for v in &cx.voices {
+                                    cx.changed |= ui.selectable_value(&mut s.tts_voice, v.id.clone(), &v.name).changed();
+                                }
+                            });
+                            // Opening the list reads the voices again: one installed a moment ago appears in it.
+                            if combo.response.clicked() {
+                                cx.refresh_voices = true;
                             }
+                            combo.response.on_hover_text(name);
                         });
-                        // Opening the list reads the voices again: one installed a moment ago appears in it.
-                        if combo.response.clicked() {
-                            cx.refresh_voices = true;
-                        }
-                        combo.response.on_hover_text(name);
-                    });
+                    }
                 }
                 g.row("Speech rate", "", |ui| cx.changed |= slider(ui, &mut s.tts_rate, 0.5..=2.0, 2, "×"));
                 g.row("Volume", "", |ui| {
@@ -224,7 +226,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                 #[cfg(target_os = "linux")]
                 app_menu(g);
             });
-            footnote(ui, "Elite Nexus is free software under the GNU GPL, version 3 or later, and comes with no warranty. A changed version must say that it is one and may not be presented as Elite Nexus (LICENSE-ADDITIONAL-TERMS.md). Source: github.com/uruskan/EliteNexus. Elite Dangerous is a trademark of Frontier Developments plc; Elite Nexus is an unofficial community tool.");
+            footnote(ui, "Elite Nexus is free software under the GNU GPL, version 3 or later, and comes with no warranty. Source: github.com/uruskan/EliteNexus. Elite Dangerous is a trademark of Frontier Developments plc; Elite Nexus is an unofficial community tool.");
         });
     });
 }

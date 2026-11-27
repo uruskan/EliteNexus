@@ -154,3 +154,18 @@ and `update.json` with its signature, which the app reads to offer the release a
   `tools/site/` builds and checks it.
 * `docs/research/`: verified specs for every integration, and a feature matrix of the tools Elite Nexus replaces.
 * `NOTICE.md`: third-party data and fonts, with their licences.
+
+## Optional Piper test package on Windows
+
+Use an x64 Visual Studio Developer PowerShell with MSVC, Python 3.11 or later
+and Rust on PATH. Build the application and assemble a separate portable folder:
+
+```powershell
+cargo build --locked -p nexus-app
+python tools/dev/package-piper.py --exe target/debug/EliteNexus.exe --out dist/EliteNexus-Piper
+```
+
+The packaging script downloads pinned Sherpa ONNX and Kristin Medium assets,
+compiles the audio worker and generates the initial cache of alerts. The
+package includes the upstream notices and the Kristin model card. Select
+**Piper (Kristin)** in **Settings › Voice and alerts** on that build.

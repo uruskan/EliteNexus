@@ -1580,3 +1580,101 @@ fn bio_done_counts_genera_not_species() {
     );
     assert!(!done(&m), "one genus of two, in any language");
 }
+
+#[test]
+fn hyperspace_announces_once_at_normal_priority_before_arrival() {
+    use nexus_journal::companion::flags;
+    use nexus_journal::{Companion, CompanionKind};
+    use nexus_model::{AlertKind, Priority};
+
+    let start = r#"{ "timestamp":"2026-10-01T10:01:00Z", "event":"StartJump", "JumpType":"Hyperspace", "StarSystem":"Beta", "StarClass":"F" }"#;
+    let arrived = r#"{ "timestamp":"2026-10-01T10:01:20Z", "event":"FSDJump", "StarSystem":"Beta", "SystemAddress":200, "StarPos":[10.0,0.0,0.0] }"#;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let status = |m: &mut Model, time: &str, extra: u32, live: bool| {
+        let flags = flags::IN_MAIN_SHIP | extra;
+        let text = format!(r#"{{"timestamp":"{time}","event":"Status","Flags":{flags},"Flags2":0}}"#);
+        let st = Companion::parse(CompanionKind::Status, &text).expect("Status.json");
+        let mut alerts = if live { Alerts::live() } else { Alerts::disabled() };
+        m.apply_companion(&st, live, &mut alerts);
+        alerts.items
+    };
+    assert!(feed(&mut m, &[start]).is_empty(), "countdown is still silent");
+    assert!(status(&mut m, "2026-10-01T10:01:04Z", flags::FSD_CHARGING, true).is_empty());
+
+    // A startup snapshot updates the state silently. The first live confirmation can announce it.
+    assert!(status(&mut m, "2026-10-01T10:01:06Z", flags::FSD_JUMP, false).is_empty());
+    let alerts = status(&mut m, "2026-10-01T10:01:07Z", flags::FSD_JUMP, true);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!((alerts[0].kind, alerts[0].priority), (AlertKind::Navigation, Priority::Normal));
+    assert_eq!(alerts[0].speech.as_deref(), Some("Arriving at Beta. This system has a scoopable star."));
+    assert!(status(&mut m, "2026-10-01T10:01:09Z", flags::FSD_JUMP, true).is_empty());
+    let alerts = feed(&mut m, &[arrived]);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].title, "Arrived in Beta");
+    assert!(alerts[0].speech.is_none(), "arrival is visual only");
+
+    // A delayed journal event can follow the matching status, and must not use the previous jump's flag.
+    let next = r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"StartJump", "JumpType":"Hyperspace", "StarSystem":"Gamma", "StarClass":"L" }"#;
+    assert!(status(&mut m, "2026-10-01T10:02:06Z", flags::FSD_JUMP, true).is_empty());
+    let alerts = feed(&mut m, &[next]);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].speech.as_deref(), Some("Arriving at Gamma. This system has a brown dwarf star. The arrival star is not scoopable."));
+
+    for (class, description) in [
+        ("N", "This system has a neutron star. The arrival star is not scoopable."),
+        ("DA", "This system has a white dwarf star. The arrival star is not scoopable."),
+        ("M", "This system has a scoopable star."),
+    ] {
+        let mut model = Model::default();
+        feed(&mut model, LOGIN);
+        let start = start.replace("\"F\"", &format!("\"{class}\""));
+        feed(&mut model, &[&start]);
+        let alerts = status(&mut model, "2026-10-01T10:01:08Z", flags::FSD_JUMP, true);
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].speech.as_deref(), Some(format!("Arriving at Beta. {description}").as_str()));
+    }
+}
+
+#[test]
+fn navigation_voice_follows_map_targets_and_live_route() {
+    use nexus_journal::companion::flags;
+    use nexus_journal::{Companion, CompanionKind};
+    use nexus_model::Priority;
+    let mut m = Model::default();
+    feed(&mut m, LOGIN);
+    let status = |m: &mut Model, ts: &str, extra: u32, focus: u32| {
+        let flags = flags::IN_MAIN_SHIP | extra;
+        let json = format!(r#"{{"timestamp":"{ts}","event":"Status","Flags":{flags},"GuiFocus":{focus},"Fuel":{{"FuelMain":20.0,"FuelReservoir":0.5}}}}"#);
+        let st = Companion::parse(CompanionKind::Status, &json).expect("Status.json");
+        let mut alerts = Alerts::live();
+        m.apply_companion(&st, true, &mut alerts);
+        alerts.items
+    };
+    let target = r#"{ "timestamp":"2026-10-01T10:01:01Z", "event":"FSDTarget", "Name":"Beta", "SystemAddress":200, "StarClass":"F" }"#;
+    status(&mut m, "2026-10-01T10:01:00Z", 0, 6);
+    let alerts = feed(&mut m, &[target, target]);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].priority, Priority::Normal);
+    assert_eq!(alerts[0].speech.as_deref(), Some("Set course to Beta."));
+
+    m.apply_companion(&nav_route(&[("Alpha", 100, 0.0), ("Beta", 200, 10.0), ("Gamma", 300, 20.0)]), true, &mut Alerts::live());
+    let ship = m.active_mut().unwrap().fleet.current_mut().expect("own ship");
+    ship.fuel_main_capacity = 64.0;
+    ship.modules.push(nexus_model::fleet::ShipModule { item: "int_fuelscoop_size4_class5".into(), on: true, ..Default::default() });
+
+    status(&mut m, "2026-10-01T10:01:02Z", 0, 0);
+    let start = r#"{ "timestamp":"2026-10-01T10:01:03Z", "event":"StartJump", "JumpType":"Hyperspace", "StarSystem":"Beta", "SystemAddress":200, "StarClass":"F" }"#;
+    let automatic_target = r#"{ "timestamp":"2026-10-01T10:01:06Z", "event":"FSDTarget", "Name":"Gamma", "SystemAddress":300, "StarClass":"DA" }"#;
+    assert!(feed(&mut m, &[start, automatic_target]).is_empty());
+    let alerts = status(&mut m, "2026-10-01T10:01:07Z", flags::FSD_JUMP, 0);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].speech.as_deref(), Some("Arriving at Beta. This system has a scoopable star. One jump remaining after this. Fuel is below half. Consider refuelling here."));
+
+    feed(&mut m, &[&jump("2026-10-01T10:01:17Z", "Beta", 200, 10.0)]);
+    let start = r#"{ "timestamp":"2026-10-01T10:02:00Z", "event":"StartJump", "JumpType":"Hyperspace", "StarSystem":"Gamma", "SystemAddress":300, "StarClass":"M" }"#;
+    assert!(feed(&mut m, &[start]).is_empty(), "the previous jump status is stale");
+    let alerts = status(&mut m, "2026-10-01T10:02:07Z", flags::FSD_JUMP, 0);
+    assert_eq!(alerts.len(), 1);
+    assert_eq!(alerts[0].speech.as_deref(), Some("Arriving at Gamma. This system has a scoopable star. This is the final jump."));
+}

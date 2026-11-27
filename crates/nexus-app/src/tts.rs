@@ -1,5 +1,5 @@
 //! Text-to-speech on a background thread. Windows: the engine chosen in Settings, Windows speech (WinRT speech
-//! synthesis via the `tts` crate) or SAPI 5 (`sapi.rs`), in the voice chosen there.
+//! synthesis via the `tts` crate), SAPI 5, or the bundled Piper backend.
 //! Linux: speech-dispatcher's `spd-say`, else `espeak-ng` or `espeak`, run as programs (nothing to link); without
 //! any of them the app stays quiet and Settings says why.
 //! macOS: the system's `say`, in the voice chosen in System Settings › Accessibility › Spoken Content.
@@ -11,6 +11,10 @@ use std::sync::Arc;
 
 #[cfg(windows)]
 mod sapi;
+#[cfg(windows)]
+mod piper;
+#[cfg(windows)]
+mod audio_cache;
 
 pub enum TtsCmd {
     Say(String),
@@ -35,16 +39,20 @@ pub enum EngineKind {
     WinRt,
     /// SAPI 5: Windows' desktop voices and the ones other programs install for it (IVONA, CereProc, …).
     Sapi,
+    /// Offline neural synthesis, available in the experimental Windows package.
+    #[serde(alias = "kokoro")]
+    Piper,
 }
 
 impl EngineKind {
-    pub const ALL: [EngineKind; 2] = [EngineKind::WinRt, EngineKind::Sapi];
+    pub const ALL: [EngineKind; 3] = [EngineKind::WinRt, EngineKind::Sapi, EngineKind::Piper];
 
     /// As Settings and the voice line under Test voice name it.
     pub fn label(self) -> &'static str {
         match self {
             EngineKind::WinRt => "Windows speech",
             EngineKind::Sapi => "SAPI",
+            EngineKind::Piper => "Piper (Kristin)",
         }
     }
 }
@@ -135,6 +143,7 @@ enum Engine {
     /// With the id of the voice it started with (Windows' default), for going back to it.
     WinRt(tts::Tts, Option<String>),
     Sapi(sapi::Sapi),
+    Piper(piper::Piper),
 }
 
 #[cfg(windows)]
@@ -147,6 +156,7 @@ impl Engine {
                 Ok(Engine::WinRt(tts, default))
             }
             EngineKind::Sapi => sapi::Sapi::open().map(Engine::Sapi),
+            EngineKind::Piper => piper::Piper::open().map(Engine::Piper),
         }
     }
 
@@ -160,6 +170,7 @@ impl Engine {
                 }
             },
             Engine::Sapi(sapi) => sapi.voices(),
+            Engine::Piper(_) => Vec::new(),
         }
     }
 
@@ -190,6 +201,7 @@ impl Engine {
                 voice.is_some_and(|v| tts.set_voice(&v).is_ok())
             }
             Engine::Sapi(sapi) => sapi.set_voice(id),
+            Engine::Piper(_) => id.is_empty(),
         }
     }
 
@@ -200,6 +212,7 @@ impl Engine {
                 let _ = tts.set_rate((tts.normal_rate() * rate).clamp(tts.min_rate(), tts.max_rate()));
             }
             Engine::Sapi(sapi) => sapi.set_rate(rate),
+            Engine::Piper(piper) => piper.set_rate(rate),
         }
     }
 
@@ -209,6 +222,7 @@ impl Engine {
                 let _ = tts.set_volume(volume.clamp(0.0, 1.0));
             }
             Engine::Sapi(sapi) => sapi.set_volume(volume),
+            Engine::Piper(piper) => piper.set_volume(volume),
         }
     }
 
@@ -218,6 +232,7 @@ impl Engine {
         match self {
             Engine::WinRt(tts, _) => tts.speak(text, false).map(|_| ()).map_err(|e| e.to_string()),
             Engine::Sapi(sapi) => sapi.speak(text),
+            Engine::Piper(piper) => piper.speak(text),
         }
     }
 
@@ -230,7 +245,7 @@ impl Engine {
     fn wait(&mut self, up_to: std::time::Duration) -> Option<Result<(), String>> {
         match self {
             Engine::Sapi(sapi) => sapi.wait(up_to),
-            Engine::WinRt(..) => None,
+            Engine::WinRt(..) | Engine::Piper(_) => None,
         }
     }
 }
