@@ -60,12 +60,8 @@ pub(super) fn lock_file(root: &Path) -> Result<fs::File> {
         .context("opening the Piper installation lock")
 }
 
-pub(super) fn remove() -> Result<()> {
-    let root = crate::settings::data_dir();
-    let lock = lock_file(&root)?;
-    lock.try_lock()
-        .context("Piper is in use. Close other Elite Nexus instances and try again")?;
-    for folder in [
+fn removable_folders(root: &Path) -> impl Iterator<Item = PathBuf> {
+    [
         Some(root.join(INSTALL_DIR)),
         Some(root.join(STAGING_DIR)),
         portable_folder().filter(|path| complete(path)),
@@ -73,10 +69,25 @@ pub(super) fn remove() -> Result<()> {
     ]
     .into_iter()
     .flatten()
-    {
-        remove_folder(&folder)?;
+}
+
+pub(super) fn has_files() -> bool {
+    removable_folders(&crate::settings::data_dir()).any(|folder| folder.is_dir())
+}
+
+pub(super) fn remove() -> Result<bool> {
+    let root = crate::settings::data_dir();
+    let lock = lock_file(&root)?;
+    lock.try_lock()
+        .context("Piper is in use. Close other Elite Nexus instances and try again")?;
+    let mut removed = false;
+    for folder in removable_folders(&root) {
+        if folder.is_dir() {
+            remove_folder(&folder)?;
+            removed = true;
+        }
     }
-    Ok(())
+    Ok(removed)
 }
 
 fn remove_folder(folder: &Path) -> Result<()> {

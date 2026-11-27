@@ -1181,6 +1181,7 @@ impl GameState {
     }
 
     fn announce_hyperspace(&mut self, ts: Timestamp, alerts: &mut Alerts) {
+        let low_fuel = self.main_fuel_fraction().is_some_and(|fuel| fuel < 0.5);
         let Some(jump) = self.pending_jump.as_mut() else { return };
         if !alerts.enabled || jump.announced || ts < jump.started {
             return;
@@ -1189,7 +1190,10 @@ impl GameState {
         let title = format!("Arriving at {}", jump.system);
         let class = jump.star_class.as_str();
         let scoopable = nexus_data::exploration::is_scoopable(class);
-        let scoop = if class.is_empty() || class.eq_ignore_ascii_case("unknown") {
+        let known = !class.is_empty() && !class.eq_ignore_ascii_case("unknown");
+        let hazard = Self::hazardous_star(class);
+        let fuel_warning = known && !scoopable && low_fuel && !hazard;
+        let scoop = if !known {
             String::new()
         } else if scoopable {
             "This system has a scoopable star.".into()
@@ -1206,8 +1210,14 @@ impl GameState {
         }).map(|i| route.len() - i - 1);
 
         let mut details = Vec::new();
+        if hazard {
+            details.push("Caution.".into());
+        }
         if !scoop.is_empty() {
             details.push(scoop);
+        }
+        if fuel_warning {
+            details.push("Fuel is below half.".into());
         }
         if let Some(count) = remaining {
             details.push(match count {
@@ -1229,7 +1239,8 @@ impl GameState {
 
         let detail = details.join(" ");
         let speech = if detail.is_empty() { format!("{title}.") } else { format!("{title}. {detail}") };
-        alerts.push(Alert::new(ts, AlertKind::Navigation, Priority::Normal, title).detail(detail).speak(speech));
+        let priority = if fuel_warning { Priority::High } else { Priority::Normal };
+        alerts.push(Alert::new(ts, AlertKind::Navigation, priority, title).detail(detail).speak(speech));
     }
 
     /// Spoken names for non-scoopable stars. Drop catalogue codes such as DA and L.
@@ -1249,26 +1260,32 @@ impl GameState {
         })
     }
 
-    fn star_class_alert(&mut self, ts: Timestamp, system: &str, class: &str, alerts: &mut Alerts) {
-        let scoopable = nexus_data::exploration::is_scoopable(class);
-        let desc = nexus_data::exploration::star_description(class);
-        let fuel_frac = self
-            .fleet
+    fn main_fuel_fraction(&self) -> Option<f64> {
+        self.fleet
             .current()
             .filter(|s| s.fuel_main_capacity > 0.0)
             .map(|s| self.fleet.fuel_main / s.fuel_main_capacity)
-            .unwrap_or(1.0);
-        if matches!(class, "N" | "H") || class.starts_with('D') {
+    }
+
+    fn hazardous_star(class: &str) -> bool {
+        matches!(class, "N" | "H" | "SupermassiveBlackHole") || class.starts_with('D')
+    }
+
+    // Charging still gives a visual warning. The destination announcement speaks it in hyperspace.
+    fn star_class_alert(&self, ts: Timestamp, system: &str, class: &str, alerts: &mut Alerts) {
+        let desc = nexus_data::exploration::star_description(class);
+        if Self::hazardous_star(class) {
             alerts.push_with(|| {
                 Alert::new(ts, AlertKind::Navigation, Priority::Normal, format!("Next: {desc}"))
                     .detail(system.to_string())
-                    .speak(format!("Caution, {desc} ahead."))
             });
-        } else if !scoopable && fuel_frac < 0.5 {
+        } else if !class.is_empty() && !class.eq_ignore_ascii_case("unknown")
+            && !nexus_data::exploration::is_scoopable(class)
+            && let Some(fuel_frac) = self.main_fuel_fraction().filter(|&fuel| fuel < 0.5)
+        {
             alerts.push_with(|| {
                 Alert::new(ts, AlertKind::Navigation, Priority::High, "Next star is not scoopable")
                     .detail(format!("{system} — {desc}; fuel {:.0}%", fuel_frac * 100.0))
-                    .speak("Warning. Next star is not scoopable.")
             });
         }
     }

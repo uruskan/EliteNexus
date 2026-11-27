@@ -1626,17 +1626,27 @@ fn hyperspace_announces_once_at_normal_priority_before_arrival() {
     assert_eq!(alerts[0].speech.as_deref(), Some("Arriving at Gamma. This system has a brown dwarf star. The arrival star is not scoopable."));
 
     for (class, description) in [
-        ("N", "This system has a neutron star. The arrival star is not scoopable."),
-        ("DA", "This system has a white dwarf star. The arrival star is not scoopable."),
+        ("N", "Caution. This system has a neutron star. The arrival star is not scoopable."),
+        ("DA", "Caution. This system has a white dwarf star. The arrival star is not scoopable."),
+        ("H", "Caution. This system has a black hole. The arrival star is not scoopable."),
         ("M", "This system has a scoopable star."),
     ] {
         let mut model = Model::default();
         feed(&mut model, LOGIN);
         let start = start.replace("\"F\"", &format!("\"{class}\""));
-        feed(&mut model, &[&start]);
+        let charging = feed(&mut model, &[&start]);
+        assert!(charging.iter().all(|alert| alert.speech.is_none()), "charging must not queue a second spoken warning for {class}");
         let alerts = status(&mut model, "2026-10-01T10:01:08Z", flags::FSD_JUMP, true);
         assert_eq!(alerts.len(), 1);
-        assert_eq!(alerts[0].speech.as_deref(), Some(format!("Arriving at Beta. {description}").as_str()));
+        let expected = format!("Arriving at Beta. {description}");
+        assert_eq!(alerts[0].speech.as_deref(), Some(expected.as_str()));
+        assert!(feed(&mut model, &[arrived]).iter().all(|alert| alert.speech.is_none()));
+
+        let mut status_first = Model::default();
+        feed(&mut status_first, LOGIN);
+        assert!(status(&mut status_first, "2026-10-01T10:01:08Z", flags::FSD_JUMP, true).is_empty());
+        let delayed = feed(&mut status_first, &[&start]);
+        assert_eq!(delayed.iter().filter_map(|alert| alert.speech.as_deref()).collect::<Vec<_>>(), [expected.as_str()]);
     }
 }
 

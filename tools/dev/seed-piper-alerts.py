@@ -22,9 +22,6 @@ def alert_phrases():
     app = (ROOT / "crates/nexus-app/src/app.rs").read_text(encoding="utf-8")
     phrases = set(re.findall(r'\.speak\("([^"]+)"\)', state))
     phrases.update(re.findall(r'\.speaker\.say\("([^"]+)"\)', app))
-    phrases.update(f"Caution, {star} ahead." for star in ("Neutron star", "Black hole"))
-    for code in "D DA DAB DAO DAZ DAV DB DBZ DBV DO DOV DQ DC DCV DX".split():
-        phrases.add(f"Caution, White dwarf ({code}) ahead.")
     for name in ("genera", "species"):
         table = json.loads((ROOT / f"data/exobiology/{name}.json").read_text(encoding="utf-8"))
         rows = table["genera"].values() if name == "genera" else table

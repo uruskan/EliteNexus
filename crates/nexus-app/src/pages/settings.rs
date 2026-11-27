@@ -5,7 +5,7 @@ use crate::folders::{self, FolderField};
 use crate::jobs::Job;
 use crate::overlay::draw::Anchor;
 use crate::settings::Settings;
-use crate::theme::{pal, size};
+use crate::theme::{display, pal, size};
 use crate::tts::{EngineKind, VoiceInfo};
 use crate::widgets::{self, cards, footnote, group, section};
 use egui::{Color32, RichText, Ui};
@@ -64,6 +64,10 @@ pub struct SettingsUi {
     /// The pass the page was last drawn in: a gap means it has just been opened.
     shown_pass: Option<u64>,
     confirm_piper_install: bool,
+    #[cfg(any(windows, target_os = "linux"))]
+    piper_data_present: bool,
+    #[cfg(any(windows, target_os = "linux"))]
+    piper_status: crate::tts::VoiceStatus,
 }
 
 /// A slider with its value shown on the right, sized for a settings row.
@@ -78,8 +82,14 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
     let show_piper_confirmation = cx.ui.confirm_piper_install;
     // Opened just now: the voices are listed again, so one installed meanwhile is offered.
     let pass = ui.ctx().cumulative_pass_nr();
-    if cx.ui.shown_pass.is_none_or(|p| p + 1 < pass) {
+    let opened = cx.ui.shown_pass.is_none_or(|p| p + 1 < pass);
+    if opened {
         cx.refresh_voices = true;
+    }
+    #[cfg(any(windows, target_os = "linux"))]
+    if opened || cx.ui.piper_status != cx.voice {
+        cx.ui.piper_status = cx.voice.clone();
+        cx.ui.piper_data_present = EngineKind::PIPER_SUPPORTED && crate::tts::piper_data_present();
     }
     cx.ui.shown_pass = Some(pass);
     cards(ui, 2, 420.0, |c| {
@@ -177,7 +187,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                     }
                 });
                 #[cfg(any(windows, target_os = "linux"))]
-                if EngineKind::PIPER_SUPPORTED {
+                if cx.ui.piper_data_present {
                     g.content(|ui| {
                         let confirm_id = ui.id().with("confirm_remove_piper");
                         let confirming = ui.data(|data| data.get_temp::<bool>(confirm_id)).unwrap_or(false);
@@ -286,21 +296,24 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                 #[cfg(target_os = "linux")]
                 app_menu(g);
             });
-            footnote(ui, "Elite Nexus is free software under the GNU GPL, version 3 or later, and comes with no warranty. Source: github.com/uruskan/EliteNexus. Elite Dangerous is a trademark of Frontier Developments plc; Elite Nexus is an unofficial community tool.");
+            footnote(ui, "Elite Nexus is free software under the GNU GPL, version 3 or later, and comes with no warranty. A changed version must say that it is one and may not be presented as Elite Nexus (LICENSE-ADDITIONAL-TERMS.md). Source: github.com/uruskan/EliteNexus. Elite Dangerous is a trademark of Frontier Developments plc; Elite Nexus is an unofficial community tool.");
         });
     });
     if show_piper_confirmation {
-        let dialog = egui::Modal::new(egui::Id::new("piper_install")).show(ui.ctx(), |ui| {
-            ui.set_max_width(330.0);
-            ui.heading("Install Piper?");
-            ui.label("Installing Piper requires a download of about 94 MB. Do you want to proceed?");
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                let cancel = widgets::button(ui, "Cancel").clicked();
-                let install = widgets::primary_button(ui, "Install Piper").clicked();
-                (install, cancel)
-            }).inner
-        });
+        let dialog = egui::Modal::new(egui::Id::new("piper_install"))
+            .frame(egui::Frame::new().fill(pal::SIDEBAR).corner_radius(egui::CornerRadius::same(18)).inner_margin(egui::Margin::same(24)))
+            .show(ui.ctx(), |ui| {
+                ui.set_width(330.0);
+                ui.label(RichText::new("Install Piper?").font(display(size::TITLE3)).color(pal::TEXT));
+                ui.add_space(4.0);
+                ui.label(RichText::new("Installing Piper requires a download of about 94 MB. Do you want to proceed?").color(pal::DIM));
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    let cancel = widgets::button(ui, "Cancel").clicked();
+                    let install = widgets::primary_button(ui, "Install Piper").clicked();
+                    (install, cancel)
+                }).inner
+            });
         let (install, cancel) = dialog.inner;
         if install {
             cx.settings.tts_engine = EngineKind::Piper;
@@ -460,6 +473,8 @@ fn voice_line(status: &crate::tts::VoiceStatus) -> Option<(Color32, String)> {
         VoiceStatus::PiperInstallFailed(why) => Some((pal::WARN, format!("Piper could not be installed. {why}"))),
         #[cfg(any(windows, target_os = "linux"))]
         VoiceStatus::PiperRemoved => Some((pal::DIM, "Piper and its cached audio were removed.".into())),
+        #[cfg(any(windows, target_os = "linux"))]
+        VoiceStatus::PiperNothingToRemove => Some((pal::DIM, "There are no Piper files to remove.".into())),
         #[cfg(any(windows, target_os = "linux"))]
         VoiceStatus::PiperRemoveFailed(why) => Some((pal::WARN, format!("Piper could not be removed. {why}"))),
         VoiceStatus::Spoke(engine) => Some((pal::DIM, format!("Speaking through {}. Nothing heard? Check the volume of the sound device it uses.", program_name(engine)))),

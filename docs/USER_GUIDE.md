@@ -180,7 +180,7 @@ Alerts are spoken through Windows speech (on Linux through speech-dispatcher's `
 distributions include, or `espeak-ng` / `espeak` without it; with none of them alerts are shown, not spoken; on macOS
 through the system's `say`). Settings › **Test voice** says which one spoke, or why none could.
 
-When the ship enters hyperspace, a Normal priority alert announces the destination and whether the arrival star is scoopable, if the game supplies the star class. For non-scoopable stars, it says the type (for example, neutron star or white dwarf) when known. The arrival stays in the alert history. A new FSD target set while the Galaxy Map is open says “Set course to …”. On a plotted route, the jump announcement gives the number of jumps left after this one. If you have an active fuel scoop, have more jumps ahead and arrive at a scoopable star with less than half a tank, it suggests refuelling there.
+When the ship enters hyperspace, “Arriving at …” announces the destination and whether the arrival star is scoopable, if the game supplies the star class. The same line cautions about a neutron star, white dwarf or black hole when present. When the ship arrives, “Arrived in …” appears in the alert history. These announcements apply to every speech engine. A new FSD target set while the Galaxy Map is open says “Set course to …”. On a plotted route, the jump announcement gives the number of jumps left after this one. It suggests refuelling when the ship has an active fuel scoop, has more jumps ahead and reaches a scoopable star with less than half a tank.
 
 After collecting the second exobiology sample, the app announces the required distance to the final colony when it knows the distance. This alert has Normal priority.
 

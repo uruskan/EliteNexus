@@ -50,6 +50,11 @@ pub fn piper_installed() -> bool {
     { false }
 }
 
+#[cfg(any(windows, target_os = "linux"))]
+pub fn piper_data_present() -> bool {
+    piper_install::has_files()
+}
+
 /// Which speech engine to use. The default represents system speech on every platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -60,7 +65,6 @@ pub enum EngineKind {
     /// SAPI 5: Windows' desktop voices and the ones other programs install for it (IVONA, CereProc, …).
     Sapi,
     /// Offline neural synthesis installed on demand on Windows and Linux x64.
-    #[serde(alias = "kokoro")]
     Piper,
 }
 
@@ -125,6 +129,8 @@ pub enum VoiceStatus {
     PiperInstallFailed(String),
     #[cfg(any(windows, target_os = "linux"))]
     PiperRemoved,
+    #[cfg(any(windows, target_os = "linux"))]
+    PiperNothingToRemove,
     #[cfg(any(windows, target_os = "linux"))]
     PiperRemoveFailed(String),
 }
@@ -513,13 +519,11 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
                 let result = if install.is_some() {
                     Err("Wait for the Piper download to finish, then try again.".into())
                 } else {
-                    match piper_install::remove() {
-                        Ok(()) => Ok(()),
-                        Err(e) => Err(format!("{e:#}")),
-                    }
+                    piper_install::remove().map_err(|e| format!("{e:#}"))
                 };
                 *status.lock() = match result {
-                    Ok(()) => VoiceStatus::PiperRemoved,
+                    Ok(true) => VoiceStatus::PiperRemoved,
+                    Ok(false) => VoiceStatus::PiperNothingToRemove,
                     Err(e) => VoiceStatus::PiperRemoveFailed(e),
                 };
             }
