@@ -712,6 +712,8 @@ impl NexusApp {
         let high_value = self.settings.high_value_threshold;
         let mut settings_changed = false;
         let mut test_voice = false;
+        #[cfg(any(windows, target_os = "linux"))]
+        let mut piper_action = None;
         let mut restart = false;
         let mut refresh_voices = false;
         let mut map_action = None;
@@ -804,6 +806,8 @@ impl NexusApp {
                     data_dir: &self.data_dir,
                     changed: false,
                     test_voice: false,
+                    #[cfg(any(windows, target_os = "linux"))]
+                    piper_action: None,
                     restart_core: false,
                     voice: self.speaker.status(),
                     voices: self.speaker.voices(),
@@ -817,6 +821,8 @@ impl NexusApp {
                 pages::settings::show(ui, &mut cx);
                 settings_changed = cx.changed;
                 test_voice = cx.test_voice;
+                #[cfg(any(windows, target_os = "linux"))]
+                { piper_action = cx.piper_action; }
                 restart = cx.restart_core;
                 refresh_voices = cx.refresh_voices;
             }
@@ -910,6 +916,10 @@ impl NexusApp {
             None => {}
         }
         self.after_settings(ui.ctx(), settings_changed, test_voice, restart);
+        #[cfg(any(windows, target_os = "linux"))]
+        if let Some(action) = piper_action {
+            self.speaker.piper_action(action);
+        }
     }
 
     /// Before a commander is loaded: the journal folder can't be read, or holds no commander yet. Settings opens as
@@ -927,6 +937,8 @@ impl NexusApp {
             data_dir: &self.data_dir,
             changed: false,
             test_voice: false,
+            #[cfg(any(windows, target_os = "linux"))]
+            piper_action: None,
             restart_core: false,
             voice: self.speaker.status(),
             voices: self.speaker.voices(),
@@ -950,10 +962,16 @@ impl NexusApp {
             }
         });
         let (changed, test_voice, restart) = (cx.changed, cx.test_voice, cx.restart_core);
+        #[cfg(any(windows, target_os = "linux"))]
+        let piper_action = cx.piper_action;
         if cx.refresh_voices {
             self.speaker.refresh_voices();
         }
         self.after_settings(ui.ctx(), changed, test_voice, restart);
+        #[cfg(any(windows, target_os = "linux"))]
+        if let Some(action) = piper_action {
+            self.speaker.piper_action(action);
+        }
     }
 
     /// Applies what the Settings page changed: services, voice, and reading the journals again from a new folder.
@@ -972,7 +990,7 @@ impl NexusApp {
             self.mcp.apply(on, || agent_tools(&self.core, self.market.db.clone(), self.rt.handle(), &self.agents_spansh), self.rt.handle());
         }
         if test_voice {
-            self.speaker.say("Elite Nexus voice check. All systems nominal, commander.");
+            self.speaker.test();
         }
         if restart {
             self.core = start_core(ctx, self.overrides.journal_dir.as_ref().or(self.settings.journal_dir.as_ref()), self.market.history_sink(), &self.settings);

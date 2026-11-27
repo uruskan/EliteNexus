@@ -5,7 +5,7 @@ use crate::folders::{self, FolderField};
 use crate::jobs::Job;
 use crate::overlay::draw::Anchor;
 use crate::settings::Settings;
-use crate::theme::{pal, size};
+use crate::theme::{display, pal, size};
 use crate::tts::{EngineKind, VoiceInfo};
 use crate::widgets::{self, cards, footnote, group, section};
 use egui::{Color32, RichText, Ui};
@@ -23,6 +23,8 @@ pub struct SettingsCtx<'a> {
     pub data_dir: &'a std::path::Path,
     pub changed: bool,
     pub test_voice: bool,
+    #[cfg(any(windows, target_os = "linux"))]
+    pub piper_action: Option<crate::tts::PiperAction>,
     pub restart_core: bool,
     /// What happened the last time Elite Nexus spoke (shown under Test voice).
     pub voice: crate::tts::VoiceStatus,
@@ -61,6 +63,11 @@ pub struct SettingsUi {
     shots_msg: Option<String>,
     /// The pass the page was last drawn in: a gap means it has just been opened.
     shown_pass: Option<u64>,
+    confirm_piper_install: bool,
+    #[cfg(any(windows, target_os = "linux"))]
+    piper_data_present: bool,
+    #[cfg(any(windows, target_os = "linux"))]
+    piper_status: crate::tts::VoiceStatus,
 }
 
 /// A slider with its value shown on the right, sized for a settings row.
@@ -72,10 +79,17 @@ fn slider(ui: &mut Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>, de
 const UI_SCALES: [(f32, &str); 6] = [(0.9, "90 %"), (1.0, "100 %"), (1.1, "110 %"), (1.25, "125 %"), (1.5, "150 %"), (1.75, "175 %")];
 
 pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
+    let show_piper_confirmation = cx.ui.confirm_piper_install;
     // Opened just now: the voices are listed again, so one installed meanwhile is offered.
     let pass = ui.ctx().cumulative_pass_nr();
-    if cx.ui.shown_pass.is_none_or(|p| p + 1 < pass) {
+    let opened = cx.ui.shown_pass.is_none_or(|p| p + 1 < pass);
+    if opened {
         cx.refresh_voices = true;
+    }
+    #[cfg(any(windows, target_os = "linux"))]
+    if opened || cx.ui.piper_status != cx.voice {
+        cx.ui.piper_status = cx.voice.clone();
+        cx.ui.piper_data_present = EngineKind::PIPER_SUPPORTED && crate::tts::piper_data_present();
     }
     cx.ui.shown_pass = Some(pass);
     cards(ui, 2, 420.0, |c| {
@@ -91,34 +105,54 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                         }
                     });
                 });
-                if cfg!(windows) {
-                    g.row("Speech engine", "SAPI also has the voices other programs install for it.", |ui| {
-                        egui::ComboBox::from_id_salt("ttsengine").selected_text(s.tts_engine.label()).show_ui(ui, |ui| {
-                            for e in EngineKind::ALL {
-                                if ui.selectable_value(&mut s.tts_engine, e, e.label()).changed() {
+                if cfg!(windows) || EngineKind::PIPER_SUPPORTED {
+                    let hint = if EngineKind::PIPER_SUPPORTED { "Piper is an optional English neural voice." } else { "" };
+                    g.row("Speech engine", hint, |ui| {
+                        egui::ComboBox::from_id_salt("ttsengine").selected_text(s.tts_engine.effective().label()).show_ui(ui, |ui| {
+                            for e in EngineKind::ALL.into_iter().filter(|engine| engine.available()) {
+                                if ui.selectable_label(s.tts_engine.effective() == e, e.label()).clicked() {
+                                    ui.close();
+                                    if e == EngineKind::Piper && !crate::tts::piper_installed() {
+                                        cx.ui.confirm_piper_install = true;
+                                        continue;
+                                    }
+                                    if s.tts_engine == e {
+                                        continue;
+                                    }
                                     // The engines have different voices: start from the new one's default.
+                                    s.tts_engine = e;
                                     s.tts_voice.clear();
                                     cx.changed = true;
                                 }
                             }
                         });
                     });
-                    g.row("Voice", "", |ui| {
-                        // As wide as the voice's name, but no wider than the row leaves beside its title: a long SAPI
-                        // name ("Microsoft Zira Desktop - English (United States)") ends in "…" and shows whole on hover.
-                        let name = voice_name(&s.tts_voice, &cx.voices);
-                        let text_w = ui.painter().layout_no_wrap(name.clone(), egui::TextStyle::Button.resolve(ui.style()), pal::TEXT).size().x;
-                        let combo = egui::ComboBox::from_id_salt("ttsvoice").width((text_w + 40.0).min(ui.available_width())).truncate().selected_text(name.clone()).show_ui(ui, |ui| {
-                            cx.changed |= ui.selectable_value(&mut s.tts_voice, String::new(), "Default").changed();
-                            for v in &cx.voices {
-                                cx.changed |= ui.selectable_value(&mut s.tts_voice, v.id.clone(), &v.name).changed();
+                    if cfg!(windows) && s.tts_engine.effective() != EngineKind::Piper {
+                        g.row("Voice", "", |ui| {
+                            // As wide as the voice's name, but no wider than the row leaves beside its title: a long SAPI
+                            // name ("Microsoft Zira Desktop - English (United States)") ends in "…" and shows whole on hover.
+                            let name = voice_name(&s.tts_voice, &cx.voices);
+                            let text_w = ui.painter().layout_no_wrap(name.clone(), egui::TextStyle::Button.resolve(ui.style()), pal::TEXT).size().x;
+                            let combo = egui::ComboBox::from_id_salt("ttsvoice").width((text_w + 40.0).min(ui.available_width())).truncate().selected_text(name.clone()).show_ui(ui, |ui| {
+                                cx.changed |= ui.selectable_value(&mut s.tts_voice, String::new(), "Default").changed();
+                                for v in &cx.voices {
+                                    cx.changed |= ui.selectable_value(&mut s.tts_voice, v.id.clone(), &v.name).changed();
+                                }
+                            });
+                            // Opening the list reads the voices again: one installed a moment ago appears in it.
+                            if combo.response.clicked() {
+                                cx.refresh_voices = true;
                             }
+                            combo.response.on_hover_text(name);
                         });
-                        // Opening the list reads the voices again: one installed a moment ago appears in it.
-                        if combo.response.clicked() {
-                            cx.refresh_voices = true;
-                        }
-                        combo.response.on_hover_text(name);
+                    }
+                } else if cfg!(target_os = "linux") {
+                    g.row("Speech engine", "Uses Speech Dispatcher when installed, or eSpeak if available.", |ui| {
+                        ui.label("System speech");
+                    });
+                } else if cfg!(target_os = "macos") {
+                    g.row("Speech engine", "Choose the voice in System Settings › Accessibility › Spoken Content.", |ui| {
+                        ui.label("System speech");
                     });
                 }
                 g.row("Speech rate", "", |ui| cx.changed |= slider(ui, &mut s.tts_rate, 0.5..=2.0, 2, "×"));
@@ -131,8 +165,18 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                 });
                 g.row("Banners stay for", "", |ui| cx.changed |= slider(ui, &mut s.toast_seconds, 2.0..=30.0, 0, " s"));
                 g.content(|ui| {
-                    if widgets::button(ui, "Test voice").clicked() {
-                        cx.test_voice = true;
+                    #[cfg(any(windows, target_os = "linux"))]
+                    let install_needed = s.tts_engine == EngineKind::Piper
+                        && matches!(cx.voice, crate::tts::VoiceStatus::PiperNeedsInstall | crate::tts::VoiceStatus::PiperInstallFailed(_));
+                    #[cfg(not(any(windows, target_os = "linux")))]
+                    let install_needed = false;
+                    let test_label = if install_needed { "Install Piper" } else { "Test voice" };
+                    if widgets::button(ui, test_label).clicked() {
+                        if install_needed {
+                            cx.ui.confirm_piper_install = true;
+                        } else {
+                            cx.test_voice = true;
+                        }
                     }
                     if let Some((color, text)) = voice_line(&cx.voice) {
                         ui.add(egui::Label::new(RichText::new(text).size(size::FOOTNOTE).color(color)).wrap());
@@ -142,6 +186,34 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                         ui.add(egui::Label::new(RichText::new(text).size(size::FOOTNOTE).color(pal::WARN)).wrap());
                     }
                 });
+                #[cfg(any(windows, target_os = "linux"))]
+                if cx.ui.piper_data_present {
+                    g.content(|ui| {
+                        let confirm_id = ui.id().with("confirm_remove_piper");
+                        let confirming = ui.data(|data| data.get_temp::<bool>(confirm_id)).unwrap_or(false);
+                        if confirming {
+                            ui.label("Remove the Piper voice and all its cached audio?");
+                            ui.horizontal(|ui| {
+                                if widgets::button(ui, "Remove Piper and cache").clicked() {
+                                    if s.tts_engine == EngineKind::Piper {
+                                        s.tts_engine = EngineKind::WinRt;
+                                        s.tts_voice.clear();
+                                        cx.changed = true;
+                                    }
+                                    cx.piper_action = Some(crate::tts::PiperAction::Remove);
+                                    ui.data_mut(|data| data.remove::<bool>(confirm_id));
+                                }
+                                if widgets::button(ui, "Cancel").clicked() {
+                                    ui.data_mut(|data| data.remove::<bool>(confirm_id));
+                                }
+                            });
+                        } else if !matches!(cx.voice, crate::tts::VoiceStatus::PiperInstalling)
+                            && widgets::button(ui, "Uninstall Piper and clear its cache").clicked()
+                        {
+                            ui.data_mut(|data| data.insert_temp(confirm_id, true));
+                        }
+                    });
+                }
             });
             section(ui, "Exploration");
             group(ui, |g| {
@@ -227,6 +299,36 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
             footnote(ui, "Elite Nexus is free software under the GNU GPL, version 3 or later, and comes with no warranty. A changed version must say that it is one and may not be presented as Elite Nexus (LICENSE-ADDITIONAL-TERMS.md). Source: github.com/uruskan/EliteNexus. Elite Dangerous is a trademark of Frontier Developments plc; Elite Nexus is an unofficial community tool.");
         });
     });
+    if show_piper_confirmation {
+        let dialog = egui::Modal::new(egui::Id::new("piper_install"))
+            .frame(egui::Frame::new().fill(pal::SIDEBAR).corner_radius(egui::CornerRadius::same(18)).inner_margin(egui::Margin::same(24)))
+            .show(ui.ctx(), |ui| {
+                ui.set_width(330.0);
+                ui.label(RichText::new("Install Piper?").font(display(size::TITLE3)).color(pal::TEXT));
+                ui.add_space(4.0);
+                ui.label(RichText::new("Installing Piper requires a download of about 94 MB. Do you want to proceed?").color(pal::DIM));
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    let cancel = widgets::button(ui, "Cancel").clicked();
+                    let install = widgets::primary_button(ui, "Install Piper").clicked();
+                    (install, cancel)
+                }).inner
+            });
+        let (install, cancel) = dialog.inner;
+        if install {
+            cx.settings.tts_engine = EngineKind::Piper;
+            cx.settings.tts_voice.clear();
+            cx.changed = true;
+            #[cfg(any(windows, target_os = "linux"))]
+            { cx.piper_action = Some(crate::tts::PiperAction::Install); }
+        }
+        if install || cancel || dialog.should_close() {
+            cx.ui.confirm_piper_install = false;
+        }
+    } else if cx.ui.confirm_piper_install {
+        // Open on the next frame, after the selecting click has closed the dropdown.
+        ui.ctx().request_repaint();
+    }
 }
 
 /// Settings › AI agents: AI programs on this computer (MCP clients such as Claude Code) may use the tools Ask uses,
@@ -361,8 +463,26 @@ fn voice_line(status: &crate::tts::VoiceStatus) -> Option<(Color32, String)> {
     use crate::tts::VoiceStatus;
     match status {
         VoiceStatus::Untried => None,
+        #[cfg(any(windows, target_os = "linux"))]
+        VoiceStatus::PiperNeedsInstall => Some((pal::DIM, "Piper needs to be installed before it can speak.".into())),
+        #[cfg(any(windows, target_os = "linux"))]
+        VoiceStatus::PiperInstalling => Some((pal::DIM, "Downloading and installing Piper (94 MB).".into())),
+        #[cfg(any(windows, target_os = "linux"))]
+        VoiceStatus::PiperReady => Some((pal::DIM, "Piper is installed. The voice works offline.".into())),
+        #[cfg(any(windows, target_os = "linux"))]
+        VoiceStatus::PiperInstallFailed(why) => Some((pal::WARN, format!("Piper could not be installed. {why}"))),
+        #[cfg(any(windows, target_os = "linux"))]
+        VoiceStatus::PiperRemoved => Some((pal::DIM, "Piper and its cached audio were removed.".into())),
+        #[cfg(any(windows, target_os = "linux"))]
+        VoiceStatus::PiperNothingToRemove => Some((pal::DIM, "There are no Piper files to remove.".into())),
+        #[cfg(any(windows, target_os = "linux"))]
+        VoiceStatus::PiperRemoveFailed(why) => Some((pal::WARN, format!("Piper could not be removed. {why}"))),
         VoiceStatus::Spoke(engine) => Some((pal::DIM, format!("Speaking through {}. Nothing heard? Check the volume of the sound device it uses.", program_name(engine)))),
         VoiceStatus::Missing if cfg!(target_os = "macos") => Some((pal::WARN, "Voice uses macOS's own say (/usr/bin/say), which isn't there.".into())),
+        VoiceStatus::Missing if cfg!(target_os = "linux") && EngineKind::PIPER_SUPPORTED => Some((
+            pal::WARN,
+            "System speech needs Speech Dispatcher or eSpeak. Install one and restart Elite Nexus, or select Piper.".into(),
+        )),
         VoiceStatus::Missing => Some((
             pal::WARN,
             "Voice needs speech-dispatcher (spd-say) or espeak-ng, and neither is installed: install the speech-dispatcher package with its espeak-ng module, then restart Elite Nexus.".into(),

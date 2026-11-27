@@ -16,7 +16,7 @@ use crate::missions::{MissionOutcome, Missions};
 use crate::session::Session;
 use nexus_data::names::{clean_station_name, compact_credits, group_digits};
 use nexus_journal::companion::{
-    flags, Companion, FCMaterialsFile, MarketFile, ModulesInfoFile, OutfittingFile, RouteHop, ShipyardFile, Status,
+    flags, Companion, FCMaterialsFile, GuiFocus, MarketFile, ModulesInfoFile, OutfittingFile, RouteHop, ShipyardFile, Status,
 };
 use nexus_journal::events::{self as ev, Event};
 use nexus_journal::{EventCtx, Timestamp};
@@ -42,6 +42,15 @@ pub struct FeedItem {
 }
 
 const FEED_LEN: usize = 300;
+
+#[derive(Debug, Clone)]
+struct PendingJump {
+    system: String,
+    system_address: Option<u64>,
+    star_class: String,
+    started: Timestamp,
+    announced: bool,
+}
 
 /// Everything Elite Nexus knows about one commander.
 #[derive(Debug, Clone, Default)]
@@ -83,7 +92,7 @@ pub struct GameState {
     pub at_main_menu: bool,
     pub legal_state: Option<String>,
     prev_flags: u32,
-    pending_star_class: Option<(String, String)>,
+    pending_jump: Option<PendingJump>,
 }
 
 impl GameState {
@@ -148,7 +157,7 @@ impl GameState {
 
     /// In hyperspace: the system being jumped to and its star class (`StartJump`).
     pub fn jumping_to(&self) -> Option<(&str, &str)> {
-        self.pending_star_class.as_ref().filter(|_| self.location.hyperspace).map(|(s, c)| (s.as_str(), c.as_str()))
+        self.pending_jump.as_ref().filter(|_| self.location.hyperspace).map(|jump| (jump.system.as_str(), jump.star_class.as_str()))
     }
 
     /// The carriers the commander has at `now`, their own first: known and not decommissioned.
@@ -196,6 +205,7 @@ impl GameState {
                 }
             }
             Event::LoadGame(l) => {
+                self.pending_jump = None;
                 self.cmdr.on_load_game(l, ts);
                 self.exploration.set_odyssey(l.odyssey.unwrap_or(false));
                 self.fleet.on_load_game(l);
@@ -218,6 +228,7 @@ impl GameState {
                 self.feed(ts, "LoadGame", format!("Logged in{mode}, {} Cr", group_digits(l.credits)));
             }
             Event::Shutdown(_) => {
+                self.pending_jump = None;
                 self.session.end = Some(ts);
                 self.game_closed = true;
                 self.history.logout();
@@ -311,6 +322,7 @@ impl GameState {
 
             // ---------------------------------------------------------------- travel
             Event::Location(a) => {
+                self.pending_jump = None;
                 self.location.on_arrival(a, ts, ArrivalKind::Location);
                 self.ship_follows(a, false);
                 self.history.visit(a.system_address, &a.star_system, a.star_pos, ts);
@@ -348,18 +360,16 @@ impl GameState {
                 }
                 let pop = if a.population > 0 { format!(", pop {}", compact_credits(a.population as i64)) } else { String::new() };
                 self.feed(ts, "FSDJump", format!("Jumped {:.2} ly to {}{}", dist, a.star_system, pop));
-                let star = self.pending_star_class.as_ref().filter(|(s, _)| *s == a.star_system).map(|(_, c)| nexus_data::exploration::star_description(c));
+                let star = self.pending_jump.take()
+                    .filter(|jump| jump.system == a.star_system && !jump.star_class.is_empty())
+                    .map(|jump| nexus_data::exploration::star_description(&jump.star_class));
                 alerts.push_with(|| {
                     Alert::new(ts, AlertKind::Navigation, Priority::Low, format!("Arrived in {}", a.star_system))
-                        .detail(format!("{}{}", star.clone().unwrap_or_default(), if a.population > 0 { format!(" · population {}", compact_credits(a.population as i64)) } else { " · uninhabited".into() }))
-                        .speak(match &star {
-                            Some(s) => format!("Arrived in {}. {s}.", a.star_system),
-                            None => format!("Arrived in {}.", a.star_system),
-                        })
+                        .detail(format!("{}{}", star.unwrap_or_default(), if a.population > 0 { format!(" · population {}", compact_credits(a.population as i64)) } else { " · uninhabited".into() }))
                 });
-                self.pending_star_class = None;
             }
             Event::CarrierJump(a) => {
+                self.pending_jump = None;
                 self.location.on_arrival(a, ts, ArrivalKind::CarrierJump);
                 self.ship_follows(a, true);
                 self.history.jump(JumpRecord {
@@ -381,13 +391,33 @@ impl GameState {
             Event::StartJump(s) => {
                 if s.jump_type == "Hyperspace" {
                     self.location.hyperspace = true;
+                    self.pending_jump = s.star_system.as_ref().filter(|sys| !sys.is_empty()).map(|system| PendingJump {
+                        system: system.clone(),
+                        system_address: s.system_address,
+                        star_class: s.star_class.clone().unwrap_or_default(),
+                        started: ts,
+                        announced: false,
+                    });
                     if let (Some(sys), Some(class)) = (&s.star_system, &s.star_class) {
-                        self.pending_star_class = Some((sys.clone(), class.clone()));
                         self.star_class_alert(ts, sys, class, alerts);
                     }
+                    // The two streams can arrive in either order. Use a status at least as recent as StartJump.
+                    if ctx.live && let Some(status) = &self.status
+                        && status.is_in_game() && status.has(flags::FSD_JUMP) {
+                        self.announce_hyperspace(status.timestamp, alerts);
+                    }
+                } else {
+                    self.pending_jump = None;
                 }
             }
             Event::FSDTarget(t) => {
+                let changed = self.location.fsd_target.as_ref().is_none_or(|old| old.system_address != t.system_address || old.name != t.name);
+                if ctx.live && changed && !self.location.hyperspace && !t.name.is_empty()
+                    && t.system_address != self.location.system_address
+                    && self.status.as_ref().is_some_and(|status| status.gui_focus() == GuiFocus::GalaxyMap) {
+                    let title = format!("Set course to {}", t.name);
+                    alerts.push_with(|| Alert::new(ts, AlertKind::Navigation, Priority::Normal, &title).speak(format!("{title}.")));
+                }
                 self.location.fsd_target = Some(crate::location::FsdTarget {
                     name: t.name.clone(),
                     system_address: t.system_address,
@@ -548,6 +578,7 @@ impl GameState {
                 self.fleet.fuel_reservoir = r.fuel_reservoir;
             }
             Event::Died(d) => {
+                self.pending_jump = None;
                 let killers: Vec<String> = if d.killers.is_empty() {
                     d.killer_name_localised.clone().or_else(|| d.killer_name.clone()).into_iter().collect()
                 } else {
@@ -1149,26 +1180,112 @@ impl GameState {
         }
     }
 
-    fn star_class_alert(&mut self, ts: Timestamp, system: &str, class: &str, alerts: &mut Alerts) {
+    fn announce_hyperspace(&mut self, ts: Timestamp, alerts: &mut Alerts) {
+        let low_fuel = self.main_fuel_fraction().is_some_and(|fuel| fuel < 0.5);
+        let Some(jump) = self.pending_jump.as_mut() else { return };
+        if !alerts.enabled || jump.announced || ts < jump.started {
+            return;
+        }
+        jump.announced = true;
+        let title = format!("Arriving at {}", jump.system);
+        let class = jump.star_class.as_str();
         let scoopable = nexus_data::exploration::is_scoopable(class);
-        let desc = nexus_data::exploration::star_description(class);
-        let fuel_frac = self
-            .fleet
+        let known = !class.is_empty() && !class.eq_ignore_ascii_case("unknown");
+        let hazard = Self::hazardous_star(class);
+        let fuel_warning = known && !scoopable && low_fuel && !hazard;
+        let scoop = if !known {
+            String::new()
+        } else if scoopable {
+            "This system has a scoopable star.".into()
+        } else if let Some(star) = Self::arrival_star_name(class) {
+            format!("This system has {star}. The arrival star is not scoopable.")
+        } else {
+            "The arrival star is not scoopable.".into()
+        };
+        let address = jump.system_address.filter(|&address| address != 0);
+        let system = &jump.system;
+        let route = &self.nav_route;
+        let remaining = route.iter().position(|hop| {
+            address.map_or_else(|| hop.star_system == *system, |address| hop.system_address == address)
+        }).map(|i| route.len() - i - 1);
+
+        let mut details = Vec::new();
+        if hazard {
+            details.push("Caution.".into());
+        }
+        if !scoop.is_empty() {
+            details.push(scoop);
+        }
+        if fuel_warning {
+            details.push("Fuel is below half.".into());
+        }
+        if let Some(count) = remaining {
+            details.push(match count {
+                0 => "This is the final jump.".into(),
+                1 => "One jump remaining after this.".into(),
+                _ => format!("{count} jumps remaining after this."),
+            });
+        }
+        if scoopable && remaining.is_some_and(|count| count > 0)
+            && !self.location.in_taxi && !self.location.multicrew
+            && self.fleet.current().is_some_and(|ship| {
+                ship.fuel_main_capacity > 0.0
+                    && self.fleet.fuel_main > 0.0
+                    && self.fleet.fuel_main < ship.fuel_main_capacity * 0.5
+                    && ship.modules.iter().any(|module| module.on && module.item.starts_with("int_fuelscoop_"))
+            }) {
+            details.push("Fuel is below half. Consider refuelling here.".into());
+        }
+
+        let detail = details.join(" ");
+        let speech = if detail.is_empty() { format!("{title}.") } else { format!("{title}. {detail}") };
+        let priority = if fuel_warning { Priority::High } else { Priority::Normal };
+        alerts.push(Alert::new(ts, AlertKind::Navigation, priority, title).detail(detail).speak(speech));
+    }
+
+    /// Spoken names for non-scoopable stars. Drop catalogue codes such as DA and L.
+    fn arrival_star_name(class: &str) -> Option<&'static str> {
+        Some(match class {
+            "N" => "a neutron star",
+            "H" => "a black hole",
+            "SupermassiveBlackHole" => "a supermassive black hole",
+            "L" | "T" | "Y" => "a brown dwarf star",
+            "TTS" => "a T Tauri star",
+            "AeBe" => "a Herbig Ae or Be star",
+            "X" => "an exotic star",
+            class if class.starts_with('D') => "a white dwarf star",
+            class if class.starts_with('W') => "a Wolf-Rayet star",
+            class if class.starts_with('C') || matches!(class, "S" | "MS") => "a carbon star",
+            _ => return None,
+        })
+    }
+
+    fn main_fuel_fraction(&self) -> Option<f64> {
+        self.fleet
             .current()
             .filter(|s| s.fuel_main_capacity > 0.0)
             .map(|s| self.fleet.fuel_main / s.fuel_main_capacity)
-            .unwrap_or(1.0);
-        if matches!(class, "N" | "H") || class.starts_with('D') {
+    }
+
+    fn hazardous_star(class: &str) -> bool {
+        matches!(class, "N" | "H" | "SupermassiveBlackHole") || class.starts_with('D')
+    }
+
+    // Charging still gives a visual warning. The destination announcement speaks it in hyperspace.
+    fn star_class_alert(&self, ts: Timestamp, system: &str, class: &str, alerts: &mut Alerts) {
+        let desc = nexus_data::exploration::star_description(class);
+        if Self::hazardous_star(class) {
             alerts.push_with(|| {
                 Alert::new(ts, AlertKind::Navigation, Priority::Normal, format!("Next: {desc}"))
                     .detail(system.to_string())
-                    .speak(format!("Caution, {desc} ahead."))
             });
-        } else if !scoopable && fuel_frac < 0.5 {
+        } else if !class.is_empty() && !class.eq_ignore_ascii_case("unknown")
+            && !nexus_data::exploration::is_scoopable(class)
+            && let Some(fuel_frac) = self.main_fuel_fraction().filter(|&fuel| fuel < 0.5)
+        {
             alerts.push_with(|| {
                 Alert::new(ts, AlertKind::Navigation, Priority::High, "Next star is not scoopable")
                     .detail(format!("{system} — {desc}; fuel {:.0}%", fuel_frac * 100.0))
-                    .speak("Warning. Next star is not scoopable.")
             });
         }
     }
@@ -1312,8 +1429,16 @@ impl GameState {
                 });
             }
             ScanOutcome::Progress(n) => {
+                let range = self.exobio.current.as_ref().and_then(|c| c.colony_range_m);
                 self.feed(ts, "ScanOrganic", format!("Sample {n}/3: {species}"));
-                alerts.push_with(|| Alert::new(ts, AlertKind::Exobiology, Priority::Low, format!("{species}: sample {n} of 3")));
+                alerts.push_with(|| {
+                    let alert = Alert::new(ts, AlertKind::Exobiology, Priority::Normal, format!("{species}: sample {n} of 3"));
+                    match range {
+                        Some(r) => alert.detail(format!("Move at least {r} m before the final sample"))
+                            .speak(format!("Second sample collected. Move another {r} metres for the final sample.")),
+                        None => alert.speak("Second sample collected. Move to the next colony for the final sample."),
+                    }
+                });
             }
             ScanOutcome::Completed(rec) => {
                 self.session.organics_analysed += 1;
@@ -1394,6 +1519,9 @@ impl GameState {
         if let Some(f) = st.fuel {
             self.fleet.fuel_main = f.main;
             self.fleet.fuel_reservoir = f.reservoir;
+        }
+        if live && st.has(flags::FSD_JUMP) {
+            self.announce_hyperspace(st.timestamp, alerts);
         }
         if let Some(b) = st.balance {
             self.cmdr.credits = b;
