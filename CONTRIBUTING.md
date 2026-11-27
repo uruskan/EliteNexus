@@ -19,6 +19,8 @@ cargo build --release -p nexus-app     # target/release/EliteNexus (EliteNexus.e
 * **Windows, a release build for yourself**: `tools\build-release.ps1` installs into `dist\EliteNexus`, or stages
   `EliteNexus.new.exe` while the app runs (`Update-EliteNexus.cmd` swaps it in once the app is closed).
   `Start-EliteNexus.cmd` starts that copy, building it first when there is none. Neither touches `nexus-data`.
+  The Windows x64 MSVC build compiles the embedded Piper worker with the Visual Studio C++ tools. The voice
+  and runtime are downloaded when a user selects Piper in Settings.
 * Every build keeps its data (settings, galaxy database, logs) in `nexus-data` next to its own executable, so a debug
   build (`target/debug/nexus-data`) never shares anything with the copy you play with. On macOS the app bundle keeps
   it in `~/Library/Application Support/EliteNexus` instead, and `ELITE_NEXUS_HOME` points any build at another folder.

@@ -14,10 +14,15 @@ mod sapi;
 #[cfg(windows)]
 mod piper;
 #[cfg(windows)]
+mod piper_install;
+#[cfg(windows)]
 mod audio_cache;
 
 pub enum TtsCmd {
     Say(String),
+    Test(String),
+    #[cfg(windows)]
+    RemovePiper,
     Rate(f32),
     Volume(f32),
     /// Windows: speak through this engine.
@@ -39,7 +44,7 @@ pub enum EngineKind {
     WinRt,
     /// SAPI 5: Windows' desktop voices and the ones other programs install for it (IVONA, CereProc, …).
     Sapi,
-    /// Offline neural synthesis, available in the experimental Windows package.
+    /// Offline neural synthesis installed on demand on Windows x64.
     #[serde(alias = "kokoro")]
     Piper,
 }
@@ -79,6 +84,16 @@ pub enum VoiceStatus {
     Missing,
     /// This engine failed, with what it said.
     Failed(&'static str, String),
+    #[cfg(windows)]
+    PiperInstalling,
+    #[cfg(windows)]
+    PiperReady,
+    #[cfg(windows)]
+    PiperInstallFailed(String),
+    #[cfg(windows)]
+    PiperRemoved,
+    #[cfg(windows)]
+    PiperRemoveFailed(String),
 }
 
 #[derive(Clone)]
@@ -102,6 +117,15 @@ impl Speaker {
 
     pub fn say(&self, text: impl Into<String>) {
         let _ = self.tx.send(TtsCmd::Say(text.into()));
+    }
+
+    pub fn test(&self) {
+        let _ = self.tx.send(TtsCmd::Test("Elite Nexus voice check. All systems nominal, commander.".into()));
+    }
+
+    #[cfg(windows)]
+    pub fn remove_piper(&self) {
+        let _ = self.tx.send(TtsCmd::RemovePiper);
     }
 
     pub fn set_rate(&self, rate: f32) {
@@ -262,6 +286,9 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
     // Lines waiting while SAPI speaks one, and a voice chosen meanwhile, which takes over from the next line.
     let mut lines: VecDeque<String> = VecDeque::new();
     let mut voice_due = false;
+    let mut install = None;
+    let no_install = crossbeam_channel::never();
+    let mut pending_test = None;
     let open = |kind: EngineKind, voice: &str, rate: f32, volume: f32| {
         let mut engine = Engine::open(kind).inspect_err(|e| tracing::warn!("text-to-speech ({}) unavailable: {e}", kind.label()));
         *voices.lock() = engine.as_ref().map(Engine::voices).unwrap_or_default();
@@ -271,6 +298,22 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
             e.set_volume(volume);
         }
         engine
+    };
+    let start_install = |install: &mut Option<Receiver<Result<(), String>>>| {
+        if install.is_none() {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            std::thread::Builder::new().name("nexus-piper-install".into()).spawn(move || {
+                let result = piper_install::install().map_err(|e| format!("{e:#}"));
+                let _ = tx.send(result);
+            }).map_err(|e| e.to_string())?;
+            *install = Some(rx);
+        }
+        *status.lock() = VoiceStatus::PiperInstalling;
+        Ok::<(), String>(())
+    };
+    let install_failed = |why: String| {
+        tracing::warn!("Piper installation failed: {why}");
+        *status.lock() = VoiceStatus::PiperInstallFailed(why);
     };
     loop {
         let speaking = matches!(&engine, Some(Ok(e)) if e.speaking());
@@ -310,21 +353,81 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
             }
             continue;
         } else {
-            match rx.recv() {
+            let install_rx = install.as_ref().unwrap_or(&no_install);
+            let message = crossbeam_channel::select! {
+                recv(rx) -> cmd => cmd,
+                recv(install_rx) -> result => {
+                    install = None;
+                    if kind == EngineKind::Piper {
+                        match result.unwrap_or_else(|_| Err("the installation stopped unexpectedly".into())) {
+                            Ok(()) => {
+                                engine = Some(open(kind, &voice, rate, volume));
+                                *status.lock() = match &engine {
+                                    Some(Err(e)) => VoiceStatus::Failed(kind.label(), e.clone()),
+                                    _ => VoiceStatus::PiperReady,
+                                };
+                                if let Some(text) = pending_test.take() {
+                                    lines.push_back(text);
+                                }
+                            }
+                            Err(e) => {
+                                pending_test = None;
+                                install_failed(e);
+                            }
+                        }
+                    }
+                    continue;
+                }
+            };
+            match message {
                 Ok(cmd) => cmd,
                 Err(_) => break,
             }
         };
         match cmd {
-            TtsCmd::Say(text) => lines.push_back(text),
-            TtsCmd::Engine(k) if k != kind || engine.is_none() => {
+            TtsCmd::Say(text) => {
+                if kind != EngineKind::Piper || engine.is_some() {
+                    lines.push_back(text);
+                }
+            }
+            TtsCmd::Test(text) if kind == EngineKind::Piper && engine.is_none() => {
+                match start_install(&mut install) {
+                    Ok(()) => pending_test = Some(text),
+                    Err(e) => install_failed(e),
+                }
+            }
+            TtsCmd::Test(text) => lines.push_back(text),
+            TtsCmd::Engine(k) if k != kind || (k != EngineKind::Piper && engine.is_none()) => {
                 kind = k;
                 // One engine at a time: the old one goes (stopping a line it speaks) before the new one starts.
                 drop(engine.take());
-                engine = Some(open(kind, &voice, rate, volume));
+                pending_test = None;
+                *status.lock() = VoiceStatus::Untried;
+                if kind == EngineKind::Piper && (install.is_some() || piper_install::installed().is_none()) {
+                    voices.lock().clear();
+                    if let Err(e) = start_install(&mut install) {
+                        install_failed(e);
+                    }
+                } else {
+                    engine = Some(open(kind, &voice, rate, volume));
+                }
                 voice_due = false;
             }
             TtsCmd::Engine(_) => {}
+            TtsCmd::RemovePiper => {
+                let result = if install.is_some() {
+                    Err("Wait for the Piper download to finish, then try again.".into())
+                } else {
+                    match piper_install::remove() {
+                        Ok(()) => Ok(()),
+                        Err(e) => Err(format!("{e:#}")),
+                    }
+                };
+                *status.lock() = match result {
+                    Ok(()) => VoiceStatus::PiperRemoved,
+                    Err(e) => VoiceStatus::PiperRemoveFailed(e),
+                };
+            }
             // Settings sends the voice with every change (every frame while a slider moves): only a new one is set.
             TtsCmd::Voice(v) if v != voice => {
                 voice = v;
@@ -395,7 +498,7 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, _voices: Arc<Mutex
     let (mut rate, mut volume) = (1.0, 1.0);
     while let Ok(cmd) = rx.recv() {
         match cmd {
-            TtsCmd::Say(text) => {
+            TtsCmd::Say(text) | TtsCmd::Test(text) => {
                 let Some(program) = program else {
                     *status.lock() = VoiceStatus::Missing;
                     continue;

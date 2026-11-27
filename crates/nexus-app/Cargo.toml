@@ -66,4 +66,5 @@ libc = "0.2"
 x11-dl = "2.21"
 
 [build-dependencies]
+cc = "1"
 embed-resource = "3"

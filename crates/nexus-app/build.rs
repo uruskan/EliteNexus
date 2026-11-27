@@ -16,6 +16,11 @@ fn main() {
         return;
     }
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR"));
+    if std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        build_piper_worker(&out);
+    }
     let ico = out.join("app.ico");
     std::fs::write(&ico, make_ico(&[16, 20, 24, 32, 48, 64, 128, 256])).expect("write app.ico");
 
@@ -55,6 +60,22 @@ END
     let rc_path = out.join("app.rc");
     std::fs::write(&rc_path, rc).expect("write app.rc");
     embed_resource::compile(&rc_path, embed_resource::NONE).manifest_optional().expect("embed Windows resources");
+}
+
+fn build_piper_worker(out: &std::path::Path) {
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tools/dev");
+    let source = dev.join("piper-worker.cpp");
+    let vendor = dev.join("piper-vendor");
+    println!("cargo:rerun-if-changed={}", source.display());
+    println!("cargo:rerun-if-changed={}", vendor.display());
+    let status = cc::Build::new().cpp(true).get_compiler().to_command()
+        .current_dir(out)
+        .args(["/nologo", "/std:c++17", "/O2", "/MT", "/EHsc"])
+        .arg(format!("/I{}", vendor.display()))
+        .args(["/Fopiper-worker.obj", "/Fenexus-piper.exe"])
+        .arg(source)
+        .status().expect("run the Piper worker compiler");
+    assert!(status.success(), "compile the Piper worker");
 }
 
 /// A 32-bit DIB as stored in .ico files: header with doubled height, BGRA rows bottom-up, AND mask.

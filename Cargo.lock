@@ -2586,6 +2586,7 @@ dependencies = [
  "anyhow",
  "arboard",
  "base64 0.23.1",
+ "cc",
  "crossbeam-channel",
  "eframe",
  "egui",

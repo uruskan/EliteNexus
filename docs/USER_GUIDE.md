@@ -184,7 +184,7 @@ When the ship enters hyperspace, a Normal priority alert announces the destinati
 
 After collecting the second exobiology sample, the app announces the required distance to the final colony when it knows the distance. This alert has Normal priority.
 
-The Windows Piper test package also offers **Piper (Kristin)**, an offline English neural voice. Select it and press **Test voice**. Keep the package's `piper` folder beside the executable. At normal speech rate, common alerts are ready to play immediately. Elite Nexus saves new phrases and rates as compressed audio in `nexus-data/piper-audio` and reuses them across restarts. The audio cache holds up to 1 GB, including the bundled alerts, and makes room by removing the least recently used clips.
+On Windows x64, select **Piper (Kristin)** under **Settings → Voice and alerts → Speech engine**. Elite Nexus downloads the voice and runtime in the background (94 MB). Once installed, the English neural voice works offline. **Test voice** plays a sample. If the download fails, use **Retry Piper download**. Elite Nexus saves generated phrases and rates as compressed audio in `nexus-data/piper-audio` and reuses them across restarts. The cache holds up to 1 GB and evicts the least recently used clips. **Uninstall Piper and clear its cache** removes both the voice and cached audio. If Piper was selected, the app switches to Windows speech.
 
 On Windows, Settings › **Speech engine** chooses between **Windows speech** (the default: the voices of Windows
 Settings › Time & language › Speech) and **SAPI** (Windows' classic speech engine: its desktop voices and the voices

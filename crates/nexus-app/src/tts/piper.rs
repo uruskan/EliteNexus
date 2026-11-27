@@ -15,15 +15,20 @@ pub(super) struct Piper {
     worker: Option<Worker>,
     rate: f32,
     volume: f32,
+    _install_lock: std::fs::File,
 }
 
 impl Piper {
     pub(super) fn open() -> Result<Self, String> {
-        let folder = std::env::current_exe().map_err(|e| e.to_string())?.with_file_name("piper");
-        let cache = Cache::new(crate::settings::data_dir().join("piper-audio"), folder.join("alerts"));
+        let root = crate::settings::data_dir();
+        let lock = super::piper_install::lock_file(&root).map_err(|e| format!("{e:#}"))?;
+        lock.lock_shared().map_err(|e| e.to_string())?;
+        let folder = super::piper_install::installed().ok_or("Piper is not installed")?;
+        let folder = std::path::absolute(folder).map_err(|e| e.to_string())?;
+        let cache = Cache::new(root.join("piper-audio"), folder.join("alerts"));
         // Begin loading at selection, while cached alerts remain ready to play.
         let worker = Worker::start(&folder).ok();
-        Ok(Self { folder, cache, worker, rate: 1.0, volume: 1.0 })
+        Ok(Self { folder, cache, worker, rate: 1.0, volume: 1.0, _install_lock: lock })
     }
 
     pub(super) fn set_rate(&mut self, rate: f32) {
@@ -74,7 +79,7 @@ impl Worker {
     fn start(folder: &Path) -> Result<Self, String> {
         let helper = folder.join("nexus-piper.exe");
         if !helper.is_file() || !folder.join("model/en_US-kristin-medium.onnx").is_file() {
-            return Err("install the Piper test package with its piper folder next to EliteNexus.exe".into());
+            return Err("the Piper installation is incomplete".into());
         }
         let mut process = Command::new(helper)
             .current_dir(folder)

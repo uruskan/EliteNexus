@@ -11,10 +11,28 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#define NOMINMAX
+#include <windows.h>
+#include <filesystem>
+
+template<typename Symbol>
+Symbol load_symbol(HMODULE library, const char* name) {
+    return reinterpret_cast<Symbol>(GetProcAddress(library, name));
+}
 
 int main() {
     if (_setmode(_fileno(stdout), _O_BINARY) == -1) return 1;
     std::ios::sync_with_stdio(false);
+    const auto path = std::filesystem::absolute(L"sherpa-onnx-c-api.dll");
+    const auto dll = LoadLibraryExW(path.c_str(), nullptr,
+        LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!dll) return 1;
+    const auto create = load_symbol<decltype(&SherpaOnnxCreateOfflineTts)>(dll, "SherpaOnnxCreateOfflineTts");
+    const auto destroy = load_symbol<decltype(&SherpaOnnxDestroyOfflineTts)>(dll, "SherpaOnnxDestroyOfflineTts");
+    const auto generate = load_symbol<decltype(&SherpaOnnxOfflineTtsGenerate)>(dll, "SherpaOnnxOfflineTtsGenerate");
+    const auto free_audio = load_symbol<decltype(&SherpaOnnxDestroyOfflineTtsGeneratedAudio)>(
+        dll, "SherpaOnnxDestroyOfflineTtsGeneratedAudio");
+    if (!create || !destroy || !generate || !free_audio) return 1;
     SherpaOnnxOfflineTtsConfig config{};
     config.model.vits.model = "model/en_US-kristin-medium.onnx";
     config.model.vits.tokens = "model/tokens.txt";
@@ -26,7 +44,7 @@ int main() {
     config.model.provider = "cpu";
     config.max_num_sentences = 1;
     using Engine = std::unique_ptr<const SherpaOnnxOfflineTts, decltype(&SherpaOnnxDestroyOfflineTts)>;
-    Engine engine(SherpaOnnxCreateOfflineTts(&config), SherpaOnnxDestroyOfflineTts);
+    Engine engine(create(&config), destroy);
     if (!engine) return 1;
 
     for (std::string line; std::getline(std::cin, line);) {
@@ -35,7 +53,7 @@ int main() {
         std::string phrase;
         if (!(fields >> speed >> volume) || !std::getline(fields >> std::ws, phrase)) return 2;
         using Audio = std::unique_ptr<const SherpaOnnxGeneratedAudio, decltype(&SherpaOnnxDestroyOfflineTtsGeneratedAudio)>;
-        Audio audio(SherpaOnnxOfflineTtsGenerate(engine.get(), phrase.c_str(), 0, speed), SherpaOnnxDestroyOfflineTtsGeneratedAudio);
+        Audio audio(generate(engine.get(), phrase.c_str(), 0, speed), free_audio);
         const auto write = [](auto value) {
             std::cout.write(reinterpret_cast<const char*>(&value), sizeof(value));
         };
