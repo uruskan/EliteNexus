@@ -1083,9 +1083,6 @@ fn body_table(ui: &mut Ui, sys: &SystemScan, bodies: &[&Body], st: &mut Explorat
                 });
                 row.col(|ui| {
                     ui.horizontal(|ui| {
-                        if !recent && let Some(scan) = b.recent_scan {
-                            scan_badge(ui, scan);
-                        }
                         if b.landable {
                             ui.label(RichText::new(icon::FOOTPRINTS).color(if b.footfall { pal::GOOD } else { pal::DIM })).on_hover_text("Landable");
                         }

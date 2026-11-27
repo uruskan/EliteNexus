@@ -7,7 +7,7 @@ release time that section becomes the new version and the release workflow publi
 
 ### Added
 - **Exploration › Current system** can show bodies in system-map order or newest activity first. Automatic, basic,
-  FSS and DSS activity is dated, and mapping moves the same body back to the top in Newest First.
+  FSS and DSS activity has badges and dates in Newest First, where mapping moves the same body back to the top.
 
 ### Fixed
 
