@@ -185,7 +185,8 @@ egui 0.36 layout lessons learned here:
    doesn't push tags made on the command line).
 5. The tag runs `.github/workflows/release.yml` (about 10 minutes on a cold cache): it builds on `windows-latest`,
    `ubuntu-22.04` (an older glibc, so the binary starts on older distributions) and `macos-latest` (Apple Silicon),
-   packs the exe and the Linux binary with the README, NOTICE, user guide and Inter licence (a zip and a tar.gz) and
+   packs the exe and the Linux binary with the licence and its additional terms (`LICENSE-ADDITIONAL-TERMS.md`,
+   `NAME-POLICY.md`), the README, NOTICE, user guide and Inter licence (a zip and a tar.gz) and
    the Mac app with `tools/macos/build-app.sh` (a zip of the ad-hoc signed `Elite Nexus.app`), and publishes the
    GitHub Release with that version's CHANGELOG section as notes, GitHub's list of merged pull requests under it,
    and the support buttons and supporters at the end: the public GitHub sponsors, read from GitHub's API, and

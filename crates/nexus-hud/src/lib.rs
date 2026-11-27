@@ -1,3 +1,4 @@
+// Licence: GPL-3.0-or-later, with additional terms under its section 7: see LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! Elite Dangerous HUD colours.
 //!
 //! * [`matrix`]: the 3×3 colour matrix the game recolours its interface with, how it maps a

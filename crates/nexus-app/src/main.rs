@@ -1,3 +1,4 @@
+// Licence: GPL-3.0-or-later, with additional terms under its section 7: see LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! Elite Nexus — the native Elite Dangerous companion.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]

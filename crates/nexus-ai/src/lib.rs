@@ -1,3 +1,4 @@
+// Licence: GPL-3.0-or-later, with additional terms under its section 7: see LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! The built-in assistant ("Ask"): a small tool-calling agent over the commander's own data.
 //!
 //! * [`provider`]: which model service answers: Google Gemini (default, has a free tier), Anthropic

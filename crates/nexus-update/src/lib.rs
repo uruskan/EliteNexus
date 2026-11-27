@@ -1,3 +1,4 @@
+// Licence: GPL-3.0-or-later, with additional terms under its section 7: see LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! Elite Nexus updates: which release is the newest, whether it's genuine, and putting it in place.
 //!
 //! Every release carries `update.json` (the [`Manifest`]: the version and, for each platform, the archive's name,

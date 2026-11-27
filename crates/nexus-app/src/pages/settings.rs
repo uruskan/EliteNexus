@@ -224,7 +224,7 @@ pub fn show(ui: &mut Ui, cx: &mut SettingsCtx<'_>) {
                 #[cfg(target_os = "linux")]
                 app_menu(g);
             });
-            footnote(ui, "Elite Nexus is free software under the GNU GPL, version 3 or later, and comes with no warranty. Source: github.com/uruskan/EliteNexus. Elite Dangerous is a trademark of Frontier Developments plc; Elite Nexus is an unofficial community tool.");
+            footnote(ui, "Elite Nexus is free software under the GNU GPL, version 3 or later, and comes with no warranty. A changed version must say that it is one and may not be presented as Elite Nexus (LICENSE-ADDITIONAL-TERMS.md). Source: github.com/uruskan/EliteNexus. Elite Dangerous is a trademark of Frontier Developments plc; Elite Nexus is an unofficial community tool.");
         });
     });
 }

@@ -1,3 +1,4 @@
+// Licence: GPL-3.0-or-later, with additional terms under its section 7: see LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! Local galaxy / market database for Elite Nexus.
 //!
 //! A SQLite (WAL) database of systems, stations, markets, factions and their conflicts, ring hotspots and planets

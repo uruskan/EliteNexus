@@ -6,8 +6,23 @@ release time that section becomes the new version and the release workflow publi
 ## Unreleased
 
 ### Added
-- **Exploration › Recent scans** shows the current system's scans and mappings, newest activity first, one row per
-  body. Mapping moves the body back to the top. Filters narrow the list without changing its order.
+- **Exploration › Current system** can show bodies in system-map order or newest activity first. Automatic, basic,
+  FSS and DSS activity is dated, and mapping moves the same body back to the top in Newest First.
+
+### Fixed
+
+- **The window grew and closed when moved between screens** (Windows 11): dragged between monitors set to different
+  display scales, the window could get bigger with every move until Elite Nexus closed. It now takes the size and
+  place Windows suggests. Older Windows versions keep the old behaviour.
+
+### Changed
+
+- **The licence says what a changed version may call itself.** Elite Nexus stays free software under the GPL,
+  version 3 or later: anyone may run, change and share it. From this version on, two terms the GPL's section 7 allows
+  come with it (`LICENSE-ADDITIONAL-TERMS.md`): a changed version must say that it is one and must not be presented
+  as Elite Nexus or as its official successor, and the licence gives no trademark rights to the name or the icon.
+  `NAME-POLICY.md` says how the name may be used: unchanged copies keep it, a fork takes a name and an icon of its
+  own.
 
 ## [0.8.2] - 2026-11-25
 

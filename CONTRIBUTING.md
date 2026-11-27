@@ -121,8 +121,10 @@ What works on Linux and what doesn't yet is collected in [discussion #17](https:
 * Before touching an integration, read its spec in `docs/research/` (EDDN, EDSM, Inara, CAPI, Spansh, the journal,
   engineering, exploration, HUD colours and cockpit lights). The live EDDN service differs from its GitHub docs, for
   one.
-* Contributions are licensed under GPL-3.0-or-later like the rest of the code. Data taken from community sources is
-  credited in [NOTICE.md](NOTICE.md); add a row there when you bring in more.
+* Contributions are licensed under GPL-3.0-or-later like the rest of the code, with the same additional terms on
+  origin and the name ([LICENSE-ADDITIONAL-TERMS.md](LICENSE-ADDITIONAL-TERMS.md)): by sending a change you agree
+  that they cover it too. Data taken from community sources is credited in [NOTICE.md](NOTICE.md); add a row there
+  when you bring in more.
 
 ## Releases
 

@@ -1,3 +1,4 @@
+// Licence: GPL-3.0-or-later, with additional terms under its section 7: see LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! Static Elite Dangerous game knowledge, compiled into the binary.
 //!
 //! Everything here is pure data + pure functions (no I/O), so every other crate can depend on it

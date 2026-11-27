@@ -1,3 +1,4 @@
+// Licence: GPL-3.0-or-later, with additional terms under its section 7: see LICENSE-ADDITIONAL-TERMS.md at the repository root.
 //! EDDN live subscriber: ZeroMQ SUB on the public relay -> galaxy database.
 //!
 //! * Subscribes to `""` on `tcp://eddn.edcd.io:9500` (the relay is an XPUB that filters on the
