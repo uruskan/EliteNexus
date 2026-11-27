@@ -23,7 +23,7 @@ pub enum TtsCmd {
     Say(String),
     Test(String),
     #[cfg(any(windows, target_os = "linux"))]
-    RemovePiper,
+    Piper(PiperAction),
     Rate(f32),
     Volume(f32),
     /// Speak through this engine on Windows and Linux.
@@ -34,6 +34,20 @@ pub enum TtsCmd {
     Voice(String),
     /// Windows: list the engine's voices again, so one installed while Elite Nexus runs shows up.
     ListVoices,
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[derive(Clone, Copy)]
+pub enum PiperAction {
+    Install,
+    Remove,
+}
+
+pub fn piper_installed() -> bool {
+    #[cfg(any(windows, target_os = "linux"))]
+    { piper_install::installed().is_some() }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    { false }
 }
 
 /// Which speech engine to use. The default represents system speech on every platform.
@@ -102,6 +116,8 @@ pub enum VoiceStatus {
     /// This engine failed, with what it said.
     Failed(&'static str, String),
     #[cfg(any(windows, target_os = "linux"))]
+    PiperNeedsInstall,
+    #[cfg(any(windows, target_os = "linux"))]
     PiperInstalling,
     #[cfg(any(windows, target_os = "linux"))]
     PiperReady,
@@ -141,8 +157,8 @@ impl Speaker {
     }
 
     #[cfg(any(windows, target_os = "linux"))]
-    pub fn remove_piper(&self) {
-        let _ = self.tx.send(TtsCmd::RemovePiper);
+    pub fn piper_action(&self, action: PiperAction) {
+        let _ = self.tx.send(TtsCmd::Piper(action));
     }
 
     pub fn set_rate(&self, rate: f32) {
@@ -465,9 +481,8 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
                 }
             }
             TtsCmd::Test(text) if kind == EngineKind::Piper && engine.is_none() => {
-                match start_install(&mut install) {
-                    Ok(()) => pending_test = Some(text),
-                    Err(e) => install_failed(e),
+                if install.is_some() {
+                    pending_test = Some(text);
                 }
             }
             TtsCmd::Test(text) => lines.push_back(text),
@@ -480,16 +495,21 @@ fn run(rx: Receiver<TtsCmd>, status: Arc<Mutex<VoiceStatus>>, voices: Arc<Mutex<
                 if kind == EngineKind::Piper && (install.is_some() || piper_install::installed().is_none()) {
                     lines.clear();
                     voices.lock().clear();
-                    if let Err(e) = start_install(&mut install) {
-                        install_failed(e);
-                    }
+                    *status.lock() = if install.is_some() { VoiceStatus::PiperInstalling } else { VoiceStatus::PiperNeedsInstall };
                 } else {
                     engine = Some(open(kind, &voice, rate, volume));
                 }
                 voice_due = false;
             }
             TtsCmd::Engine(_) => {}
-            TtsCmd::RemovePiper => {
+            TtsCmd::Piper(PiperAction::Install) => {
+                if kind == EngineKind::Piper && engine.is_none()
+                    && let Err(e) = start_install(&mut install)
+                {
+                    install_failed(e);
+                }
+            }
+            TtsCmd::Piper(PiperAction::Remove) => {
                 let result = if install.is_some() {
                     Err("Wait for the Piper download to finish, then try again.".into())
                 } else {

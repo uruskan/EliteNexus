@@ -20,7 +20,7 @@ cargo build --release -p nexus-app     # target/release/EliteNexus (EliteNexus.e
   `EliteNexus.new.exe` while the app runs (`Update-EliteNexus.cmd` swaps it in once the app is closed).
   `Start-EliteNexus.cmd` starts that copy, building it first when there is none. Neither touches `nexus-data`.
   The Windows x64 MSVC build compiles the embedded Piper worker with the Visual Studio C++ tools. The voice
-  and runtime are downloaded when a user selects Piper in Settings.
+  and runtime are downloaded when a user confirms the installation in Settings.
 * **Linux x64**: the build compiles the embedded Piper worker with the native C++ compiler. Piper playback
   uses the system's PulseAudio library at run time, including PipeWire's PulseAudio compatibility layer.
 * Every build keeps its data (settings, galaxy database, logs) in `nexus-data` next to its own executable, so a debug

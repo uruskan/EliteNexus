@@ -8,7 +8,7 @@ release time that section becomes the new version and the release workflow publi
 - **Exobiology voice**: after the second sample, announces how far to move before the final sample when the colony distance is known.
 
 - **Jump voice**: announces the destination and whether the arrival star is scoopable, naming the type when it isn't scoopable once the ship enters hyperspace. It also announces new targets set in the Galaxy Map, remaining jumps on a plotted route, and a refuelling opportunity when a ship with a fuel scoop is below half a tank. Normal priority includes these announcements.
-- **Piper voice on Windows and Linux**: select Piper (Kristin) under Settings › Voice and alerts to download the English neural voice on x64 (94 MB). Piper then works offline and reuses a compressed audio cache of up to 1 GB across sessions. The same settings let you uninstall Piper and clear its cache.
+- **Piper voice on Windows and Linux**: select Piper (Kristin) under Settings › Voice and alerts and confirm the 94 MB download. Piper then works offline and reuses a compressed audio cache of up to 1 GB across sessions. The same settings let you uninstall Piper and clear its cache.
 
 ### Changed
 
