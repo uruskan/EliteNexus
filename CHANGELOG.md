@@ -5,6 +5,8 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+- **Windows window sizing**: apply the Windows 11 DPI fix to keep the window from growing repeatedly when moved between monitors with different display scales.
+
 ### Changed
 
 - **The licence says what a changed version may call itself.** Elite Nexus stays free software under the GPL,

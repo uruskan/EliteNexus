@@ -92,3 +92,7 @@ lto = "thin"
 codegen-units = 1
 strip = "debuginfo"
 panic = "unwind"
+
+[patch.crates-io]
+# Temporary Windows 11 DPI backport from winit PR #4637; see third-party/README.md.
+winit = { path = "third-party/winit-0.30.13" }
