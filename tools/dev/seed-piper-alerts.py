@@ -31,6 +31,7 @@ def alert_phrases():
         for row in rows:
             if distance := row.get("colony_range_m"):
                 phrases.add(f"Sample one logged. Move {distance} metres.")
+                phrases.add(f"Second sample collected. Move another {distance} metres for the final sample.")
     return sorted(phrases)
 
 

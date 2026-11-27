@@ -182,6 +182,8 @@ through the system's `say`). Settings › **Test voice** says which one spoke, o
 
 When the ship enters hyperspace, a Normal priority alert announces the destination and whether the arrival star is scoopable, if the game supplies the star class. For non-scoopable stars, it says the type (for example, neutron star or white dwarf) when known. The arrival stays in the alert history. A new FSD target set while the Galaxy Map is open says “Set course to …”. On a plotted route, the jump announcement gives the number of jumps left after this one. If you have an active fuel scoop, have more jumps ahead and arrive at a scoopable star with less than half a tank, it suggests refuelling there.
 
+After collecting the second exobiology sample, the app announces the required distance to the final colony when it knows the distance. This alert has Normal priority.
+
 The Windows Piper test package also offers **Piper (Kristin)**, an offline English neural voice. Select it and press **Test voice**. Keep the package's `piper` folder beside the executable. At normal speech rate, common alerts are ready to play immediately. Elite Nexus saves new phrases and rates as compressed audio in `nexus-data/piper-audio` and reuses them across restarts. The audio cache holds up to 1 GB, including the bundled alerts, and makes room by removing the least recently used clips.
 
 On Windows, Settings › **Speech engine** chooses between **Windows speech** (the default: the voices of Windows

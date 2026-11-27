@@ -1412,8 +1412,16 @@ impl GameState {
                 });
             }
             ScanOutcome::Progress(n) => {
+                let range = self.exobio.current.as_ref().and_then(|c| c.colony_range_m);
                 self.feed(ts, "ScanOrganic", format!("Sample {n}/3: {species}"));
-                alerts.push_with(|| Alert::new(ts, AlertKind::Exobiology, Priority::Low, format!("{species}: sample {n} of 3")));
+                alerts.push_with(|| {
+                    let alert = Alert::new(ts, AlertKind::Exobiology, Priority::Normal, format!("{species}: sample {n} of 3"));
+                    match range {
+                        Some(r) => alert.detail(format!("Move at least {r} m before the final sample"))
+                            .speak(format!("Second sample collected. Move another {r} metres for the final sample.")),
+                        None => alert.speak("Second sample collected. Move to the next colony for the final sample."),
+                    }
+                });
             }
             ScanOutcome::Completed(rec) => {
                 self.session.organics_analysed += 1;

@@ -196,7 +196,11 @@ fn exobiology_sampling_and_bonus() {
     let l3 = organic("Analyse", "2026-10-01T10:14:00Z");
     let alerts = feed(&mut m, &[&l1]);
     assert!(alerts.iter().any(|a| a.detail.contains("500 m")), "Stratum colony range is 500 m");
-    feed(&mut m, &[&l2]);
+    let alerts = feed(&mut m, &[&l2]);
+    let second = alerts.iter().find(|a| a.title.contains("sample 2 of 3")).expect("second sample alert");
+    assert_eq!(second.priority, nexus_model::Priority::Normal);
+    assert_eq!(second.detail, "Move at least 500 m before the final sample");
+    assert_eq!(second.speech.as_deref(), Some("Second sample collected. Move another 500 metres for the final sample."));
     let alerts = feed(&mut m, &[&l3]);
     assert!(alerts.iter().any(|a| a.title.contains("Analysis complete")));
     let gs = m.active().unwrap();

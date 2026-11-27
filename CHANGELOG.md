@@ -5,6 +5,8 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+- **Exobiology voice**: after the second sample, announces how far to move before the final sample when the colony distance is known.
+
 - **Jump voice**: announces the destination and whether the arrival star is scoopable, naming the type when it isn't scoopable once the ship enters hyperspace. It also announces new targets set in the Galaxy Map, remaining jumps on a plotted route, and a refuelling opportunity when a ship with a fuel scoop is below half a tank. Normal priority includes these announcements.
 - **Windows voice**: the Piper test package adds Piper with the Kristin voice, a local neural voice, in Settings › Voice and alerts. Common alerts at normal speed come ready to play. The app saves other Piper audio across sessions in a compressed cache capped at 1 GB.
 
