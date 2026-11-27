@@ -5,7 +5,11 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
-- **Windows window sizing**: apply the Windows 11 DPI fix to keep the window from growing repeatedly when moved between monitors with different display scales.
+### Fixed
+
+- **The window grew and closed when moved between screens** (Windows 11): dragged between monitors set to different
+  display scales, the window could get bigger with every move until Elite Nexus closed. It now takes the size and
+  place Windows suggests. Older Windows versions keep the old behaviour.
 
 ### Changed
 
