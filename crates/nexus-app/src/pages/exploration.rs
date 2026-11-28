@@ -6,7 +6,7 @@ use crate::widgets::{self, GAP, Steps, badge, bar, card, card_tinted, cards, emp
 use egui::{Grid, RichText, Sense, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_phosphor::regular as icon;
-use nexus_model::exploration::{interesting, Body, BodyKind, DataStatus, FssSignal, Interest, SystemScan};
+use nexus_model::exploration::{interesting, Body, BodyKind, DataStatus, FssSignal, Interest, ScanActivityKind, SystemScan};
 use nexus_model::GameState;
 use nexus_spansh::RichesRouteRequest;
 use std::collections::BTreeMap;
@@ -80,6 +80,49 @@ impl Default for FindBodies {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum MappingFilter {
+    #[default]
+    All,
+    Unmapped,
+    Mapped,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum BodyOrder {
+    #[default]
+    SystemMap,
+    NewestFirst,
+}
+
+#[derive(Default, PartialEq)]
+struct RecentFilters {
+    mapping: MappingFilter,
+    body_type: Option<String>,
+    min_value: f64,
+    min_mapped_value: f64,
+    max_distance: f64,
+    max_gravity: f64,
+    max_temperature: f64,
+}
+
+impl RecentFilters {
+    fn matches(&self, body: &Body) -> bool {
+        let mapping_matches = match self.mapping {
+            MappingFilter::All => true,
+            MappingFilter::Unmapped => body.kind == BodyKind::Planet && !body.mapped,
+            MappingFilter::Mapped => body.mapped,
+        };
+        mapping_matches
+            && self.body_type.as_ref().is_none_or(|kind| type_label(body) == *kind)
+            && body.value.current as f64 >= self.min_value
+            && (self.min_mapped_value == 0.0 || (body.kind == BodyKind::Planet && body.value.mapped as f64 >= self.min_mapped_value))
+            && (self.max_distance == 0.0 || (body.has_scan && body.distance_ls <= self.max_distance))
+            && (self.max_gravity == 0.0 || body.gravity_g().is_some_and(|g| g <= self.max_gravity))
+            && (self.max_temperature == 0.0 || body.temperature_k.is_some_and(|t| t <= self.max_temperature))
+    }
+}
+
 #[derive(Default)]
 pub struct ExplorationUi {
     pub tab: Tab,
@@ -88,14 +131,17 @@ pub struct ExplorationUi {
     pub system: Option<u64>,
     pub history: HistoryFilter,
     pub find: FindBodies,
+    body_order: BodyOrder,
+    recent_filters: RecentFilters,
     /// A body was just picked: in a narrow window its details (above the table) scroll into view.
     reveal: bool,
 }
 
 impl ExplorationUi {
-    /// Opens on a tab by name (`find`, `history`, `unsold`); `autorun` starts the Find search on
+    /// `recent` opens Current system in Newest First order. `autorun` starts the Find search on
     /// the first frame (screenshot runs).
     pub fn new(tab: Option<&str>, autorun: bool) -> Self {
+        let requested_recent = tab == Some("recent");
         let tab = match tab {
             Some("find") => Tab::Find,
             Some("history") => Tab::History,
@@ -103,6 +149,9 @@ impl ExplorationUi {
             _ => Tab::Current,
         };
         let mut ui = ExplorationUi { tab, ..Default::default() };
+        if requested_recent {
+            ui.body_order = BodyOrder::NewestFirst;
+        }
         ui.find.autorun = autorun && tab == Tab::Find;
         ui
     }
@@ -560,11 +609,29 @@ fn system_view(ui: &mut Ui, gs: &GameState, sys: &SystemScan, st: &mut Explorati
     }
     ui.add_space(GAP);
 
+    widgets::segmented(ui, &mut st.body_order, &[(BodyOrder::SystemMap, "System Map"), (BodyOrder::NewestFirst, "Newest First")]);
+    ui.add_space(GAP);
+    let recent = st.body_order == BodyOrder::NewestFirst;
     let mut bodies: Vec<&Body> = sys.bodies.values().filter(|b| b.kind != BodyKind::BeltCluster).collect();
-    // System-map order: walk the parent chain root-first so moons follow their planet.
-    bodies.sort_by_cached_key(|b| tree_key(b));
+    if recent {
+        recent_filters(ui, &mut st.recent_filters, &bodies);
+        bodies.retain(|body| st.recent_filters.matches(body));
+        bodies.sort_by_cached_key(|b| (
+            std::cmp::Reverse(b.recent_scan.map(|scan| scan.order_key())),
+            b.recent_scan.is_none().then(|| tree_key(b)),
+        ));
+        if bodies.is_empty() {
+            empty(ui, icon::BROADCAST, "No matching bodies", "Change or reset the filters to see more bodies.");
+            signals_panel(ui, sys, sys.address == gs.location.system_address);
+            return;
+        }
+    } else {
+        // System-map order: walk the parent chain root-first so moons follow their planet.
+        bodies.sort_by_cached_key(|b| tree_key(b));
+    }
 
-    let selected = st.selected_body.and_then(|id| sys.bodies.get(&id));
+    let selected = st.selected_body.and_then(|id| sys.bodies.get(&id))
+        .filter(|b| !recent || bodies.iter().any(|row| row.id == b.id));
     match selected {
         // Wide windows: the table with the body's details beside it, kept in view as the page scrolls past the
         // table (never below its end); narrow: details first, scrolled into view when a body is picked.
@@ -604,6 +671,44 @@ fn system_view(ui: &mut Ui, gs: &GameState, sys: &SystemScan, st: &mut Explorati
         None => body_table(ui, sys, &bodies, st, high_value),
     }
     signals_panel(ui, sys, sys.address == gs.location.system_address);
+}
+
+fn recent_filters(ui: &mut Ui, filters: &mut RecentFilters, bodies: &[&Body]) {
+    ui.horizontal_wrapped(|ui| {
+        widgets::segmented(ui, &mut filters.mapping, &[
+            (MappingFilter::All, "All bodies"),
+            (MappingFilter::Unmapped, "Unmapped planets"),
+            (MappingFilter::Mapped, "Mapped"),
+        ]);
+        if *filters != RecentFilters::default() && widgets::button(ui, "Reset filters").clicked() {
+            *filters = RecentFilters::default();
+        }
+    });
+    widgets::settings_bar(ui, |bar| {
+        bar.field("Type", "The type shown in the body table.", |ui| {
+            let kinds: std::collections::BTreeSet<_> = bodies.iter().map(|b| type_label(b)).collect();
+            egui::ComboBox::from_id_salt("recent-body-type")
+                .selected_text(filters.body_type.as_deref().unwrap_or("All types"))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut filters.body_type, None, "All types");
+                    for kind in kinds {
+                        ui.selectable_value(&mut filters.body_type, Some(kind.clone()), kind);
+                    }
+                });
+        });
+        recent_number(bar, "Min. value", &mut filters.min_value, 1000.0, 0, " Cr");
+        recent_number(bar, "Min. value if mapped", &mut filters.min_mapped_value, 1000.0, 0, " Cr");
+        recent_number(bar, "Max. distance", &mut filters.max_distance, 100.0, 0, " ls");
+        recent_number(bar, "Max. gravity", &mut filters.max_gravity, 0.1, 2, " g");
+        recent_number(bar, "Max. temperature", &mut filters.max_temperature, 10.0, 0, " K");
+    });
+    ui.add_space(GAP);
+}
+
+fn recent_number(bar: &mut widgets::SettingsBar<'_>, label: &str, value: &mut f64, step: f64, decimals: usize, unit: &str) {
+    bar.field(label, "", |ui| {
+        widgets::number_or_any(ui, value, Steps::By(step), decimals, unit);
+    });
 }
 
 /// What kind of signal source a signal is, in the order the kinds are listed: the few notable ones first, the
@@ -898,39 +1003,53 @@ fn interest_color(i: Interest) -> egui::Color32 {
 }
 
 fn body_table(ui: &mut Ui, sys: &SystemScan, bodies: &[&Body], st: &mut ExplorationUi, high_value: i64) {
+    let recent = st.body_order == BodyOrder::NewestFirst;
+    let compact = recent && ui.available_width() < 950.0;
     TableBuilder::new(ui)
-        .id_salt(("bodies", sys.address))
+        .id_salt(("bodies", sys.address, recent))
         .striped(true)
         .resizable(false)
         .sense(Sense::click())
         .vscroll(false)
         .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-        .column(Column::initial(130.0).at_least(90.0).clip(true))
-        .column(Column::initial(150.0).at_least(90.0).clip(true))
-        .column(Column::initial(84.0))
+        .column(if recent { Column::initial(174.0).at_least(165.0).clip(true) } else { Column::initial(130.0).at_least(90.0).clip(true) })
+        .column(Column::initial(if compact { 135.0 } else { 150.0 }).at_least(90.0).clip(true))
+        .column(Column::initial(if compact { 76.0 } else { 84.0 }))
         .column(Column::initial(92.0))
         .column(Column::initial(92.0))
         .column(Column::initial(70.0))
         .column(Column::initial(70.0))
-        .column(Column::remainder().at_least(160.0).clip(true))
+        .column(Column::remainder().at_least(if compact { 104.0 } else { 160.0 }).clip(true))
         .header(30.0, |mut h| {
             for t in ["Body", "Type", "Distance", "Value", "Mapped", "Gravity", "Temp", "Notes"] {
                 h.col(|ui| th(ui, t));
             }
         })
         .body(|body| {
-            body.rows(32.0, bodies.len(), |mut row| {
+            body.rows(if recent { 48.0 } else { 32.0 }, bodies.len(), |mut row| {
                 let b = bodies[row.index()];
                 row.set_selected(st.selected_body == Some(b.id));
                 let tags = interesting(b, sys);
                 row.col(|ui| {
-                    let indent = "    ".repeat(depth(b).min(4));
-                    let prefix = if depth(b) > 0 { format!("{} ", icon::ARROW_ELBOW_DOWN_RIGHT) } else { String::new() };
+                    let depth = if recent { 0 } else { depth(b) };
+                    let indent = "    ".repeat(depth.min(4));
+                    let prefix = if depth > 0 { format!("{} ", icon::ARROW_ELBOW_DOWN_RIGHT) } else { String::new() };
                     let mut t = RichText::new(format!("{indent}{prefix}{}", b.short_name(&sys.name)));
                     if b.mapped {
                         t = t.color(pal::GOOD);
                     }
-                    ui.label(t);
+                    if recent && let Some(scan) = b.recent_scan {
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            ui.label(t);
+                            ui.horizontal(|ui| {
+                                scan_badge(ui, scan);
+                                ui.label(RichText::new(scan.time.to_local_string("%Y-%m-%d %H:%M")).size(size::FOOTNOTE).color(pal::DIM));
+                            });
+                        });
+                    } else {
+                        ui.label(t);
+                    }
                 });
                 row.col(|ui| {
                     let mut t = RichText::new(type_label(b));
@@ -986,6 +1105,16 @@ fn body_table(ui: &mut Ui, sys: &SystemScan, bodies: &[&Body], st: &mut Explorat
                 }
             });
         });
+}
+
+fn scan_badge(ui: &mut Ui, scan: nexus_model::exploration::ScanActivity) {
+    let (text, activity, color) = match scan.kind {
+        ScanActivityKind::Scan => ("FSS", "FSS scan", pal::BLUE),
+        ScanActivityKind::AutoScan => ("Auto", "Automatic scan", pal::BLUE),
+        ScanActivityKind::Basic => ("Basic", "Basic scan", pal::DIM),
+        ScanActivityKind::Mapping => ("DSS", "DSS mapping", pal::GOOD),
+    };
+    badge(ui, text, color).on_hover_text(format!("{activity} · {}", scan.time.to_local_string("%Y-%m-%d %H:%M:%S")));
 }
 
 fn body_detail(ui: &mut Ui, sys: &SystemScan, b: &Body, st: &mut ExplorationUi) {

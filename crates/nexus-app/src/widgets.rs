@@ -952,11 +952,24 @@ impl Steps<'_> {
 /// within `range`, written with `decimals` places, its thousands grouped, and `suffix` after it (" ly"). The response
 /// is the value's and reports `changed()` whichever way it changed.
 pub fn number(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>, steps: Steps, decimals: usize, suffix: &str) -> Response {
+    number_field(ui, value, range, steps, decimals, suffix, false)
+}
+
+/// A stepper for an optional limit. Zero is displayed as "Any".
+pub fn number_or_any(ui: &mut Ui, value: &mut f64, steps: Steps, decimals: usize, suffix: &str) -> Response {
+    number_field(ui, value, 0.0..=f64::INFINITY, steps, decimals, suffix, true)
+}
+
+fn number_field(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>, steps: Steps, decimals: usize, suffix: &str, any_at_zero: bool) -> Response {
     const H: f32 = 28.0;
     let (lo, hi) = (*range.start(), *range.end());
     let before = *value;
     // Room for the widest value, so the capsule keeps its size as the value changes.
-    let widest = [lo, hi].map(|v| ui.painter().layout_no_wrap(format!("{}{suffix}", grouped(v, decimals)), FontId::proportional(size::CALLOUT), pal::TEXT).size().x);
+    let format = |v| {
+        if any_at_zero && v == 0.0 { "Any".to_owned() } else { format!("{}{suffix}", grouped(v, decimals)) }
+    };
+    let width_sample = if any_at_zero { before.max(1_000.0) } else { hi };
+    let widest = [lo, width_sample].map(|v| ui.painter().layout_no_wrap(format(v), FontId::proportional(size::CALLOUT), pal::TEXT).size().x);
     let mid = widest[0].max(widest[1]) + 18.0;
     // The glass goes under the controls, so its place is kept before they're drawn.
     let under = ui.painter().add(egui::Shape::Noop);
@@ -987,9 +1000,9 @@ pub fn number(ui: &mut Ui, value: &mut f64, range: std::ops::RangeInclusive<f64>
                         .range(range.clone())
                         .speed(speed)
                         .fixed_decimals(decimals)
-                        .suffix(suffix)
-                        .custom_formatter(move |v, _| grouped(v, decimals))
-                        .custom_parser(move |s| parse_typed(s, suffix)),
+                        .suffix(if any_at_zero { "" } else { suffix })
+                        .custom_formatter(move |v, _| if any_at_zero { format(v) } else { grouped(v, decimals) })
+                        .custom_parser(move |s| if any_at_zero && s.trim().eq_ignore_ascii_case("any") { Some(0.0) } else { parse_typed(s, suffix) }),
                 )
             })
             .inner;

@@ -29,7 +29,7 @@ Key facts for answering questions about it (current as of version 0.8.2, Novembe
   planets where the first-logged x5 bonus may still be open (via Spansh), and Spansh's exobiology planner. The bonus
   is shown only where it can still be paid: an uninhabited system, a body nobody had set foot on at the first scan,
   a species not marked as logged.
-- Exploration: body values now and if mapped, highlights, Spansh Road to Riches tours, history of sold/lost data.
+- Exploration: body values now and if mapped, highlights, System Map or Newest First in Current system, with dated scan and mapping activity, Spansh Road to Riches tours, history of sold/lost data.
 - Market: a local database fed live by EDDN (optionally seeded from Spansh's dump): commodity pages (where to buy,
   where to sell, latest prices; suggestions as you type, or browse every commodity by category, with every rare good
   on one page), sell my cargo, a shopping trip for several goods (from one seller to the next, on the shortest

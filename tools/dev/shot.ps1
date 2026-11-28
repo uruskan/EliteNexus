@@ -2,7 +2,8 @@
 # button, so it never appears over the game. Saves target\shots\<Out>.png and exits; never uploads.
 #   powershell -File tools\dev\shot.ps1 -Page Exobiology -Tab untouched -Out bonus -Size 1300x900 -Delay 20
 # -Page: a sidebar page (Dashboard, Exploration, Exobiology, Navigation, Market, ...).
-# -Tab:  market sections (abnormal, database, ...), galaxy (whole-galaxy map), find / history /
+# -Tab:  market sections (abnormal, database, ...), galaxy (whole-galaxy map), recent (Exploration Current system,
+#        Newest First), find / history /
 #        unsold (Exploration), untouched / known (Exobiology > Find planets), where / where:Monazite /
 #        where-route (Mining > Where to mine: near you, near you for that material, or along a route
 #        towards Colonia), clear-unsold (Exobiology > This system, the unsold list's Clear list

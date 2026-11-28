@@ -5,6 +5,10 @@ release time that section becomes the new version and the release workflow publi
 
 ## Unreleased
 
+### Added
+- **Exploration › Current system** can show bodies in system-map order or newest activity first. Automatic, basic,
+  FSS and DSS activity has badges and dates in Newest First, where mapping moves the same body back to the top.
+
 ### Fixed
 
 - **The window grew and closed when moved between screens** (Windows 11): dragged between monitors set to different
